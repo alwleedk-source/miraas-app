@@ -53,12 +53,22 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy drizzle migrations (for db:push if needed)
+# Copy drizzle for auto-migration on startup
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
+COPY --from=builder /app/src/db ./src/db
+COPY --from=builder /app/package.json ./package.json
+
+# Install drizzle-kit for migrations (production needs it)
+RUN npm install drizzle-kit postgres
+
+# Copy startup script
+COPY --from=builder /app/start.sh ./start.sh
+RUN chmod +x ./start.sh
 
 USER nextjs
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["sh", "./start.sh"]
+
