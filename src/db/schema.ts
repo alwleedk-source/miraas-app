@@ -1,0 +1,385 @@
+import {
+  pgTable,
+  uuid,
+  varchar,
+  text,
+  boolean,
+  timestamp,
+  jsonb,
+  integer,
+  pgEnum,
+} from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+
+// ============================================
+// Enums
+// ============================================
+
+export const userRoleEnum = pgEnum("user_role", [
+  "SUPER_ADMIN",
+  "OWNER",
+  "ADMIN",
+  "COORDINATOR",
+]);
+
+export const tenantStatusEnum = pgEnum("tenant_status", [
+  "ACTIVE",
+  "SUSPENDED",
+  "TRIAL",
+]);
+
+export const tenantPlanEnum = pgEnum("tenant_plan", [
+  "TRIAL",
+  "STARTER",
+  "PROFESSIONAL",
+  "ENTERPRISE",
+]);
+
+export const leadPriorityEnum = pgEnum("lead_priority", [
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "URGENT",
+]);
+
+export const followUpTypeEnum = pgEnum("follow_up_type", [
+  "CALL",
+  "MESSAGE",
+  "MEETING",
+  "EMAIL",
+  "WHATSAPP",
+  "NOTE",
+]);
+
+export const activityActionEnum = pgEnum("activity_action", [
+  "LEAD_CREATED",
+  "LEAD_UPDATED",
+  "LEAD_ASSIGNED",
+  "LEAD_STAGE_CHANGED",
+  "LEAD_DELETED",
+  "FOLLOW_UP_CREATED",
+  "USER_CREATED",
+  "USER_UPDATED",
+  "SETTINGS_UPDATED",
+  "WEBHOOK_RECEIVED",
+  "WHATSAPP_SENT",
+  "WHATSAPP_FAILED",
+]);
+
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "NEW_LEAD",
+  "LEAD_ASSIGNED",
+  "FOLLOW_UP_REMINDER",
+  "SYSTEM",
+]);
+
+// ============================================
+// 1. Tenants (الشركات)
+// ============================================
+
+export const tenants = pgTable("tenants", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 255 }).notNull(),
+  slug: varchar("slug", { length: 100 }).notNull().unique(),
+  logoUrl: text("logo_url"),
+  plan: tenantPlanEnum("plan").default("TRIAL").notNull(),
+  status: tenantStatusEnum("status").default("ACTIVE").notNull(),
+  settings: jsonb("settings").default({}).$type<{
+    timezone?: string;
+    language?: string;
+    currency?: string;
+  }>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 2. Users (المستخدمون)
+// ============================================
+
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  emailVerified: boolean("email_verified").default(false).notNull(),
+  image: text("image"),
+  role: userRoleEnum("role").default("COORDINATOR").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// Better Auth required tables
+// ============================================
+
+export const sessions = pgTable("sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const accounts = pgTable("accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+  scope: text("scope"),
+  idToken: text("id_token"),
+  password: text("password"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const verifications = pgTable("verifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 3. Pipeline Stages (مراحل الأنابيب)
+// ============================================
+
+export const pipelineStages = pgTable("pipeline_stages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  color: varchar("color", { length: 20 }).notNull().default("#3B82F6"),
+  position: integer("position").notNull().default(0),
+  isDefault: boolean("is_default").default(false).notNull(),
+  isExclusive: boolean("is_exclusive").default(false).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4. Lead Sources (مصادر العملاء)
+// ============================================
+
+export const leadSources = pgTable("lead_sources", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  platform: varchar("platform", { length: 100 }),
+  campaignId: varchar("campaign_id", { length: 255 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 5. Leads (العملاء المحتملون)
+// ============================================
+
+export const leads = pgTable("leads", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  assignedTo: uuid("assigned_to").references(() => users.id, { onDelete: "set null" }),
+  sourceId: uuid("source_id").references(() => leadSources.id, { onDelete: "set null" }),
+  stageId: uuid("stage_id").references(() => pipelineStages.id, { onDelete: "set null" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  email: varchar("email", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  priority: leadPriorityEnum("priority").default("MEDIUM").notNull(),
+  customFields: jsonb("custom_fields").default({}).$type<Record<string, string>>(),
+  isDeleted: boolean("is_deleted").default(false).notNull(),
+  welcomeSentAt: timestamp("welcome_sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 6. Follow-ups (المتابعات)
+// ============================================
+
+export const followUps = pgTable("follow_ups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: followUpTypeEnum("type").default("NOTE").notNull(),
+  notes: text("notes"),
+  attachments: jsonb("attachments").default([]).$type<
+    Array<{ name: string; url: string; type: string }>
+  >(),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 7. WhatsApp Config (إعدادات واتساب)
+// ============================================
+
+export const whatsappConfigs = pgTable("whatsapp_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }).unique(),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  phoneNumber: varchar("phone_number", { length: 50 }),
+  provider: varchar("provider", { length: 50 }).default("meta"),
+  // Template Message fields (Meta-approved)
+  templateName: varchar("template_name", { length: 255 }),
+  templateLanguage: varchar("template_language", { length: 10 }).default("ar"),
+  templateParams: jsonb("template_params").default(["name"]).$type<string[]>(),
+  isActive: boolean("is_active").default(false).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 8. Webhook Endpoints (نقاط الاستقبال)
+// ============================================
+
+export const webhookEndpoints = pgTable("webhook_endpoints", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  secretKey: varchar("secret_key", { length: 64 }).notNull(),
+  label: varchar("label", { length: 255 }).default("Google Sheets"),
+  isActive: boolean("is_active").default(true).notNull(),
+  sendWelcome: boolean("send_welcome").default(true).notNull(),
+  lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 9. Tags (التصنيفات)
+// ============================================
+
+export const tags = pgTable("tags", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  color: varchar("color", { length: 20 }).notNull().default("#6B7280"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 10. Tag Assignments (ربط التصنيفات)
+// ============================================
+
+export const tagAssignments = pgTable("tag_assignments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  tagId: uuid("tag_id").notNull().references(() => tags.id, { onDelete: "cascade" }),
+});
+
+// ============================================
+// 11. Activity Log (سجل النشاطات)
+// ============================================
+
+export const activityLog = pgTable("activity_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  action: activityActionEnum("action").notNull(),
+  entityType: varchar("entity_type", { length: 50 }),
+  entityId: uuid("entity_id"),
+  details: jsonb("details").default({}).$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 12. Notifications (الإشعارات)
+// ============================================
+
+export const notifications = pgTable("notifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: notificationTypeEnum("type").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message"),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// Relations
+// ============================================
+
+export const tenantsRelations = relations(tenants, ({ many }) => ({
+  users: many(users),
+  leads: many(leads),
+  pipelineStages: many(pipelineStages),
+  leadSources: many(leadSources),
+  tags: many(tags),
+  webhookEndpoints: many(webhookEndpoints),
+  activityLog: many(activityLog),
+  notifications: many(notifications),
+}));
+
+export const usersRelations = relations(users, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [users.tenantId], references: [tenants.id] }),
+  assignedLeads: many(leads),
+  followUps: many(followUps),
+  sessions: many(sessions),
+  accounts: many(accounts),
+  activityLog: many(activityLog),
+  notifications: many(notifications),
+}));
+
+export const leadsRelations = relations(leads, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [leads.tenantId], references: [tenants.id] }),
+  assignedUser: one(users, { fields: [leads.assignedTo], references: [users.id] }),
+  source: one(leadSources, { fields: [leads.sourceId], references: [leadSources.id] }),
+  stage: one(pipelineStages, { fields: [leads.stageId], references: [pipelineStages.id] }),
+  followUps: many(followUps),
+  tagAssignments: many(tagAssignments),
+}));
+
+export const followUpsRelations = relations(followUps, ({ one }) => ({
+  tenant: one(tenants, { fields: [followUps.tenantId], references: [tenants.id] }),
+  lead: one(leads, { fields: [followUps.leadId], references: [leads.id] }),
+  user: one(users, { fields: [followUps.userId], references: [users.id] }),
+}));
+
+export const pipelineStagesRelations = relations(pipelineStages, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [pipelineStages.tenantId], references: [tenants.id] }),
+  leads: many(leads),
+}));
+
+export const leadSourcesRelations = relations(leadSources, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [leadSources.tenantId], references: [tenants.id] }),
+  leads: many(leads),
+}));
+
+export const tagsRelations = relations(tags, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [tags.tenantId], references: [tenants.id] }),
+  assignments: many(tagAssignments),
+}));
+
+export const tagAssignmentsRelations = relations(tagAssignments, ({ one }) => ({
+  lead: one(leads, { fields: [tagAssignments.leadId], references: [leads.id] }),
+  tag: one(tags, { fields: [tagAssignments.tagId], references: [tags.id] }),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] }),
+}));
+
+export const accountsRelations = relations(accounts, ({ one }) => ({
+  user: one(users, { fields: [accounts.userId], references: [users.id] }),
+}));
+
+export const activityLogRelations = relations(activityLog, ({ one }) => ({
+  tenant: one(tenants, { fields: [activityLog.tenantId], references: [tenants.id] }),
+  user: one(users, { fields: [activityLog.userId], references: [users.id] }),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  tenant: one(tenants, { fields: [notifications.tenantId], references: [tenants.id] }),
+  user: one(users, { fields: [notifications.userId], references: [users.id] }),
+}));
