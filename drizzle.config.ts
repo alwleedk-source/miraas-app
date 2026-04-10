@@ -1,4 +1,4 @@
-import "dotenv/config";
+// dotenv is loaded by the runtime environment
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
