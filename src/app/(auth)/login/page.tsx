@@ -1,17 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signIn } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
+import { LogIn, Mail, Lock, Loader2, ArrowLeft } from "lucide-react";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -44,21 +42,23 @@ export default function LoginPage() {
     <>
       {/* شعار للموبايل */}
       <div className="lg:hidden text-center mb-8">
-        <div className="w-16 h-16 rounded-2xl bg-primary-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center mx-auto mb-4 shadow-lg">
           <span className="text-3xl font-bold text-white">م</span>
         </div>
         <h1 className="text-2xl font-bold text-surface-900">مِراس</h1>
+        <p className="text-sm text-surface-500 mt-1">منصة إدارة العملاء الذكية</p>
       </div>
 
       <Card className="border-0 shadow-elevated">
         <CardHeader className="text-center pb-2">
-          <CardTitle className="text-2xl">تسجيل الدخول</CardTitle>
-          <CardDescription>أدخل بياناتك للوصول إلى لوحة التحكم</CardDescription>
+          <CardTitle className="text-2xl">مرحباً بعودتك</CardTitle>
+          <CardDescription>سجّل دخولك للوصول إلى لوحة التحكم</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div className="p-3 rounded-lg bg-danger-50 border border-danger-500/20 text-danger-600 text-sm animate-fade-in">
+              <div className="p-3 rounded-xl bg-danger-50 border border-danger-500/20 text-danger-600 text-sm animate-fade-in flex items-center gap-2">
+                <span className="shrink-0">⚠️</span>
                 {error}
               </div>
             )}
@@ -72,7 +72,7 @@ export default function LoginPage() {
                   type="email"
                   placeholder="email@example.com"
                   dir="ltr"
-                  className="pe-10 text-left"
+                  className="pe-10 text-left h-11"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -90,7 +90,7 @@ export default function LoginPage() {
                   type="password"
                   placeholder="••••••••"
                   dir="ltr"
-                  className="pe-10 text-left"
+                  className="pe-10 text-left h-11"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -101,33 +101,49 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full h-11"
+              className="w-full h-12 text-base font-semibold shadow-lg shadow-primary-500/25 hover:shadow-primary-500/40 transition-all duration-300"
               disabled={loading}
             >
               {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
                 <>
-                  <LogIn className="h-4 w-4" />
+                  <LogIn className="h-5 w-5" />
                   تسجيل الدخول
                 </>
               )}
             </Button>
           </form>
 
-          <div className="mt-6 text-center">
+          <div className="mt-8 text-center">
             <p className="text-sm text-surface-500">
               ليس لديك حساب؟{" "}
               <Link
                 href="/register"
-                className="text-primary-600 font-medium hover:text-primary-700 transition-colors"
+                className="text-primary-600 font-semibold hover:text-primary-700 transition-colors inline-flex items-center gap-1"
               >
-                سجّل شركتك الآن
+                أنشئ حسابك مجاناً
+                <ArrowLeft className="h-3.5 w-3.5" />
               </Link>
             </p>
           </div>
         </CardContent>
       </Card>
+
+      {/* مميزات سريعة — موبايل فقط */}
+      <div className="lg:hidden mt-8 grid grid-cols-2 gap-3">
+        {[
+          { icon: "🎯", text: "خط أنابيب ذكي" },
+          { icon: "⚡", text: "واتساب تلقائي" },
+          { icon: "👥", text: "إدارة فريق" },
+          { icon: "📊", text: "تحليلات لحظية" },
+        ].map((f, i) => (
+          <div key={i} className="flex items-center gap-2 p-3 rounded-xl bg-white shadow-sm border border-surface-100">
+            <span className="text-lg">{f.icon}</span>
+            <span className="text-xs font-medium text-surface-700">{f.text}</span>
+          </div>
+        ))}
+      </div>
     </>
   );
 }

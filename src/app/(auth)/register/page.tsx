@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signUp } from "@/lib/auth-client";
 import { createTenantForUser } from "@/app/actions/tenant";
@@ -9,10 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Building2, User, Mail, Lock, Loader2, Rocket } from "lucide-react";
+import { Building2, User, Mail, Lock, Loader2, Rocket, ArrowLeft } from "lucide-react";
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [formData, setFormData] = useState({
     companyName: "",
     name: "",
@@ -78,21 +76,23 @@ export default function RegisterPage() {
     <>
       {/* شعار للموبايل */}
       <div className="lg:hidden text-center mb-8">
-        <div className="w-16 h-16 rounded-2xl bg-primary-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center mx-auto mb-4 shadow-lg">
           <span className="text-3xl font-bold text-white">م</span>
         </div>
         <h1 className="text-2xl font-bold text-surface-900">مِراس</h1>
+        <p className="text-sm text-surface-500 mt-1">ابدأ إدارة عملائك باحترافية</p>
       </div>
 
       <Card className="border-0 shadow-elevated">
         <CardHeader className="text-center pb-2">
-          <CardTitle className="text-2xl">إنشاء حساب جديد</CardTitle>
-          <CardDescription>سجّل شركتك وابدأ إدارة عملائك باحترافية</CardDescription>
+          <CardTitle className="text-2xl">أنشئ حسابك المجاني</CardTitle>
+          <CardDescription>سجّل شركتك وابدأ خلال دقيقة واحدة</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 rounded-lg bg-danger-50 border border-danger-500/20 text-danger-600 text-sm animate-fade-in">
+              <div className="p-3 rounded-xl bg-danger-50 border border-danger-500/20 text-danger-600 text-sm animate-fade-in flex items-center gap-2">
+                <span className="shrink-0">⚠️</span>
                 {error}
               </div>
             )}
@@ -104,8 +104,8 @@ export default function RegisterPage() {
                 <Input
                   id="companyName"
                   name="companyName"
-                  placeholder="شركة التسويق الرقمي"
-                  className="pe-10"
+                  placeholder="مثال: شركة النخبة للتسويق"
+                  className="pe-10 h-11"
                   value={formData.companyName}
                   onChange={handleChange}
                   required
@@ -121,8 +121,8 @@ export default function RegisterPage() {
                 <Input
                   id="name"
                   name="name"
-                  placeholder="أحمد محمد"
-                  className="pe-10"
+                  placeholder="مثال: أحمد محمد"
+                  className="pe-10 h-11"
                   value={formData.name}
                   onChange={handleChange}
                   required
@@ -140,7 +140,7 @@ export default function RegisterPage() {
                   type="email"
                   placeholder="email@example.com"
                   dir="ltr"
-                  className="pe-10 text-left"
+                  className="pe-10 text-left h-11"
                   value={formData.email}
                   onChange={handleChange}
                   required
@@ -159,7 +159,7 @@ export default function RegisterPage() {
                     type="password"
                     placeholder="••••••••"
                     dir="ltr"
-                    className="pe-10 text-left"
+                    className="pe-10 text-left h-11"
                     value={formData.password}
                     onChange={handleChange}
                     required
@@ -175,7 +175,7 @@ export default function RegisterPage() {
                   type="password"
                   placeholder="••••••••"
                   dir="ltr"
-                  className="text-left"
+                  className="text-left h-11"
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   required
@@ -186,18 +186,22 @@ export default function RegisterPage() {
 
             <Button
               type="submit"
-              className="w-full h-11"
+              className="w-full h-12 text-base font-semibold shadow-lg shadow-primary-500/25 hover:shadow-primary-500/40 transition-all duration-300"
               disabled={loading}
             >
               {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
                 <>
-                  <Rocket className="h-4 w-4" />
-                  إنشاء الحساب
+                  <Rocket className="h-5 w-5" />
+                  إنشاء الحساب — مجاناً
                 </>
               )}
             </Button>
+
+            <p className="text-[11px] text-surface-400 text-center leading-relaxed">
+              بالتسجيل، أنت توافق على أن بياناتك تُستخدم فقط لإدارة حسابك
+            </p>
           </form>
 
           <div className="mt-6 text-center">
@@ -205,9 +209,10 @@ export default function RegisterPage() {
               لديك حساب بالفعل؟{" "}
               <Link
                 href="/login"
-                className="text-primary-600 font-medium hover:text-primary-700 transition-colors"
+                className="text-primary-600 font-semibold hover:text-primary-700 transition-colors inline-flex items-center gap-1"
               >
                 تسجيل الدخول
+                <ArrowLeft className="h-3.5 w-3.5" />
               </Link>
             </p>
           </div>
