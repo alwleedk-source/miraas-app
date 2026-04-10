@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -107,25 +108,112 @@ export const ROLE_LABELS: Record<string, string> = {
 };
 
 /**
- * تنسيق موحد لأرقام الهاتف — يُستخدم في كل مكان
- * - يزيل كل الرموز (مسافات، شرطات، أقواس)
- * - يحول 00966 → 966
- * - يحول +966 → 966
- * - يحول 05xxxxxxxx → 9665xxxxxxxx
+ * نتيجة التحقق من رقم الهاتف
+ */
+export type PhoneValidationResult = {
+  /** هل الرقم صالح؟ */
+  valid: boolean;
+  /** الرقم بصيغة E.164 (مثال: +966551234567) — null إذا غير صالح */
+  phone: string | null;
+  /** رمز الدولة (مثال: SA) — null إذا غير صالح */
+  country: string | null;
+  /** سبب الرفض — null إذا صالح */
+  error: string | null;
+};
+
+/**
+ * تحقق من رقم الهاتف ونسّقه لصيغة E.164 الدولية
+ * يدعم جميع دول العالم — الدولة الافتراضية السعودية
+ *
+ * أمثلة:
+ *   validateAndNormalizePhone("0551234567")       → { valid: true, phone: "+966551234567", country: "SA" }
+ *   validateAndNormalizePhone("+971501234567")     → { valid: true, phone: "+971501234567", country: "AE" }
+ *   validateAndNormalizePhone("1234")              → { valid: false, error: "رقم غير مكتمل" }
+ *   validateAndNormalizePhone("00966551234567")    → { valid: true, phone: "+966551234567", country: "SA" }
+ */
+export function validateAndNormalizePhone(
+  raw: string,
+  defaultCountry: CountryCode = "SA"
+): PhoneValidationResult {
+  if (!raw || !raw.trim()) {
+    return { valid: false, phone: null, country: null, error: "لا يوجد رقم" };
+  }
+
+  // تنظيف أولي — إزالة المسافات والشرطات والأقواس
+  let cleaned = raw.trim().replace(/[\s\-\(\)\.]/g, "");
+
+  // تحويل 00 البادئة إلى + (صيغة دولية قديمة)
+  if (cleaned.startsWith("00") && cleaned.length > 6) {
+    cleaned = "+" + cleaned.slice(2);
+  }
+
+  // إذا يبدأ بمفتاح دولي بدون + (مثل 966551234567)
+  // نضيف + فقط إذا كان يبدو كمفتاح دولي معروف
+  if (!cleaned.startsWith("+") && /^\d+$/.test(cleaned)) {
+    // أرقام بدون صفر أول وطول دولي (11+ أرقام) → نجرب مع +
+    if (cleaned.length >= 11 && !cleaned.startsWith("0")) {
+      const withPlus = parsePhoneNumberFromString("+" + cleaned);
+      if (withPlus && withPlus.isValid()) {
+        return {
+          valid: true,
+          phone: withPlus.format("E.164"),
+          country: withPlus.country || null,
+          error: null,
+        };
+      }
+    }
+  }
+
+  // إضافة + إذا غير موجودة ويبدأ بمفتاح دولي
+  if (!cleaned.startsWith("+")) {
+    // نجرب تحليلها مع الدولة الافتراضية
+    const parsed = parsePhoneNumberFromString(cleaned, defaultCountry);
+    if (parsed && parsed.isValid()) {
+      return {
+        valid: true,
+        phone: parsed.format("E.164"),
+        country: parsed.country || null,
+        error: null,
+      };
+    }
+  } else {
+    // يبدأ بـ + — تحليل دولي مباشر
+    const parsed = parsePhoneNumberFromString(cleaned);
+    if (parsed && parsed.isValid()) {
+      return {
+        valid: true,
+        phone: parsed.format("E.164"),
+        country: parsed.country || null,
+        error: null,
+      };
+    }
+  }
+
+  // فشل كل المحاولات — نحدد سبب الرفض
+  const digitsOnly = cleaned.replace(/\D/g, "");
+
+  if (digitsOnly.length < 7) {
+    return { valid: false, phone: null, country: null, error: "رقم غير مكتمل" };
+  }
+  if (digitsOnly.length > 15) {
+    return { valid: false, phone: null, country: null, error: "رقم طويل جداً" };
+  }
+  if (/^(\d)\1+$/.test(digitsOnly)) {
+    return { valid: false, phone: null, country: null, error: "رقم مكرر/وهمي" };
+  }
+
+  return { valid: false, phone: null, country: null, error: "رقم غير صالح" };
+}
+
+/**
+ * تنسيق موحد لأرقام الهاتف — للتوافق مع الكود الحالي
+ * يُرجع الرقم بصيغة E.164 إذا صالح، أو الرقم المنظّف إذا فشل التحقق
  */
 export function normalizePhone(raw: string): string {
-  // إزالة كل غير الأرقام
-  let cleaned = raw.replace(/\D/g, "");
-
-  // إزالة 00 البادئة (صيغة دولية قديمة)
-  if (cleaned.startsWith("00")) {
-    cleaned = cleaned.slice(2);
+  const result = validateAndNormalizePhone(raw);
+  if (result.valid && result.phone) {
+    return result.phone;
   }
-
-  // تحويل الصفر المحلي → 966 (السعودية كافتراضي)
-  if (cleaned.startsWith("0") && cleaned.length >= 10) {
-    cleaned = "966" + cleaned.slice(1);
-  }
-
-  return cleaned;
+  // fallback: إزالة كل غير الأرقام
+  return raw.replace(/\D/g, "");
 }

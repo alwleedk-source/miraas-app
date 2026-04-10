@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sendWelcomeMessage } from "@/lib/whatsapp";
-import { normalizePhone } from "@/lib/utils";
+import { validateAndNormalizePhone } from "@/lib/utils";
 
 // =============================================
 // Rate Limiting
@@ -105,6 +105,7 @@ export async function POST(request: NextRequest) {
     let created = 0;
     let skippedDuplicate = 0;
     let skippedDeleted = 0;
+    let invalidPhones = 0;
     const createdLeads: { id: string; name: string }[] = [];
 
     // 🧠 Smart Welcome Detection:
@@ -116,8 +117,20 @@ export async function POST(request: NextRequest) {
     for (const entry of entries) {
       if (!entry.name) continue;
 
-      // Fix #2: تنسيق موحّد
-      const phone = entry.phone ? normalizePhone(entry.phone.toString()) : null;
+      // 📱 التحقق الذكي من الرقم
+      let phone: string | null = null;
+      let phoneError: string | null = null;
+
+      if (entry.phone) {
+        const phoneResult = validateAndNormalizePhone(entry.phone.toString());
+        if (phoneResult.valid && phoneResult.phone) {
+          phone = phoneResult.phone;
+        } else {
+          // رقم غير صالح — نضيف العميل بدون رقم مع ملاحظة
+          phoneError = `الرقم المُدخل غير صالح: ${entry.phone} (${phoneResult.error})`;
+          invalidPhones++;
+        }
+      }
 
       if (phone) {
         const existing = await db.query.leads.findFirst({
@@ -153,12 +166,18 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
+      // تسجيل النشاط — مع ملاحظة الرقم الخاطئ إن وجد
       await db.insert(activityLog).values({
         tenantId: webhook.tenantId,
         action: "WEBHOOK_RECEIVED",
         entityType: "lead",
         entityId: lead.id,
-        details: { source: "Google Sheets", leadName: entry.name, campaign: campaignName || null },
+        details: {
+          source: "Google Sheets",
+          leadName: entry.name,
+          campaign: campaignName || null,
+          ...(phoneError && { phoneError }),
+        },
       });
 
       created++;
@@ -173,10 +192,11 @@ export async function POST(request: NextRequest) {
     // Fix #8: استجابة مفصّلة
     return NextResponse.json({
       success: true,
-      message: `تم إضافة ${created} عميل`,
+      message: `تم إضافة ${created} عميل` + (invalidPhones > 0 ? ` (${invalidPhones} رقم غير صالح)` : ""),
       created,
       skippedDuplicate,
       skippedDeleted,
+      invalidPhones,
       total: entries.length,
       leads: createdLeads,
     });
