@@ -64,11 +64,15 @@ export default async function WebhooksSettingsPage() {
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">3</span>
-              <span>افتح Google Sheet → <strong>Extensions → Apps Script</strong> → الصق الكود واحفظ</span>
+              <span>افتح Google Sheet → <strong>الإضافات → برمجة التطبيقات</strong> → امسح الكود الموجود والصق كود مِراس واحفظ</span>
             </li>
             <li className="flex items-start gap-3">
               <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">4</span>
-              <span>اذهب إلى <strong>Triggers</strong> وأضف trigger من نوع <strong>On form submit</strong></span>
+              <span>من القائمة الجانبية اضغط ⏰ <strong>عوامل التفعيل</strong> → إضافة مشغّل → الدالة: <strong>onFormSubmit</strong> → مصدر الحدث: <strong>من جدول البيانات</strong> → نوع الحدث: <strong>عند التعديل</strong></span>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">5</span>
+              <span>اضغط <strong>حفظ</strong> ← وافق على الأذونات ← <strong>جاهز!</strong> كل صف جديد سيُرسل تلقائياً 🎉</span>
             </li>
           </ol>
 
