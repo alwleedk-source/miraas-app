@@ -44,6 +44,7 @@ import {
   createFollowUp,
   getFollowUps,
 } from "@/app/actions/leads";
+import { createBooking } from "@/app/actions/bookings";
 import { assignTag, removeTag, getLeadTags } from "@/app/actions/tags";
 
 const ImportDialog = lazy(() => import("./import-dialog"));
@@ -70,6 +71,7 @@ interface StageData {
   id: string;
   name: string;
   color: string;
+  isBooking?: boolean;
 }
 
 interface TagData {
@@ -160,6 +162,12 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   // تصنيفات العميل
   const [leadTags, setLeadTags] = useState<TagData[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
+
+  // نافذة الحجز
+  const [bookingModal, setBookingModal] = useState<{ leadId: string; stageId: string; leadName: string } | null>(null);
+  const [bookingDate, setBookingDate] = useState("");
+  const [bookingService, setBookingService] = useState("");
+  const [bookingNotes, setBookingNotes] = useState("");
 
   // جلب المتابعات عند اختيار عميل
   useEffect(() => {
@@ -356,16 +364,51 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   };
 
   const handleChangeStage = (leadId: string, stageId: string) => {
+    const stage = stages.find((s) => s.id === stageId);
+
+    // إذا كانت مرحلة حجز — نفتح نافذة الحجز أولاً
+    if (stage?.isBooking) {
+      const lead = leads.find((l) => l.id === leadId);
+      setBookingModal({ leadId, stageId, leadName: lead?.name || "" });
+      return;
+    }
+
     setError(null);
     startTransition(async () => {
       try {
         await changeLeadStage(leadId, stageId);
-        const stage = stages.find((s) => s.id === stageId);
         setLeads((prev) =>
           prev.map((l) => (l.id === leadId ? { ...l, stage: stage || null } : l))
         );
       } catch {
         setError("فشل في تغيير المرحلة");
+      }
+    });
+  };
+
+  // تأكيد الحجز
+  const handleBookingConfirm = () => {
+    if (!bookingModal || !bookingDate || !bookingService.trim()) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await changeLeadStage(bookingModal.leadId, bookingModal.stageId);
+        await createBooking({
+          leadId: bookingModal.leadId,
+          bookingDate,
+          bookingService: bookingService.trim(),
+          bookingNotes: bookingNotes || undefined,
+        });
+        const stage = stages.find((s) => s.id === bookingModal.stageId);
+        setLeads((prev) =>
+          prev.map((l) => (l.id === bookingModal.leadId ? { ...l, stage: stage || null } : l))
+        );
+        setBookingModal(null);
+        setBookingDate("");
+        setBookingService("");
+        setBookingNotes("");
+      } catch {
+        setError("فشل في إنشاء الحجز");
       }
     });
   };
@@ -1564,6 +1607,81 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
             }}
           />
         </Suspense>
+      )}
+
+      {/* نافذة الحجز */}
+      {bookingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setBookingModal(null)}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4 animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold text-surface-900">
+                📅 حجز موعد — {bookingModal.leadName}
+              </h3>
+              <button
+                onClick={() => setBookingModal(null)}
+                className="p-1 rounded-lg hover:bg-surface-100"
+              >
+                <X className="h-5 w-5 text-surface-400" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>تاريخ ووقت الموعد *</Label>
+                <Input
+                  type="datetime-local"
+                  value={bookingDate}
+                  onChange={(e) => setBookingDate(e.target.value)}
+                  dir="ltr"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>الخدمة *</Label>
+                <Input
+                  value={bookingService}
+                  onChange={(e) => setBookingService(e.target.value)}
+                  placeholder="مثال: تنظيف أسنان، فحص عيون..."
+                  maxLength={100}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>ملاحظات (اختياري)</Label>
+                <Input
+                  value={bookingNotes}
+                  onChange={(e) => setBookingNotes(e.target.value)}
+                  placeholder="أي ملاحظات إضافية..."
+                  maxLength={250}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  onClick={handleBookingConfirm}
+                  disabled={!bookingDate || !bookingService.trim() || isPending}
+                  className="flex-1"
+                >
+                  {isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <CalendarClock className="h-4 w-4 me-1" />
+                      تأكيد الحجز
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setBookingModal(null)}>
+                  إلغاء
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

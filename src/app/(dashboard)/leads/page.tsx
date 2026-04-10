@@ -31,13 +31,14 @@ export default async function LeadsPage() {
   }
 
   // جلب المراحل
-  let stagesData: { id: string; name: string; color: string }[] = [];
+  let stagesData: { id: string; name: string; color: string; isBooking: boolean }[] = [];
   try {
     stagesData = await db
       .select({
         id: pipelineStages.id,
         name: pipelineStages.name,
         color: pipelineStages.color,
+        isBooking: pipelineStages.isBooking,
       })
       .from(pipelineStages)
       .where(eq(pipelineStages.tenantId, tenantId))
