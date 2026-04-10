@@ -10,10 +10,20 @@ export default async function BookingsPage() {
   const tenantId = (session.user as Record<string, unknown>).tenantId as string;
   if (!tenantId) redirect("/register");
 
-  const [bookings, summary] = await Promise.all([
-    getBookings(),
-    getBookingsSummary(),
-  ]);
+  let bookings: Awaited<ReturnType<typeof getBookings>> = [];
+  let summary: Awaited<ReturnType<typeof getBookingsSummary>> = {
+    today: [], tomorrow: [], overdue: [],
+    stats: { total: 0, pending: 0, completed: 0, noShow: 0, cancelled: 0 },
+  };
+
+  try {
+    [bookings, summary] = await Promise.all([
+      getBookings(),
+      getBookingsSummary(),
+    ]);
+  } catch {
+    // الأعمدة لم تُنشأ بعد — نعرض صفحة فارغة
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
