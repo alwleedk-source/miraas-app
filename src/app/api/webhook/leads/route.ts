@@ -117,18 +117,17 @@ export async function POST(request: NextRequest) {
     for (const entry of entries) {
       if (!entry.name) continue;
 
-      // 📱 التحقق الذكي من الرقم
+      // 📱 التحقق الذكي من الرقم — رقم غير صالح = لا يُضاف
       let phone: string | null = null;
-      let phoneError: string | null = null;
 
       if (entry.phone) {
         const phoneResult = validateAndNormalizePhone(entry.phone.toString());
         if (phoneResult.valid && phoneResult.phone) {
           phone = phoneResult.phone;
         } else {
-          // رقم غير صالح — نضيف العميل بدون رقم مع ملاحظة
-          phoneError = `الرقم المُدخل غير صالح: ${entry.phone} (${phoneResult.error})`;
+          // رقم غير صالح — تخطي العميل بالكامل
           invalidPhones++;
+          continue;
         }
       }
 
@@ -166,18 +165,13 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
-      // تسجيل النشاط — مع ملاحظة الرقم الخاطئ إن وجد
+      // تسجيل النشاط
       await db.insert(activityLog).values({
         tenantId: webhook.tenantId,
         action: "WEBHOOK_RECEIVED",
         entityType: "lead",
         entityId: lead.id,
-        details: {
-          source: "Google Sheets",
-          leadName: entry.name,
-          campaign: campaignName || null,
-          ...(phoneError && { phoneError }),
-        },
+        details: { source: "Google Sheets", leadName: entry.name, campaign: campaignName || null },
       });
 
       created++;
