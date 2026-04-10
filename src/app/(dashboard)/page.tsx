@@ -5,13 +5,14 @@ import {
   PhoneCall,
   Inbox,
   CalendarClock,
+  CalendarDays,
 } from "lucide-react";
 import { getDashboardStats } from "@/app/actions/leads";
 import { requireAuth } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { activityLog, users, followUps, leads } from "@/db/schema";
-import { eq, and, desc, lte, isNull, sql, count } from "drizzle-orm";
+import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import TodayTasks from "./today-tasks";
 import ActivityLog from "./activity-log";
 
@@ -149,6 +150,31 @@ export default async function DashboardPage() {
     // ignore
   }
 
+  // إحصائيات الحجوزات
+  let todayBookings = 0;
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [result] = await db
+      .select({ count: count() })
+      .from(leads)
+      .where(
+        and(
+          eq(leads.tenantId, tenantId),
+          eq(leads.isDeleted, false),
+          isNotNull(leads.bookingStatus),
+          gte(leads.bookingDate, startOfDay),
+          lte(leads.bookingDate, endOfDay)
+        )
+      );
+    todayBookings = result?.count || 0;
+  } catch {
+    // ignore
+  }
+
   const statCards = [
     {
       title: "إجمالي العملاء",
@@ -174,6 +200,12 @@ export default async function DashboardPage() {
       icon: CalendarClock,
       color: scheduledTasks.length > 0 ? "bg-danger-50 text-danger-600" : "bg-surface-50 text-surface-500",
     },
+    {
+      title: "حجوزات اليوم",
+      value: todayBookings.toString(),
+      icon: CalendarDays,
+      color: todayBookings > 0 ? "bg-purple-50 text-purple-600" : "bg-surface-50 text-surface-500",
+    },
   ];
 
   const totalPipeline = stats.stageBreakdown.reduce(
@@ -195,7 +227,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* بطاقات الإحصائيات */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {statCards.map((stat) => (
           <Card key={stat.title} className="hover:shadow-elevated transition-shadow">
             <CardContent className="p-4 lg:p-5">
