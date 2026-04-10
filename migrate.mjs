@@ -40,6 +40,10 @@ async function migrate() {
     DO $$ BEGIN
       CREATE TYPE notification_type AS ENUM ('NEW_LEAD','LEAD_ASSIGNED','FOLLOW_UP_REMINDER','SYSTEM');
     EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+    DO $$ BEGIN
+      CREATE TYPE booking_status AS ENUM ('PENDING','COMPLETED','ATTENDED_NOT_SUITABLE','CANCELLED','NO_RESPONSE','POSTPONED');
+    EXCEPTION WHEN duplicate_object THEN null; END $$;
   `);
 
   // Create tables
@@ -114,6 +118,7 @@ async function migrate() {
       position INTEGER NOT NULL DEFAULT 0,
       is_default BOOLEAN NOT NULL DEFAULT false,
       is_exclusive BOOLEAN NOT NULL DEFAULT false,
+      is_booking BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
@@ -140,6 +145,10 @@ async function migrate() {
       custom_fields JSONB DEFAULT '{}',
       is_deleted BOOLEAN NOT NULL DEFAULT false,
       welcome_sent_at TIMESTAMPTZ,
+      booking_status booking_status,
+      booking_date TIMESTAMPTZ,
+      booking_service VARCHAR(255),
+      booking_notes TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -220,6 +229,16 @@ async function migrate() {
   `);
 
   console.log("✅ All tables created successfully!");
+
+  // Safe ALTER for existing databases
+  await sql.unsafe(`
+    ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS is_booking BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_status booking_status;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_date TIMESTAMPTZ;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_service VARCHAR(255);
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_notes TEXT;
+  `).catch(() => {});
+
   await sql.end();
 }
 

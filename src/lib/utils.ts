@@ -60,13 +60,51 @@ export function getInitials(name: string): string {
 }
 
 export const PIPELINE_STAGE_DEFAULTS = [
-  { name: "جديد", color: "#3B82F6", position: 0, isDefault: true },
-  { name: "تم التواصل", color: "#EAB308", position: 1, isDefault: false },
-  { name: "مهتم", color: "#F97316", position: 2, isDefault: false },
-  { name: "عرض مُرسل", color: "#8B5CF6", position: 3, isDefault: false },
-  { name: "مُحوّل", color: "#22C55E", position: 4, isDefault: false },
-  { name: "مغلق", color: "#6B7280", position: 5, isDefault: false },
+  { name: "جديد", color: "#3B82F6", position: 0, isDefault: true, isBooking: false },
+  { name: "تم التواصل", color: "#EAB308", position: 1, isDefault: false, isBooking: false },
+  { name: "مهتم", color: "#F97316", position: 2, isDefault: false, isBooking: false },
+  { name: "عرض مُرسل", color: "#8B5CF6", position: 3, isDefault: false, isBooking: false },
+  { name: "مُحوّل", color: "#22C55E", position: 4, isDefault: false, isBooking: false },
+  { name: "حجز", color: "#6D28D9", position: 5, isDefault: false, isBooking: true },
+  { name: "مغلق", color: "#6B7280", position: 6, isDefault: false, isBooking: false },
 ] as const;
+
+export const BOOKING_STATUS_LABELS: Record<string, string> = {
+  PENDING: "بانتظار الموعد",
+  COMPLETED: "حضر — تم الإجراء",
+  ATTENDED_NOT_SUITABLE: "حضر — لم يناسبه",
+  CANCELLED: "ألغى الموعد",
+  NO_RESPONSE: "لم يرد",
+  POSTPONED: "أجّل",
+};
+
+export const BOOKING_STATUS_COLORS: Record<string, string> = {
+  PENDING: "#EAB308",
+  COMPLETED: "#22C55E",
+  ATTENDED_NOT_SUITABLE: "#F97316",
+  CANCELLED: "#6B7280",
+  NO_RESPONSE: "#EF4444",
+  POSTPONED: "#3B82F6",
+};
+
+export const BOOKING_STATUS_ICONS: Record<string, string> = {
+  PENDING: "⏳",
+  COMPLETED: "✅",
+  ATTENDED_NOT_SUITABLE: "😕",
+  CANCELLED: "🚫",
+  NO_RESPONSE: "📵",
+  POSTPONED: "🔄",
+};
+
+export const BOOKING_STATUSES = [
+  "PENDING",
+  "COMPLETED",
+  "ATTENDED_NOT_SUITABLE",
+  "CANCELLED",
+  "NO_RESPONSE",
+  "POSTPONED",
+] as const;
+
 
 export const FOLLOW_UP_TYPE_LABELS: Record<string, string> = {
   CALL: "مكالمة",

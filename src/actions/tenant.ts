@@ -47,6 +47,7 @@ export async function createTenant(input: {
     color: stage.color,
     position: stage.position,
     isDefault: stage.isDefault,
+    isBooking: stage.isBooking,
   }));
   await db.insert(pipelineStages).values(stageValues);
 

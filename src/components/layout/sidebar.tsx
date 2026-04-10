@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Webhook,
   GitBranch,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -32,9 +33,10 @@ interface NavItem {
 const mainNav: NavItem[] = [
   { label: "نظرة عامة", href: "/", icon: <LayoutDashboard className="h-5 w-5" /> },
   { label: "العملاء", href: "/leads", icon: <Users className="h-5 w-5" /> },
+  { label: "الأنابيب", href: "/pipeline", icon: <GitBranch className="h-5 w-5" /> },
+  { label: "الحجوزات", href: "/bookings", icon: <CalendarDays className="h-5 w-5" /> },
   { label: "الفريق", href: "/team", icon: <UserCog className="h-5 w-5" /> },
   { label: "التحليلات", href: "/analytics", icon: <BarChart3 className="h-5 w-5" /> },
-  { label: "الأنابيب", href: "/pipeline", icon: <GitBranch className="h-5 w-5" /> },
 ];
 
 const settingsNav: NavItem[] = [

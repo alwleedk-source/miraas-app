@@ -42,6 +42,15 @@ export const leadPriorityEnum = pgEnum("lead_priority", [
   "URGENT",
 ]);
 
+export const bookingStatusEnum = pgEnum("booking_status", [
+  "PENDING",
+  "COMPLETED",
+  "ATTENDED_NOT_SUITABLE",
+  "CANCELLED",
+  "NO_RESPONSE",
+  "POSTPONED",
+]);
+
 export const followUpTypeEnum = pgEnum("follow_up_type", [
   "CALL",
   "MESSAGE",
@@ -163,6 +172,7 @@ export const pipelineStages = pgTable("pipeline_stages", {
   position: integer("position").notNull().default(0),
   isDefault: boolean("is_default").default(false).notNull(),
   isExclusive: boolean("is_exclusive").default(false).notNull(),
+  isBooking: boolean("is_booking").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -197,6 +207,11 @@ export const leads = pgTable("leads", {
   customFields: jsonb("custom_fields").default({}).$type<Record<string, string>>(),
   isDeleted: boolean("is_deleted").default(false).notNull(),
   welcomeSentAt: timestamp("welcome_sent_at", { withTimezone: true }),
+  // حقول الحجز
+  bookingStatus: bookingStatusEnum("booking_status"),
+  bookingDate: timestamp("booking_date", { withTimezone: true }),
+  bookingService: varchar("booking_service", { length: 255 }),
+  bookingNotes: text("booking_notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
