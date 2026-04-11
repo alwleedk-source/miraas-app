@@ -180,6 +180,11 @@ export function validateAndNormalizePhone(
   // تنظيف أولي — إزالة المسافات والشرطات والأقواس
   let cleaned = raw.trim().replace(/[\s\-\(\)\.]/g, "");
 
+  // 🔤 تحويل الأرقام العربية/الفارسية إلى إنجليزية
+  cleaned = cleaned
+    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+    .replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString());
+
   // تحويل 00 البادئة إلى + (صيغة دولية قديمة)
   if (cleaned.startsWith("00") && cleaned.length > 6) {
     cleaned = "+" + cleaned.slice(2);

@@ -117,24 +117,31 @@ export async function POST(request: NextRequest) {
     for (const entry of entries) {
       if (!entry.name) continue;
 
-      // 📱 التحقق الذكي من الرقم — رقم غير صالح = لا يُضاف
+      // 📱 التحقق من الرقم — نحاول التنسيق، وإذا فشل نحفظه كما هو
       let phone: string | null = null;
 
       if (entry.phone) {
-        const phoneResult = validateAndNormalizePhone(entry.phone.toString());
+        const rawPhone = entry.phone.toString().trim();
+        const phoneResult = validateAndNormalizePhone(rawPhone);
         if (phoneResult.valid && phoneResult.phone) {
           phone = phoneResult.phone;
         } else {
-          // رقم غير صالح — تخطي العميل بالكامل
-          invalidPhones++;
-          continue;
+          // الرقم غير صالح — نحفظه منظّفاً (فقط أرقام مع +) بدلاً من رفض العميل
+          const cleaned = rawPhone
+            .replace(/[٠-٩]/g, (d: string) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+            .replace(/[۰-۹]/g, (d: string) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
+            .replace(/[^\d+]/g, "");
+          phone = cleaned || null;
+          if (phone) invalidPhones++;
         }
       }
 
       if (phone) {
-        const existing = await db.query.leads.findFirst({
-          where: and(eq(leads.tenantId, webhook.tenantId), eq(leads.phone, phone)),
-        });
+        const [existing] = await db
+          .select({ id: leads.id, isDeleted: leads.isDeleted })
+          .from(leads)
+          .where(and(eq(leads.tenantId, webhook.tenantId), eq(leads.phone, phone)))
+          .limit(1);
 
         if (existing && !existing.isDeleted) { skippedDuplicate++; continue; }
         if (existing && existing.isDeleted) { skippedDeleted++; continue; }

@@ -230,15 +230,25 @@ async function migrate() {
 
   console.log("✅ All tables created successfully!");
 
-  // Safe ALTER for existing databases
-  await sql.unsafe(`
-    ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS is_booking BOOLEAN NOT NULL DEFAULT false;
-    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_status booking_status;
-    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_date TIMESTAMPTZ;
-    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_service VARCHAR(255);
-    ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_notes TEXT;
-  `).catch(() => {});
+  // Safe ALTER for existing databases — run each separately
+  const alters = [
+    "ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS is_booking BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_status booking_status",
+    "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_date TIMESTAMPTZ",
+    "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_service VARCHAR(255)",
+    "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_notes TEXT",
+  ];
 
+  for (const alter of alters) {
+    try {
+      await sql.unsafe(alter);
+      console.log("  ✅", alter.split("ADD COLUMN")[1]?.trim() || alter);
+    } catch (e) {
+      console.warn("  ⚠️ ALTER skipped:", e.message);
+    }
+  }
+
+  console.log("✅ Migration complete!");
   await sql.end();
 }
 

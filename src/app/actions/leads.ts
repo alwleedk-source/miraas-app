@@ -294,6 +294,16 @@ export async function getLeads(options?: {
   const [data, [{ total }]] = await Promise.all([
     db.query.leads.findMany({
       where: searchClause,
+      columns: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        company: true,
+        priority: true,
+        welcomeSentAt: true,
+        createdAt: true,
+      },
       with: {
         assignedUser: { columns: { id: true, name: true, image: true } },
         stage: { columns: { id: true, name: true, color: true } },
@@ -321,6 +331,17 @@ export async function getLeadById(leadId: string) {
 
   const lead = await db.query.leads.findFirst({
     where: and(eq(leads.id, leadId), eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)),
+    columns: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      company: true,
+      priority: true,
+      welcomeSentAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
     with: {
       assignedUser: { columns: { id: true, name: true, image: true, email: true } },
       stage: true,
@@ -550,12 +571,14 @@ export async function bulkImportLeads(input: {
 
     // فحص التكرار
     if (phone) {
-      const existing = await db.query.leads.findFirst({
-        where: and(
-          eq(leads.tenantId, tenantId),
-          eq(leads.phone, phone)
-        ),
-      });
+      const [existing] = await db
+          .select({ id: leads.id })
+          .from(leads)
+          .where(and(
+            eq(leads.tenantId, tenantId),
+            eq(leads.phone, phone)
+          ))
+          .limit(1);
 
       if (existing) {
         skipped++;
