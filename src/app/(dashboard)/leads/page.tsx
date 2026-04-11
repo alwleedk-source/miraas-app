@@ -2,7 +2,7 @@ import { getLeads } from "@/app/actions/leads";
 import { requireAuth } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { pipelineStages, users, tags } from "@/db/schema";
+import { pipelineStages, users, tags, services } from "@/db/schema";
 import { eq, asc, and } from "drizzle-orm";
 import LeadsClient from "./leads-client";
 
@@ -85,6 +85,18 @@ export default async function LeadsPage() {
     // ignore
   }
 
+  // جلب الخدمات النشطة
+  let servicesData: { id: string; name: string }[] = [];
+  try {
+    servicesData = await db
+      .select({ id: services.id, name: services.name })
+      .from(services)
+      .where(and(eq(services.tenantId, tenantId), eq(services.isActive, true)))
+      .orderBy(asc(services.name));
+  } catch {
+    // ignore
+  }
+
   return (
     <LeadsClient
       initialLeads={leadsData.data as Parameters<typeof LeadsClient>[0]["initialLeads"]}
@@ -93,6 +105,7 @@ export default async function LeadsPage() {
       teamMembers={teamMembers}
       tags={tagsData}
       currentUserRole={userRole}
+      availableServices={servicesData}
     />
   );
 }

@@ -1,13 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Globe, Clock, Palette, Tag } from "lucide-react";
+import { Building2, Globe, Clock, Palette, Tag, Briefcase } from "lucide-react";
 import { requireAuth } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getTenantSettings } from "@/app/actions/settings";
 import SettingsForm from "./settings-form";
 import TagsManager from "./tags-manager";
+import ServicesManager from "./services-manager";
 import { db } from "@/db";
-import { tags } from "@/db/schema";
+import { tags, services } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 
 const planLabels: Record<string, string> = {
@@ -37,6 +38,16 @@ export default async function SettingsPage() {
       .from(tags)
       .where(eq(tags.tenantId, tenantId))
       .orderBy(asc(tags.name));
+  } catch {}
+
+  // جلب الخدمات
+  let servicesData: { id: string; name: string; isActive: boolean }[] = [];
+  try {
+    servicesData = await db
+      .select({ id: services.id, name: services.name, isActive: services.isActive })
+      .from(services)
+      .where(eq(services.tenantId, tenantId))
+      .orderBy(asc(services.createdAt));
   } catch {}
 
   return (
@@ -84,6 +95,20 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <TagsManager initialTags={tagsData} />
+        </CardContent>
+      </Card>
+
+      {/* الخدمات المقدمة */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Briefcase className="h-5 w-5 text-primary-500" />
+            الخدمات المقدمة
+          </CardTitle>
+          <CardDescription>أضف الخدمات التي تقدمها لتظهر في نموذج الحجز (مثل: تنظيف أسنان، استشارة، عملية)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ServicesManager initialServices={servicesData} />
         </CardContent>
       </Card>
 

@@ -190,6 +190,18 @@ export const leadSources = pgTable("lead_sources", {
 });
 
 // ============================================
+// 4b. Services (الخدمات المقدمة)
+// ============================================
+
+export const services = pgTable("services", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
 // 5. Leads (العملاء المحتملون)
 // ============================================
 
@@ -374,6 +386,10 @@ export const pipelineStagesRelations = relations(pipelineStages, ({ one, many })
 export const leadSourcesRelations = relations(leadSources, ({ one, many }) => ({
   tenant: one(tenants, { fields: [leadSources.tenantId], references: [tenants.id] }),
   leads: many(leads),
+}));
+
+export const servicesRelations = relations(services, ({ one }) => ({
+  tenant: one(tenants, { fields: [services.tenantId], references: [tenants.id] }),
 }));
 
 export const tagsRelations = relations(tags, ({ one, many }) => ({

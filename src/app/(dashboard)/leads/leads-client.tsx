@@ -92,6 +92,7 @@ interface Props {
   teamMembers?: TeamMember[];
   tags?: TagData[];
   currentUserRole?: string;
+  availableServices?: { id: string; name: string }[];
 }
 
 type FollowUpType = "CALL" | "MESSAGE" | "MEETING" | "EMAIL" | "WHATSAPP" | "NOTE";
@@ -109,7 +110,7 @@ const FOLLOW_UP_TYPES: { value: FollowUpType; label: string }[] = [
 // Component
 // =============================================
 
-export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole = "OWNER" }: Props) {
+export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole = "OWNER", availableServices = [] }: Props) {
   const [leads, setLeads] = useState(initialLeads);
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [searchQuery, setSearchQuery] = useState("");
@@ -166,7 +167,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   // نافذة الحجز
   const [bookingModal, setBookingModal] = useState<{ leadId: string; stageId: string; leadName: string } | null>(null);
   const [bookingDate, setBookingDate] = useState("");
-  const [bookingService, setBookingService] = useState("");
+  const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [bookingNotes, setBookingNotes] = useState("");
 
   // جلب المتابعات عند اختيار عميل
@@ -394,7 +395,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
 
   // تأكيد الحجز
   const handleBookingConfirm = () => {
-    if (!bookingModal || !bookingDate || !bookingService.trim()) return;
+    if (!bookingModal || !bookingDate || selectedServices.length === 0) return;
     setError(null);
     startTransition(async () => {
       try {
@@ -402,7 +403,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
         await createBooking({
           leadId: bookingModal.leadId,
           bookingDate,
-          bookingService: bookingService.trim(),
+          bookingService: selectedServices.join("، "),
           bookingNotes: bookingNotes || undefined,
         });
         const stage = stages.find((s) => s.id === bookingModal.stageId);
@@ -411,7 +412,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
         );
         setBookingModal(null);
         setBookingDate("");
-        setBookingService("");
+        setSelectedServices([]);
         setBookingNotes("");
       } catch {
         setError("فشل في إنشاء الحجز");
@@ -1647,13 +1648,38 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
               </div>
 
               <div className="space-y-2">
-                <Label>الخدمة *</Label>
-                <Input
-                  value={bookingService}
-                  onChange={(e) => setBookingService(e.target.value)}
-                  placeholder="مثال: تنظيف أسنان، فحص عيون..."
-                  maxLength={100}
-                />
+                <Label>الخدمات *</Label>
+                {availableServices.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {availableServices.map((svc) => {
+                      const isSelected = selectedServices.includes(svc.name);
+                      return (
+                        <button
+                          key={svc.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedServices((prev) =>
+                              isSelected
+                                ? prev.filter((s) => s !== svc.name)
+                                : [...prev, svc.name]
+                            );
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
+                            isSelected
+                              ? "border-primary-500 bg-primary-50 text-primary-700"
+                              : "border-surface-200 bg-white text-surface-600 hover:border-surface-300"
+                          }`}
+                        >
+                          {isSelected && "✓ "}{svc.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-surface-400 p-3 rounded-lg bg-surface-50 border border-dashed border-surface-200">
+                    لم تُضف خدمات بعد. <a href="/settings" className="text-primary-600 underline">أضفها من الإعدادات</a>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -1669,7 +1695,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
               <div className="flex gap-2 pt-2">
                 <Button
                   onClick={handleBookingConfirm}
-                  disabled={!bookingDate || !bookingService.trim() || isPending}
+                  disabled={!bookingDate || selectedServices.length === 0 || isPending}
                   className="flex-1"
                 >
                   {isPending ? (
