@@ -276,22 +276,9 @@ export function validateAndNormalizePhone(
     }
   }
 
-  // 🔄 محاولة أخيرة: نجرب مع مفاتيح الدول الشائعة
-  // (للأرقام مثل 774444400 التي قد تكون يمنية +967)
-  if (digitsOnly.length >= 7 && digitsOnly.length <= 12) {
-    const commonCodes = ["966", "971", "974", "973", "968", "965", "967", "962", "964"];
-    for (const code of commonCodes) {
-      const attempt = parsePhoneNumberFromString("+" + code + digitsOnly);
-      if (attempt && attempt.isValid()) {
-        return {
-          valid: true,
-          phone: attempt.format("E.164"),
-          country: attempt.country || null,
-          error: null,
-        };
-      }
-    }
-  }
+  // ⚠️ رقم غامض بدون مفتاح دولي ولا يطابق أي نمط سعودي
+  // نحفظه كأرقام خام بدلاً من تخمين الدولة (التخمين يسبب أخطاء)
+  // مثال: 774444400 → يُحفظ كـ "774444400" ليعدّله المستخدم يدوياً
 
   // فشل كل المحاولات — نحدد سبب الرفض
   if (digitsOnly.length < 4) {

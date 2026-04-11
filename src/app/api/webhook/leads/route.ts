@@ -117,49 +117,38 @@ export async function POST(request: NextRequest) {
     for (const entry of entries) {
       if (!entry.name) continue;
 
-      // 📱 التحقق من الرقم — نحاول التنسيق، وإذا فشل نحفظه كما هو
-      let phone: string | null = null;
+      // 📱 التحقق من الرقم — يجب أن يكون موجوداً وصالحاً
+      if (!entry.phone) continue; // ❌ لا نسحب بدون رقم
 
-      if (entry.phone) {
-        const rawPhone = entry.phone.toString().trim();
-        const phoneResult = validateAndNormalizePhone(rawPhone);
-        if (phoneResult.valid && phoneResult.phone) {
-          phone = phoneResult.phone;
-        } else {
-          // الرقم غير صالح — نحفظه منظّفاً (فقط أرقام مع +) بدلاً من رفض العميل
-          const cleaned = rawPhone
-            .replace(/[٠-٩]/g, (d: string) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
-            .replace(/[۰-۹]/g, (d: string) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
-            .replace(/[^\d+]/g, "");
-          phone = cleaned || null;
-          if (phone) invalidPhones++;
-        }
-      }
+      const rawPhone = entry.phone.toString().trim();
+      if (!rawPhone || rawPhone === "0" || rawPhone.length < 4) continue; // ❌ رقم غير حقيقي
 
-      if (phone) {
-        // فحص التكرار بالرقم
-        const [existing] = await db
-          .select({ id: leads.id, isDeleted: leads.isDeleted })
-          .from(leads)
-          .where(and(eq(leads.tenantId, webhook.tenantId), eq(leads.phone, phone)))
-          .limit(1);
+      const phoneResult = validateAndNormalizePhone(rawPhone);
+      let phone: string;
 
-        if (existing && !existing.isDeleted) { skippedDuplicate++; continue; }
-        if (existing && existing.isDeleted) { skippedDeleted++; continue; }
+      if (phoneResult.valid && phoneResult.phone) {
+        // ✅ رقم صالح بصيغة E.164 (مع مفتاح دولي)
+        phone = phoneResult.phone;
       } else {
-        // بدون رقم — فحص التكرار بالاسم لمنع إنشاء سجلات مكررة
-        const [existingByName] = await db
-          .select({ id: leads.id, isDeleted: leads.isDeleted })
-          .from(leads)
-          .where(and(
-            eq(leads.tenantId, webhook.tenantId),
-            eq(leads.name, entry.name.trim()),
-            eq(leads.isDeleted, false)
-          ))
-          .limit(1);
-
-        if (existingByName) { skippedDuplicate++; continue; }
+        // ⚠️ رقم غير مؤكد — نحفظه منظّفاً ليعدّله المستخدم يدوياً
+        const cleaned = rawPhone
+          .replace(/[٠-٩]/g, (d: string) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+          .replace(/[۰-۹]/g, (d: string) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
+          .replace(/[^\d+]/g, "");
+        if (!cleaned || cleaned.length < 4) continue; // ❌ رقم غير حقيقي
+        phone = cleaned;
+        invalidPhones++;
       }
+
+      // فحص التكرار بالرقم
+      const [existing] = await db
+        .select({ id: leads.id, isDeleted: leads.isDeleted })
+        .from(leads)
+        .where(and(eq(leads.tenantId, webhook.tenantId), eq(leads.phone, phone)))
+        .limit(1);
+
+      if (existing && !existing.isDeleted) { skippedDuplicate++; continue; }
+      if (existing && existing.isDeleted) { skippedDeleted++; continue; }
 
       // Fix #1: حملة لكل عميل
       let sourceId: string | null = null;
@@ -177,7 +166,7 @@ export async function POST(request: NextRequest) {
         .values({
           tenantId: webhook.tenantId,
           name: entry.name,
-          phone: phone || null,
+          phone: phone,
           email: entry.email || null,
           priority: "MEDIUM",
           stageId: defaultStage?.id || null,
