@@ -475,16 +475,50 @@ export default function WhatsAppSettingsPage() {
               <h4 className="font-semibold text-sm text-surface-900">قالب تذكير الحجوزات (اختياري)</h4>
             </div>
             <p className="text-xs text-surface-500">
-              يُرسل تلقائياً قبل الموعد بيوم — أنشئ Template من نوع Utility باسم مثل <code className="bg-surface-100 px-1 rounded">booking_reminder</code>
+              يُرسل تلقائياً للعميل قبل موعده بيوم عبر واتساب — كل صباح الساعة 8
             </p>
+
+            {/* خطوات التفعيل */}
+            <div className="p-3 rounded-lg bg-primary-50 border border-primary-200 text-xs text-primary-700 space-y-2">
+              <p className="font-bold">📌 خطوات التفعيل:</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-primary-600">
+                <li>
+                  ادخل{" "}
+                  <a href="https://business.facebook.com/wa/manage/message-templates/" target="_blank" rel="noopener noreferrer" className="font-bold underline hover:text-primary-800">
+                    Meta Business Manager
+                  </a>
+                  {" "}→ أنشئ Template جديد من نوع <strong>Utility</strong>
+                </li>
+                <li>سمّه <code className="bg-primary-100 px-1 rounded">booking_reminder</code> وانتظر <strong>1-5 دقائق</strong> حتى توافق عليه Meta تلقائياً</li>
+                <li>بعد الموافقة → اكتب اسم القالب هنا في الحقل أدناه</li>
+              </ol>
+            </div>
+
+            {/* تحذير */}
+            <div className="p-2.5 rounded-lg bg-warning-50 border border-warning-200 text-xs text-warning-700">
+              <p>⚠️ <strong>مهم:</strong> لن تُرسل التذكيرات إلا بعد إنشاء القالب في Meta والموافقة عليه. كتابة اسم قالب غير موجود لن يسبب مشاكل — فقط لن يُرسل شيء.</p>
+            </div>
+
+            {/* المتغيرات */}
             <div className="p-2.5 bg-success-50/50 rounded-lg border border-success-200 text-xs text-success-700">
-              <p className="font-medium mb-1">📋 المتغيرات المطلوبة:</p>
+              <p className="font-medium mb-1">📋 المتغيرات المطلوبة في القالب:</p>
               <p dir="rtl">{`{{1}}`} = اسم العميل &nbsp;|&nbsp; {`{{2}}`} = تاريخ ووقت الموعد &nbsp;|&nbsp; {`{{3}}`} = الخدمة</p>
             </div>
+
+            {/* مثال نص القالب */}
+            <div className="p-2.5 bg-surface-50 rounded-lg border border-surface-200 text-xs" dir="rtl">
+              <p className="text-surface-400 text-[10px] mb-1 font-medium">مثال نص القالب (انسخه عند الإنشاء):</p>
+              <p className="text-surface-700 leading-relaxed">
+                {`مرحباً {{1}} 👋`}<br />
+                {`تذكير بموعدك {{2}} — {{3}}`}<br />
+                نتطلع لرؤيتك!
+              </p>
+            </div>
+
             <Input
               value={reminderTemplateName}
               onChange={(e) => setReminderTemplateName(e.target.value)}
-              placeholder="مثال: booking_reminder (اتركه فارغاً لتعطيل التذكير)"
+              placeholder="أدخل اسم القالب بعد موافقة Meta عليه"
               dir="ltr"
               className="text-left font-mono"
               maxLength={50}
