@@ -249,6 +249,8 @@ export const whatsappConfigs = pgTable("whatsapp_configs", {
   templateName: varchar("template_name", { length: 255 }),
   templateLanguage: varchar("template_language", { length: 10 }).default("ar"),
   templateParams: jsonb("template_params").default(["name"]).$type<string[]>(),
+  // قالب تذكير الحجوزات
+  reminderTemplateName: varchar("reminder_template_name", { length: 255 }),
   isActive: boolean("is_active").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -237,6 +237,7 @@ async function migrate() {
     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_date TIMESTAMPTZ",
     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_service VARCHAR(255)",
     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_notes TEXT",
+    "ALTER TABLE whatsapp_configs ADD COLUMN IF NOT EXISTS reminder_template_name VARCHAR(255)",
   ];
 
   for (const alter of alters) {

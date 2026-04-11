@@ -109,21 +109,33 @@ export async function updateBookingStatus(input: {
 // جلب الحجوزات
 // =============================================
 
+// الأعمدة المطلوبة للحجوزات — تطابق type Booking في booking-board.tsx
+const bookingColumns = {
+  id: leads.id,
+  name: leads.name,
+  phone: leads.phone,
+  bookingStatus: leads.bookingStatus,
+  bookingDate: leads.bookingDate,
+  bookingService: leads.bookingService,
+  bookingNotes: leads.bookingNotes,
+};
+
 export async function getBookings() {
   const session = await requireAuth();
   const tenantId = (session.user as Record<string, unknown>).tenantId as string;
   if (!tenantId) throw new Error("unauthorized");
 
-  const bookings = await db.query.leads.findMany({
-    where: and(
-      eq(leads.tenantId, tenantId),
-      eq(leads.isDeleted, false),
-      isNotNull(leads.bookingStatus)
-    ),
-    orderBy: (leads, { asc }) => [asc(leads.bookingDate)],
-  });
-
-  return bookings;
+  return db
+    .select(bookingColumns)
+    .from(leads)
+    .where(
+      and(
+        eq(leads.tenantId, tenantId),
+        eq(leads.isDeleted, false),
+        isNotNull(leads.bookingStatus)
+      )
+    )
+    .orderBy(leads.bookingDate);
 }
 
 // =============================================
@@ -141,39 +153,48 @@ export async function getBookingsSummary() {
   const tomorrowEnd = new Date(todayStart.getTime() + 172800000);
 
   // مواعيد اليوم
-  const todayBookings = await db.query.leads.findMany({
-    where: and(
-      eq(leads.tenantId, tenantId),
-      eq(leads.isDeleted, false),
-      isNotNull(leads.bookingStatus),
-      gte(leads.bookingDate, todayStart),
-      lte(leads.bookingDate, todayEnd)
-    ),
-    orderBy: (leads, { asc }) => [asc(leads.bookingDate)],
-  });
+  const todayBookings = await db
+    .select(bookingColumns)
+    .from(leads)
+    .where(
+      and(
+        eq(leads.tenantId, tenantId),
+        eq(leads.isDeleted, false),
+        isNotNull(leads.bookingStatus),
+        gte(leads.bookingDate, todayStart),
+        lte(leads.bookingDate, todayEnd)
+      )
+    )
+    .orderBy(leads.bookingDate);
 
   // مواعيد الغد
-  const tomorrowBookings = await db.query.leads.findMany({
-    where: and(
-      eq(leads.tenantId, tenantId),
-      eq(leads.isDeleted, false),
-      isNotNull(leads.bookingStatus),
-      gte(leads.bookingDate, todayEnd),
-      lte(leads.bookingDate, tomorrowEnd)
-    ),
-    orderBy: (leads, { asc }) => [asc(leads.bookingDate)],
-  });
+  const tomorrowBookings = await db
+    .select(bookingColumns)
+    .from(leads)
+    .where(
+      and(
+        eq(leads.tenantId, tenantId),
+        eq(leads.isDeleted, false),
+        isNotNull(leads.bookingStatus),
+        gte(leads.bookingDate, todayEnd),
+        lte(leads.bookingDate, tomorrowEnd)
+      )
+    )
+    .orderBy(leads.bookingDate);
 
   // المتأخرة (فات الموعد ولا زالت PENDING)
-  const overdueBookings = await db.query.leads.findMany({
-    where: and(
-      eq(leads.tenantId, tenantId),
-      eq(leads.isDeleted, false),
-      eq(leads.bookingStatus, "PENDING"),
-      lte(leads.bookingDate, todayStart)
-    ),
-    orderBy: (leads, { desc }) => [desc(leads.bookingDate)],
-  });
+  const overdueBookings = await db
+    .select(bookingColumns)
+    .from(leads)
+    .where(
+      and(
+        eq(leads.tenantId, tenantId),
+        eq(leads.isDeleted, false),
+        eq(leads.bookingStatus, "PENDING"),
+        lte(leads.bookingDate, todayStart)
+      )
+    )
+    .orderBy(leads.bookingDate);
 
   // إحصائيات
   const [stats] = await db

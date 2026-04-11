@@ -29,6 +29,7 @@ import {
   Zap,
   CircleAlert,
   CheckCheck,
+  CalendarDays,
 } from "lucide-react";
 import { getWhatsappConfig, saveWhatsappConfig, saveWhatsappApiKey, testWhatsappConnectionAction } from "@/app/actions/settings";
 
@@ -56,6 +57,9 @@ export default function WhatsAppSettingsPage() {
   const [templateLanguage, setTemplateLang] = useState("ar");
   const [templateParams, setTemplateParams] = useState<string[]>(["name"]);
 
+  // قالب التذكير بالحجوزات
+  const [reminderTemplateName, setReminderTemplateName] = useState("");
+
   // دليل نصائح القوالب
   const [showGuide, setShowGuide] = useState(false);
 
@@ -70,6 +74,7 @@ export default function WhatsAppSettingsPage() {
           setTemplateName(config.templateName || "");
           setTemplateLang(config.templateLanguage || "ar");
           setTemplateParams((config.templateParams as string[]) || ["name"]);
+          setReminderTemplateName((config as Record<string, unknown>).reminderTemplateName as string || "");
         }
       })
       .catch(() => {});
@@ -108,7 +113,7 @@ export default function WhatsAppSettingsPage() {
     }
     startTransition(async () => {
       try {
-        await saveWhatsappConfig({ templateName, templateLanguage, templateParams });
+        await saveWhatsappConfig({ templateName, templateLanguage, templateParams, reminderTemplateName: reminderTemplateName || undefined });
         setTemplateSaved(true);
         setTimeout(() => setTemplateSaved(false), 2000);
       } catch {
@@ -462,6 +467,29 @@ export default function WhatsAppSettingsPage() {
               "حفظ إعدادات القالب"
             )}
           </Button>
+
+          {/* قالب تذكير الحجوزات */}
+          <div className="pt-4 mt-4 border-t border-surface-200 space-y-3">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-success-500" />
+              <h4 className="font-semibold text-sm text-surface-900">قالب تذكير الحجوزات (اختياري)</h4>
+            </div>
+            <p className="text-xs text-surface-500">
+              يُرسل تلقائياً قبل الموعد بيوم — أنشئ Template من نوع Utility باسم مثل <code className="bg-surface-100 px-1 rounded">booking_reminder</code>
+            </p>
+            <div className="p-2.5 bg-success-50/50 rounded-lg border border-success-200 text-xs text-success-700">
+              <p className="font-medium mb-1">📋 المتغيرات المطلوبة:</p>
+              <p dir="rtl">{`{{1}}`} = اسم العميل &nbsp;|&nbsp; {`{{2}}`} = تاريخ ووقت الموعد &nbsp;|&nbsp; {`{{3}}`} = الخدمة</p>
+            </div>
+            <Input
+              value={reminderTemplateName}
+              onChange={(e) => setReminderTemplateName(e.target.value)}
+              placeholder="مثال: booking_reminder (اتركه فارغاً لتعطيل التذكير)"
+              dir="ltr"
+              className="text-left font-mono"
+              maxLength={50}
+            />
+          </div>
         </CardContent>
       </Card>
 
