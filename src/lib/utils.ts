@@ -232,10 +232,41 @@ export function validateAndNormalizePhone(
     }
   }
 
-  // فشل كل المحاولات — نحدد سبب الرفض
+  // 🔄 محاولة ذكية: أرقام سعودية بدون الصفر الأول
+  // مثال: 501234569 → 0501234569 → +966501234569
   const digitsOnly = cleaned.replace(/\D/g, "");
 
-  if (digitsOnly.length < 7) {
+  if (digitsOnly.length === 9 && digitsOnly.startsWith("5")) {
+    const withZero = parsePhoneNumberFromString("0" + digitsOnly, defaultCountry);
+    if (withZero && withZero.isValid()) {
+      return {
+        valid: true,
+        phone: withZero.format("E.164"),
+        country: withZero.country || null,
+        error: null,
+      };
+    }
+  }
+
+  // 🔄 محاولة أخيرة: نجرب مع مفاتيح الدول الشائعة
+  // (للأرقام مثل 774444400 التي قد تكون يمنية +967)
+  if (digitsOnly.length >= 7 && digitsOnly.length <= 12) {
+    const commonCodes = ["966", "971", "974", "973", "968", "965", "967", "962", "964"];
+    for (const code of commonCodes) {
+      const attempt = parsePhoneNumberFromString("+" + code + digitsOnly);
+      if (attempt && attempt.isValid()) {
+        return {
+          valid: true,
+          phone: attempt.format("E.164"),
+          country: attempt.country || null,
+          error: null,
+        };
+      }
+    }
+  }
+
+  // فشل كل المحاولات — نحدد سبب الرفض
+  if (digitsOnly.length < 4) {
     return { valid: false, phone: null, country: null, error: "رقم غير مكتمل" };
   }
   if (digitsOnly.length > 15) {
