@@ -31,18 +31,33 @@ export default async function LeadsPage() {
   }
 
   // جلب المراحل
-  let stagesData: { id: string; name: string; color: string; isBooking: boolean }[] = [];
+  let stagesData: { id: string; name: string; color: string; isBooking?: boolean }[] = [];
   try {
     stagesData = await db
       .select({
         id: pipelineStages.id,
         name: pipelineStages.name,
         color: pipelineStages.color,
-        isBooking: pipelineStages.isBooking,
       })
       .from(pipelineStages)
       .where(eq(pipelineStages.tenantId, tenantId))
       .orderBy(asc(pipelineStages.position));
+
+    // محاولة جلب isBooking بشكل آمن (العمود قد لا يكون موجوداً بعد)
+    try {
+      const stagesWithBooking = await db
+        .select({
+          id: pipelineStages.id,
+          isBooking: pipelineStages.isBooking,
+        })
+        .from(pipelineStages)
+        .where(eq(pipelineStages.tenantId, tenantId));
+
+      const bookingMap = new Map(stagesWithBooking.map((s) => [s.id, s.isBooking]));
+      stagesData = stagesData.map((s) => ({ ...s, isBooking: bookingMap.get(s.id) || false }));
+    } catch {
+      // is_booking column doesn't exist yet — ignore
+    }
   } catch {
     // ignore
   }

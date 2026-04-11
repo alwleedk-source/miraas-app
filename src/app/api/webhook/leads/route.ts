@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
           sourceId,
           createdAt: isValidDate ? joinedAt : new Date(),
         })
-        .returning();
+        .returning({ id: leads.id, name: leads.name });
 
       // تسجيل النشاط
       await db.insert(activityLog).values({

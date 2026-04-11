@@ -30,7 +30,7 @@ export async function createBooking(input: {
       updatedAt: new Date(),
     })
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
-    .returning();
+    .returning({ id: leads.id, name: leads.name });
 
   if (!lead) throw new Error("not_found");
 
@@ -83,7 +83,7 @@ export async function updateBookingStatus(input: {
     .update(leads)
     .set(updateData)
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
-    .returning();
+    .returning({ id: leads.id, name: leads.name });
 
   if (!lead) throw new Error("not_found");
 

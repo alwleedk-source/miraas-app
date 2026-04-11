@@ -98,7 +98,7 @@ export async function createLead(input: CreateLeadInput) {
       stageId: stageId || null,
       assignedTo,
     })
-    .returning();
+    .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
 
   // تسجيل النشاط
   await db.insert(activityLog).values({
@@ -135,7 +135,7 @@ export async function updateLead(input: UpdateLeadInput) {
       updatedAt: new Date(),
     })
     .where(and(eq(leads.id, input.id), eq(leads.tenantId, tenantId)))
-    .returning();
+    .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
 
   if (!updated) throw new Error("العميل غير موجود");
 
@@ -175,7 +175,7 @@ export async function changeLeadStage(leadId: string, stageId: string) {
     .update(leads)
     .set({ stageId, updatedAt: new Date() })
     .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
-    .returning();
+    .returning({ id: leads.id, name: leads.name });
 
   if (!updated) throw new Error("العميل غير موجود");
 

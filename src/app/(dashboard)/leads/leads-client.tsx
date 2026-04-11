@@ -306,11 +306,17 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
           stageId: newLead.stageId || undefined,
           sourceName: newLead.source || undefined,
         });
-        // Add to local state with stage info
-        const stage = stages.find((s) => s.id === lead.stageId);
+        // Add to local state with stage info (reconstructed from input)
+        const stage = newLead.stageId ? stages.find((s) => s.id === newLead.stageId) : null;
         setLeads((prev) => [
           {
-            ...lead,
+            id: lead.id,
+            name: lead.name,
+            phone: lead.phone,
+            email: newLead.email || null,
+            company: null,
+            priority: lead.priority,
+            createdAt: new Date(),
             assignedUser: null,
             stage: stage || null,
             source: null,
