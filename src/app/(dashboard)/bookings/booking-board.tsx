@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateBookingStatus } from "@/app/actions/bookings";
+import { updateBookingStatus, updateBookingDate } from "@/app/actions/bookings";
 import {
   BOOKING_STATUSES,
   BOOKING_STATUS_LABELS,
   BOOKING_STATUS_COLORS,
   BOOKING_STATUS_ICONS,
 } from "@/lib/utils";
-import { Phone, MessageCircle, Calendar, X, Loader2 } from "lucide-react";
+import { Phone, MessageCircle, Calendar, X, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,11 +21,20 @@ type Booking = {
   bookingDate: Date | null;
   bookingService: string | null;
   bookingNotes: string | null;
+  sourceName: string | null;
 };
 
 type PostponeData = {
   leadId: string;
   leadName: string;
+};
+
+type EditData = {
+  leadId: string;
+  leadName: string;
+  bookingDate: string;
+  bookingService: string;
+  bookingNotes: string;
 };
 
 export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
@@ -34,6 +43,7 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
   const [postponeModal, setPostponeModal] = useState<PostponeData | null>(null);
   const [postponeDate, setPostponeDate] = useState("");
   const [postponeReason, setPostponeReason] = useState("");
+  const [editModal, setEditModal] = useState<EditData | null>(null);
 
   const handleDrop = (status: string, leadId: string) => {
     if (status === "POSTPONED") {
@@ -62,6 +72,31 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
     });
   };
 
+  const openEditModal = (booking: Booking) => {
+    setEditModal({
+      leadId: booking.id,
+      leadName: booking.name,
+      bookingDate: booking.bookingDate
+        ? new Date(booking.bookingDate).toISOString().slice(0, 16)
+        : "",
+      bookingService: booking.bookingService || "",
+      bookingNotes: booking.bookingNotes || "",
+    });
+  };
+
+  const handleEditConfirm = () => {
+    if (!editModal || !editModal.bookingDate) return;
+    startTransition(async () => {
+      await updateBookingDate({
+        leadId: editModal.leadId,
+        bookingDate: editModal.bookingDate,
+        bookingService: editModal.bookingService,
+        bookingNotes: editModal.bookingNotes,
+      });
+      setEditModal(null);
+    });
+  };
+
   const grouped = BOOKING_STATUSES.reduce(
     (acc, status) => {
       acc[status] = bookings.filter((b) => b.bookingStatus === status);
@@ -76,7 +111,7 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
         {BOOKING_STATUSES.map((status) => (
           <div
             key={status}
-            className="min-w-[260px] w-[260px] flex-shrink-0"
+            className="min-w-[280px] w-[280px] flex-shrink-0"
             onDragOver={(e) => {
               e.preventDefault();
               e.currentTarget.classList.add("ring-2", "ring-primary-300");
@@ -117,14 +152,31 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
                     draggedId === booking.id ? "opacity-50 scale-95" : ""
                   }`}
                 >
-                  <p className="font-medium text-sm text-surface-900 mb-1">{booking.name}</p>
+                  {/* الاسم + زر التعديل */}
+                  <div className="flex items-start justify-between mb-1">
+                    <p className="font-medium text-sm text-surface-900">{booking.name}</p>
+                    <button
+                      onClick={() => openEditModal(booking)}
+                      className="p-1 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-primary-500 transition-colors shrink-0"
+                      title="تعديل"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* اسم الحملة */}
+                  {booking.sourceName && (
+                    <p className="text-[10px] text-primary-600 bg-primary-50 rounded-md px-1.5 py-0.5 inline-block mb-1">
+                      📢 {booking.sourceName}
+                    </p>
+                  )}
 
                   {booking.bookingService && (
                     <p className="text-xs text-surface-500 mb-1">🏷️ {booking.bookingService}</p>
                   )}
 
                   {booking.bookingDate && (
-                    <p className="text-xs text-surface-500 mb-2">
+                    <p className="text-xs text-surface-500 mb-1">
                       📅{" "}
                       {new Date(booking.bookingDate).toLocaleDateString("ar-SA", {
                         weekday: "short",
@@ -139,15 +191,20 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
                     </p>
                   )}
 
-                  {booking.bookingNotes && status === "POSTPONED" && (
-                    <p className="text-xs text-blue-600 bg-blue-50 rounded-lg p-1.5 mb-2">
-                      {booking.bookingNotes}
+                  {/* الملاحظات — تظهر دائماً */}
+                  {booking.bookingNotes && (
+                    <p className={`text-xs rounded-lg p-1.5 mb-1 ${
+                      status === "POSTPONED"
+                        ? "text-blue-600 bg-blue-50"
+                        : "text-surface-500 bg-surface-50"
+                    }`}>
+                      💬 {booking.bookingNotes}
                     </p>
                   )}
 
                   {/* أزرار التواصل */}
                   {booking.phone && (
-                    <div className="flex items-center gap-1 pt-1 border-t border-surface-50">
+                    <div className="flex items-center gap-1 pt-1.5 border-t border-surface-50">
                       <a
                         href={`tel:${booking.phone}`}
                         className="flex items-center gap-1 text-xs text-surface-500 hover:text-primary-600 p-1 rounded-lg hover:bg-primary-50 transition-colors"
@@ -238,6 +295,80 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
                   )}
                 </Button>
                 <Button variant="outline" onClick={() => setPostponeModal(null)}>
+                  إلغاء
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة تعديل الحجز */}
+      {editModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditModal(null)}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4 animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-surface-900">
+                ✏️ تعديل حجز {editModal.leadName}
+              </h3>
+              <button
+                onClick={() => setEditModal(null)}
+                className="p-1 rounded-lg hover:bg-surface-100"
+              >
+                <X className="h-5 w-5 text-surface-400" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>تاريخ ووقت الموعد *</Label>
+                <Input
+                  type="datetime-local"
+                  value={editModal.bookingDate}
+                  onChange={(e) => setEditModal({ ...editModal, bookingDate: e.target.value })}
+                  dir="ltr"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>الخدمة</Label>
+                <Input
+                  value={editModal.bookingService}
+                  onChange={(e) => setEditModal({ ...editModal, bookingService: e.target.value })}
+                  placeholder="مثال: تنظيف أسنان"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>ملاحظات</Label>
+                <textarea
+                  value={editModal.bookingNotes}
+                  onChange={(e) => setEditModal({ ...editModal, bookingNotes: e.target.value })}
+                  placeholder="ملاحظات إضافية..."
+                  className="flex w-full rounded-lg border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 min-h-[80px] resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  onClick={handleEditConfirm}
+                  disabled={!editModal.bookingDate || isPending}
+                  className="flex-1"
+                >
+                  {isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Pencil className="h-4 w-4" />
+                      حفظ التعديلات
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setEditModal(null)}>
                   إلغاء
                 </Button>
               </div>

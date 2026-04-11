@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, activityLog } from "@/db/schema";
+import { leads, activityLog, leadSources } from "@/db/schema";
 import { eq, and, isNotNull, gte, lte, sql } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -109,7 +109,7 @@ export async function updateBookingStatus(input: {
 // جلب الحجوزات
 // =============================================
 
-// الأعمدة المطلوبة للحجوزات — تطابق type Booking في booking-board.tsx
+// الأعمدة المطلوبة للحجوزات — مع اسم الحملة
 const bookingColumns = {
   id: leads.id,
   name: leads.name,
@@ -118,6 +118,7 @@ const bookingColumns = {
   bookingDate: leads.bookingDate,
   bookingService: leads.bookingService,
   bookingNotes: leads.bookingNotes,
+  sourceName: leadSources.name,
 };
 
 export async function getBookings() {
@@ -128,6 +129,7 @@ export async function getBookings() {
   return db
     .select(bookingColumns)
     .from(leads)
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -156,6 +158,7 @@ export async function getBookingsSummary() {
   const todayBookings = await db
     .select(bookingColumns)
     .from(leads)
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -171,6 +174,7 @@ export async function getBookingsSummary() {
   const tomorrowBookings = await db
     .select(bookingColumns)
     .from(leads)
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -186,6 +190,7 @@ export async function getBookingsSummary() {
   const overdueBookings = await db
     .select(bookingColumns)
     .from(leads)
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -210,10 +215,53 @@ export async function getBookingsSummary() {
       and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false), isNotNull(leads.bookingStatus))
     );
 
+  // إحصائيات حسب الحملة
+  const campaignStats = await db
+    .select({
+      sourceName: sql<string>`COALESCE(${leadSources.name}, 'بدون حملة')`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(leads)
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .where(
+      and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false), isNotNull(leads.bookingStatus))
+    )
+    .groupBy(leadSources.name)
+    .orderBy(sql`count(*) desc`);
+
   return {
     today: todayBookings,
     tomorrow: tomorrowBookings,
     overdue: overdueBookings,
     stats: stats || { total: 0, pending: 0, completed: 0, noShow: 0, cancelled: 0 },
+    campaignStats,
   };
 }
+
+// =============================================
+// تعديل تاريخ الحجز
+// =============================================
+
+export async function updateBookingDate(input: {
+  leadId: string;
+  bookingDate: string;
+  bookingService?: string;
+  bookingNotes?: string;
+}) {
+  const session = await requireAuth();
+  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  if (!tenantId) throw new Error("unauthorized");
+
+  await db
+    .update(leads)
+    .set({
+      bookingDate: new Date(input.bookingDate),
+      ...(input.bookingService !== undefined && { bookingService: input.bookingService }),
+      ...(input.bookingNotes !== undefined && { bookingNotes: input.bookingNotes }),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
+
+  revalidatePath("/bookings");
+}
+
