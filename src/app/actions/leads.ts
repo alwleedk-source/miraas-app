@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, followUps, activityLog, pipelineStages, notifications, leadSources } from "@/db/schema";
+import { leads, followUps, activityLog, pipelineStages, notifications, leadSources, users } from "@/db/schema";
 import { eq, and, desc, asc, ilike, or, count, sql } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -291,33 +291,61 @@ export async function getLeads(options?: {
       )
     : whereClause;
 
-  const [data, [{ total }]] = await Promise.all([
-    db.query.leads.findMany({
-      where: searchClause,
-      columns: {
-        id: true,
-        name: true,
-        phone: true,
-        email: true,
-        company: true,
-        priority: true,
-        welcomeSentAt: true,
-        createdAt: true,
-      },
-      with: {
-        assignedUser: { columns: { id: true, name: true, image: true } },
-        stage: { columns: { id: true, name: true, color: true } },
-        source: { columns: { id: true, name: true, platform: true } },
-      },
-      orderBy: [desc(leads.createdAt)],
-      limit,
-      offset,
-    }),
+  const [rawData, [{ total }]] = await Promise.all([
+    db
+      .select({
+        id: leads.id,
+        name: leads.name,
+        phone: leads.phone,
+        email: leads.email,
+        company: leads.company,
+        priority: leads.priority,
+        welcomeSentAt: leads.welcomeSentAt,
+        createdAt: leads.createdAt,
+        assignedUser: {
+          id: users.id,
+          name: users.name,
+          image: users.image,
+        },
+        stage: {
+          id: pipelineStages.id,
+          name: pipelineStages.name,
+          color: pipelineStages.color,
+        },
+        source: {
+          id: leadSources.id,
+          name: leadSources.name,
+          platform: leadSources.platform,
+        },
+      })
+      .from(leads)
+      .leftJoin(users, eq(leads.assignedTo, users.id))
+      .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
+      .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+      .where(searchClause)
+      .orderBy(desc(leads.createdAt))
+      .limit(limit)
+      .offset(offset),
     db
       .select({ total: count() })
       .from(leads)
       .where(searchClause),
   ]);
+
+  // تحويل النتائج: leftJoin يرجع null للعلاقات الفارغة
+  const data = rawData.map((row) => ({
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    email: row.email,
+    company: row.company,
+    priority: row.priority,
+    welcomeSentAt: row.welcomeSentAt,
+    createdAt: row.createdAt,
+    assignedUser: row.assignedUser?.id ? row.assignedUser : null,
+    stage: row.stage?.id ? row.stage : null,
+    source: row.source?.id ? row.source : null,
+  }));
 
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 }
@@ -329,37 +357,49 @@ export async function getLeads(options?: {
 export async function getLeadById(leadId: string) {
   const { tenantId } = await getTenantId();
 
-  const lead = await db.query.leads.findFirst({
-    where: and(eq(leads.id, leadId), eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)),
-    columns: {
-      id: true,
-      name: true,
-      phone: true,
-      email: true,
-      company: true,
-      priority: true,
-      welcomeSentAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-    with: {
-      assignedUser: { columns: { id: true, name: true, image: true, email: true } },
-      stage: true,
-      source: true,
-      followUps: {
-        with: {
-          user: { columns: { id: true, name: true, image: true } },
-        },
-        orderBy: [desc(followUps.createdAt)],
+  // جلب العميل الأساسي
+  const [lead] = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      phone: leads.phone,
+      email: leads.email,
+      company: leads.company,
+      priority: leads.priority,
+      welcomeSentAt: leads.welcomeSentAt,
+      createdAt: leads.createdAt,
+      updatedAt: leads.updatedAt,
+      assignedUser: {
+        id: users.id,
+        name: users.name,
+        image: users.image,
       },
-      tagAssignments: {
-        with: { tag: true },
+      stage: {
+        id: pipelineStages.id,
+        name: pipelineStages.name,
+        color: pipelineStages.color,
       },
-    },
-  });
+      source: {
+        id: leadSources.id,
+        name: leadSources.name,
+        platform: leadSources.platform,
+      },
+    })
+    .from(leads)
+    .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)))
+    .limit(1);
 
   if (!lead) throw new Error("العميل غير موجود");
-  return lead;
+
+  return {
+    ...lead,
+    assignedUser: lead.assignedUser?.id ? lead.assignedUser : null,
+    stage: lead.stage?.id ? lead.stage : null,
+    source: lead.source?.id ? lead.source : null,
+  };
 }
 
 // =============================================
