@@ -53,9 +53,10 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy migration script and startup
+# Copy migration script, startup, and postgres driver for migration
 COPY --from=builder /app/migrate.mjs ./migrate.mjs
 COPY --from=builder /app/start.sh ./start.sh
+COPY --from=builder /app/node_modules/postgres ./node_modules/postgres
 RUN chmod +x ./start.sh
 
 USER nextjs
