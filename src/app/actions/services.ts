@@ -54,6 +54,15 @@ export async function addService(name: string) {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("اسم الخدمة مطلوب");
 
+  // Fix #5: منع التكرار
+  const [existing] = await db
+    .select({ id: services.id })
+    .from(services)
+    .where(and(eq(services.tenantId, tenantId), eq(services.name, trimmed)))
+    .limit(1);
+
+  if (existing) throw new Error("هذه الخدمة موجودة بالفعل");
+
   await db.insert(services).values({
     tenantId,
     name: trimmed,

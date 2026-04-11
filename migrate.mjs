@@ -278,6 +278,36 @@ async function migrate() {
     console.warn("  ⚠️ Booking stage creation skipped:", e.message);
   }
 
+  // Fix #7: تحديث اسم "تم التواصل" → "استفسار" للشركات الحالية
+  try {
+    const result = await sql.unsafe(`
+      UPDATE pipeline_stages SET name = 'استفسار' WHERE name = 'تم التواصل'
+    `);
+    if (result.count > 0) {
+      console.log(`  ✅ Renamed "تم التواصل" → "استفسار" in ${result.count} stage(s)`);
+    }
+  } catch (e) {
+    console.warn("  ⚠️ Stage rename skipped:", e.message);
+  }
+
+  // Fix #8: إضافة Indexes للأعمدة المستخدمة بكثرة
+  const indexes = [
+    "CREATE INDEX IF NOT EXISTS idx_leads_booking_status ON leads (tenant_id, booking_status) WHERE booking_status IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_leads_booking_date ON leads (booking_date) WHERE booking_date IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON follow_ups (tenant_id, scheduled_at) WHERE completed_at IS NULL AND scheduled_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_activity_log_tenant ON activity_log (tenant_id, created_at DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_services_unique_name ON services (tenant_id, name)",
+  ];
+
+  for (const idx of indexes) {
+    try {
+      await sql.unsafe(idx);
+      console.log("  ✅ Index:", idx.split("idx_")[1]?.split(" ON")[0] || "created");
+    } catch (e) {
+      console.warn("  ⚠️ Index skipped:", e.message);
+    }
+  }
+
   console.log("✅ Migration complete!");
   await sql.end();
 }

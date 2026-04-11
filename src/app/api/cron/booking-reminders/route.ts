@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { leads, whatsappConfigs, activityLog } from "@/db/schema";
-import { eq, and, gte, lte, isNotNull } from "drizzle-orm";
+import { eq, and, gte, lte, isNotNull, sql } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
 
 // =============================================
@@ -14,6 +14,24 @@ import { decrypt } from "@/lib/encryption";
 // =============================================
 
 const CRON_SECRET = process.env.CRON_SECRET || "miras-cron-2026";
+const RIYADH_TZ = "Asia/Riyadh";
+
+/**
+ * حساب بداية/نهاية يوم بتوقيت الرياض
+ * Fix #1: لضمان عدم اختلاف التاريخ بين UTC والسيرفر
+ */
+function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
+  const now = new Date();
+  // الوقت الحالي بتوقيت الرياض
+  const riyadhStr = now.toLocaleDateString("en-CA", { timeZone: RIYADH_TZ }); // YYYY-MM-DD
+  const [y, m, d] = riyadhStr.split("-").map(Number);
+  
+  // بداية اليوم بتوقيت الرياض = 21:00 UTC اليوم السابق
+  const start = new Date(Date.UTC(y, m - 1, d + offsetDays, -3, 0, 0)); // UTC-3 offset
+  const end = new Date(start.getTime() + 86400000);
+  
+  return { start, end };
+}
 
 export async function GET(request: NextRequest) {
   // التحقق من المفتاح السري
@@ -29,21 +47,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const now = new Date();
-    let rangeStart: Date;
-    let rangeEnd: Date;
-
-    if (type === "evening") {
-      // 8 مساءً — نذكّر بحجوزات الغد
-      const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      rangeStart = tomorrowStart;
-      rangeEnd = new Date(tomorrowStart.getTime() + 86400000);
-    } else {
-      // 8 صباحاً — نذكّر بحجوزات اليوم
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      rangeStart = todayStart;
-      rangeEnd = new Date(todayStart.getTime() + 86400000);
-    }
+    // Fix #1: حساب النطاق الزمني بتوقيت الرياض
+    const { start: rangeStart, end: rangeEnd } =
+      type === "evening" ? getRiyadhDate(1) : getRiyadhDate(0);
 
     // جلب كل الشركات المفعّلة للواتساب
     const configs = await db
@@ -104,6 +110,22 @@ export async function GET(request: NextRequest) {
 
       if (bookings.length === 0) continue;
 
+      // Fix #2: جلب التذكيرات المرسلة اليوم لمنع التكرار
+      const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
+      const alreadySent = await db
+        .select({ entityId: activityLog.entityId })
+        .from(activityLog)
+        .where(
+          and(
+            eq(activityLog.tenantId, config.tenantId),
+            eq(activityLog.action, "WHATSAPP_SENT"),
+            gte(activityLog.createdAt, todayStart),
+            lte(activityLog.createdAt, todayEnd),
+            sql`${activityLog.details}->>'type' = ${"booking_reminder_" + type}`
+          )
+        );
+      const sentIds = new Set(alreadySent.map((r) => r.entityId));
+
       // فك تشفير Access Token
       let accessToken: string;
       try {
@@ -117,9 +139,16 @@ export async function GET(request: NextRequest) {
       for (const booking of bookings) {
         if (!booking.phone) continue;
 
+        // Fix #2: تخطي إذا أُرسل بالفعل
+        if (sentIds.has(booking.id)) {
+          totalSkipped++;
+          continue;
+        }
+
         const toPhone = booking.phone.replace(/\D/g, "");
         const bookingTime = booking.bookingDate
           ? new Date(booking.bookingDate).toLocaleString("ar-SA", {
+              timeZone: RIYADH_TZ,
               weekday: "long",
               month: "long",
               day: "numeric",

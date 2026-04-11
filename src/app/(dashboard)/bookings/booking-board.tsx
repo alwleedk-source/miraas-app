@@ -37,7 +37,7 @@ type EditData = {
   bookingNotes: string;
 };
 
-export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
+export default function BookingBoard({ bookings, services = [] }: { bookings: Booking[]; services?: { id: string; name: string }[] }) {
   const [isPending, startTransition] = useTransition();
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [postponeModal, setPostponeModal] = useState<PostponeData | null>(null);
@@ -335,12 +335,40 @@ export default function BookingBoard({ bookings }: { bookings: Booking[] }) {
               </div>
 
               <div className="space-y-2">
-                <Label>الخدمة</Label>
-                <Input
-                  value={editModal.bookingService}
-                  onChange={(e) => setEditModal({ ...editModal, bookingService: e.target.value })}
-                  placeholder="مثال: تنظيف أسنان"
-                />
+                <Label>الخدمات</Label>
+                {services.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {services.map((svc) => {
+                      const currentServices = editModal.bookingService.split("،").map((s: string) => s.trim()).filter(Boolean);
+                      const isSelected = currentServices.includes(svc.name);
+                      return (
+                        <button
+                          key={svc.id}
+                          type="button"
+                          onClick={() => {
+                            const updated = isSelected
+                              ? currentServices.filter((s: string) => s !== svc.name)
+                              : [...currentServices, svc.name];
+                            setEditModal({ ...editModal, bookingService: updated.join("، ") });
+                          }}
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium border-2 transition-all ${
+                            isSelected
+                              ? "border-primary-500 bg-primary-50 text-primary-700"
+                              : "border-surface-200 bg-white text-surface-600 hover:border-surface-300"
+                          }`}
+                        >
+                          {isSelected && "✓ "}{svc.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <Input
+                    value={editModal.bookingService}
+                    onChange={(e) => setEditModal({ ...editModal, bookingService: e.target.value })}
+                    placeholder="الخدمة"
+                  />
+                )}
               </div>
 
               <div className="space-y-2">

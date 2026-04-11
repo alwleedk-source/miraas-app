@@ -4,6 +4,9 @@ import { getBookings, getBookingsSummary } from "@/app/actions/bookings";
 import BookingBoard from "./booking-board";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { db } from "@/db";
+import { services } from "@/db/schema";
+import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
   const session = await requireAuth();
@@ -25,6 +28,16 @@ export default async function BookingsPage() {
   } catch {
     // الأعمدة لم تُنشأ بعد — نعرض صفحة فارغة
   }
+
+  // جلب الخدمات النشطة
+  let servicesData: { id: string; name: string }[] = [];
+  try {
+    servicesData = await db
+      .select({ id: services.id, name: services.name })
+      .from(services)
+      .where(and(eq(services.tenantId, tenantId), eq(services.isActive, true)))
+      .orderBy(asc(services.name));
+  } catch {}
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -232,7 +245,7 @@ export default async function BookingsPage() {
       )}
 
       {/* Kanban الحجوزات */}
-      <BookingBoard bookings={bookings} />
+      <BookingBoard bookings={bookings} services={servicesData} />
     </div>
   );
 }

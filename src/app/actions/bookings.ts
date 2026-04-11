@@ -6,6 +6,21 @@ import { eq, and, isNotNull, gte, lte, sql } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
+const RIYADH_TZ = "Asia/Riyadh";
+
+/**
+ * حساب بداية/نهاية يوم بتوقيت الرياض
+ * Fix #1: التوقيت الصحيح بدل UTC
+ */
+function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
+  const now = new Date();
+  const riyadhStr = now.toLocaleDateString("en-CA", { timeZone: RIYADH_TZ });
+  const [y, m, d] = riyadhStr.split("-").map(Number);
+  const start = new Date(Date.UTC(y, m - 1, d + offsetDays, -3, 0, 0));
+  const end = new Date(start.getTime() + 86400000);
+  return { start, end };
+}
+
 // =============================================
 // إنشاء حجز (عند سحب عميل لعمود "حجز")
 // =============================================
@@ -66,17 +81,28 @@ export async function updateBookingStatus(input: {
   const tenantId = (session.user as Record<string, unknown>).tenantId as string;
   if (!tenantId) throw new Error("unauthorized");
 
+  // Fix #4: جلب الملاحظات الحالية قبل التحديث
+  const [currentLead] = await db
+    .select({ bookingNotes: leads.bookingNotes })
+    .from(leads)
+    .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
+
   const updateData: Record<string, unknown> = {
     bookingStatus: input.status,
     updatedAt: new Date(),
   };
 
-  // إذا تم التأجيل — حفظ الموعد الجديد والسبب
+  // Fix #4: التأجيل يحفظ الملاحظات الأصلية
   if (input.status === "POSTPONED" && input.postponeDate) {
     updateData.bookingDate = new Date(input.postponeDate);
-    updateData.bookingNotes = input.postponeReason
-      ? `تم التأجيل: ${input.postponeReason}`
-      : "تم التأجيل";
+    const originalNote = currentLead?.bookingNotes || "";
+    const postponeNote = input.postponeReason
+      ? `[تأجيل: ${input.postponeReason}]`
+      : "[تأجيل]";
+    // إضافة سبب التأجيل مع الحفاظ على الملاحظة الأصلية
+    updateData.bookingNotes = originalNote
+      ? `${originalNote}\n${postponeNote}`
+      : postponeNote;
   }
 
   const [lead] = await db
@@ -109,8 +135,8 @@ export async function updateBookingStatus(input: {
 // جلب الحجوزات
 // =============================================
 
-// الأعمدة المطلوبة للحجوزات — مع اسم الحملة
-const bookingColumns = {
+// Fix #10: الأعمدة بدون leadSources (لا تحتاج JOIN دائماً)
+const baseBookingCols = {
   id: leads.id,
   name: leads.name,
   phone: leads.phone,
@@ -118,7 +144,6 @@ const bookingColumns = {
   bookingDate: leads.bookingDate,
   bookingService: leads.bookingService,
   bookingNotes: leads.bookingNotes,
-  sourceName: leadSources.name,
 };
 
 export async function getBookings() {
@@ -127,7 +152,7 @@ export async function getBookings() {
   if (!tenantId) throw new Error("unauthorized");
 
   return db
-    .select(bookingColumns)
+    .select({ ...baseBookingCols, sourceName: leadSources.name })
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
@@ -149,14 +174,15 @@ export async function getBookingsSummary() {
   const tenantId = (session.user as Record<string, unknown>).tenantId as string;
   if (!tenantId) throw new Error("unauthorized");
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(todayStart.getTime() + 86400000);
-  const tomorrowEnd = new Date(todayStart.getTime() + 172800000);
+  // Fix #1: استخدام توقيت الرياض
+  const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
+  const { start: _tmrStart, end: tomorrowEnd } = getRiyadhDate(1);
+
+  const selectCols = { ...baseBookingCols, sourceName: leadSources.name };
 
   // مواعيد اليوم
   const todayBookings = await db
-    .select(bookingColumns)
+    .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
@@ -172,7 +198,7 @@ export async function getBookingsSummary() {
 
   // مواعيد الغد
   const tomorrowBookings = await db
-    .select(bookingColumns)
+    .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
@@ -188,7 +214,7 @@ export async function getBookingsSummary() {
 
   // المتأخرة (فات الموعد ولا زالت PENDING)
   const overdueBookings = await db
-    .select(bookingColumns)
+    .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .where(
@@ -262,6 +288,19 @@ export async function updateBookingDate(input: {
     })
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
 
+  // Fix #3: تسجيل التعديل في سجل النشاط
+  await db.insert(activityLog).values({
+    tenantId,
+    userId: session.user.id,
+    action: "LEAD_UPDATED",
+    entityType: "lead",
+    entityId: input.leadId,
+    details: {
+      action: "booking_date_updated",
+      newDate: input.bookingDate,
+      ...(input.bookingService && { newService: input.bookingService }),
+    },
+  });
+
   revalidatePath("/bookings");
 }
-
