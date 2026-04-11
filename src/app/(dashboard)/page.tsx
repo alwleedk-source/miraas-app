@@ -11,7 +11,7 @@ import { getDashboardStats } from "@/app/actions/leads";
 import { requireAuth } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { activityLog, users, followUps, leads } from "@/db/schema";
+import { activityLog, users, followUps, leads, leadSources } from "@/db/schema";
 import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import TodayTasks from "./today-tasks";
 import ActivityLog from "./activity-log";
@@ -44,6 +44,7 @@ export default async function DashboardPage() {
     leadId: string;
     leadName: string;
     leadPhone: string | null;
+    leadSource: string | null;
   }[] = [];
   try {
     const endOfToday = new Date();
@@ -70,9 +71,11 @@ export default async function DashboardPage() {
         leadId: leads.id,
         leadName: leads.name,
         leadPhone: leads.phone,
+        leadSource: leadSources.name,
       })
       .from(followUps)
       .innerJoin(leads, eq(followUps.leadId, leads.id))
+      .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
       .where(and(...conditions, eq(leads.isDeleted, false)))
       .orderBy(followUps.scheduledAt)
       .limit(20);

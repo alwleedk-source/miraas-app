@@ -11,11 +11,13 @@ import {
   Clock,
   Phone,
   MessageSquare,
+  MessageCircle,
   Mail,
   User,
   Pencil,
   Loader2,
   ChevronDown,
+  ExternalLink,
 } from "lucide-react";
 import { completeFollowUp, snoozeFollowUp } from "@/app/actions/followups";
 import { cn } from "@/lib/utils";
@@ -28,6 +30,7 @@ interface Task {
   leadId: string;
   leadName: string;
   leadPhone: string | null;
+  leadSource: string | null;
 }
 
 const TYPE_CONFIG: Record<string, { label: string; icon: typeof Phone; color: string }> = {
@@ -49,7 +52,7 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
     startTransition(async () => {
       await completeFollowUp(taskId);
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
-      router.refresh(); // Fix #5: تحديث بطاقة الإحصائيات
+      router.refresh();
     });
   };
 
@@ -58,7 +61,7 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
       await snoozeFollowUp(taskId, days);
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
       setActiveSnooze(null);
-      router.refresh(); // Fix #5
+      router.refresh();
     });
   };
 
@@ -85,7 +88,6 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
           const IconComp = config.icon;
           const scheduledDate = new Date(task.scheduledAt);
           const isOverdue = scheduledDate < now && scheduledDate.toDateString() !== now.toDateString();
-          const isToday = scheduledDate.toDateString() === now.toDateString();
           const timeStr = scheduledDate.getHours() !== 0
             ? scheduledDate.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })
             : null;
@@ -108,7 +110,7 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
 
               {/* المحتوى */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                   {isOverdue && (
                     <Badge variant="danger" className="text-[10px] px-1.5 py-0">متأخر</Badge>
                   )}
@@ -119,20 +121,47 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
                     </span>
                   )}
                   <Badge variant="outline" className="text-[10px]">{config.label}</Badge>
+                  {task.leadSource && (
+                    <span className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5">
+                      📢 {task.leadSource}
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-medium text-surface-900 truncate">
+
+                {/* اسم العميل — قابل للنقر */}
+                <a
+                  href={`/leads?search=${encodeURIComponent(task.leadName)}`}
+                  className="text-sm font-medium text-surface-900 hover:text-primary-600 hover:underline truncate block"
+                >
                   {task.leadName}
-                </p>
+                  <ExternalLink className="h-3 w-3 inline ms-1 text-surface-300" />
+                </a>
+
                 {task.notes && (
-                  <p className="text-xs text-surface-500 truncate mt-0.5">{task.notes}</p>
+                  <p className="text-xs text-surface-500 truncate mt-0.5">💬 {task.notes}</p>
                 )}
+
+                {/* أزرار التواصل السريع */}
                 {task.leadPhone && (
-                  <a
-                    href={`tel:${task.leadPhone}`}
-                    className="text-xs text-primary-600 hover:underline mt-0.5 inline-block"
-                  >
-                    {task.leadPhone}
-                  </a>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <a
+                      href={`tel:${task.leadPhone}`}
+                      className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-800 bg-primary-50 hover:bg-primary-100 px-2 py-1 rounded-lg transition-colors"
+                    >
+                      <Phone className="h-3 w-3" />
+                      اتصال
+                    </a>
+                    <a
+                      href={`https://wa.me/${task.leadPhone.replace("+", "")}`}
+                      target="_blank"
+                      rel="noopener"
+                      className="flex items-center gap-1 text-xs text-success-600 hover:text-success-800 bg-success-50 hover:bg-success-100 px-2 py-1 rounded-lg transition-colors"
+                    >
+                      <MessageCircle className="h-3 w-3" />
+                      واتساب
+                    </a>
+                    <span className="text-[10px] text-surface-300" dir="ltr">{task.leadPhone}</span>
+                  </div>
                 )}
               </div>
 
@@ -144,7 +173,7 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
                   className="h-8 w-8 p-0 text-success-600 hover:bg-success-50"
                   onClick={() => handleComplete(task.id)}
                   disabled={isPending}
-                  title="تم التواصل"
+                  title="تم ✅"
                 >
                   {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                 </Button>

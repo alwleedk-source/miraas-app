@@ -61,7 +61,7 @@ export function getInitials(name: string): string {
 
 export const PIPELINE_STAGE_DEFAULTS = [
   { name: "جديد", color: "#3B82F6", position: 0, isDefault: true, isBooking: false },
-  { name: "تم التواصل", color: "#EAB308", position: 1, isDefault: false, isBooking: false },
+  { name: "استفسار", color: "#EAB308", position: 1, isDefault: false, isBooking: false },
   { name: "مهتم", color: "#F97316", position: 2, isDefault: false, isBooking: false },
   { name: "عرض مُرسل", color: "#8B5CF6", position: 3, isDefault: false, isBooking: false },
   { name: "مُحوّل", color: "#22C55E", position: 4, isDefault: false, isBooking: false },

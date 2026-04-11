@@ -39,7 +39,7 @@ export async function createTenantForUser(userId: string, companyName: string) {
   // إنشاء مراحل الأنابيب الافتراضية
   const defaultStages = [
     { name: "جديد", color: "#3B82F6", position: 0, isDefault: true },
-    { name: "تم التواصل", color: "#F59E0B", position: 1, isDefault: false },
+    { name: "استفسار", color: "#F59E0B", position: 1, isDefault: false },
     { name: "مهتم", color: "#EF4444", position: 2, isDefault: false },
     { name: "عرض مُرسل", color: "#8B5CF6", position: 3, isDefault: false },
     { name: "مُحوّل", color: "#22C55E", position: 4, isDefault: false },
