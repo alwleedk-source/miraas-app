@@ -248,6 +248,25 @@ async function migrate() {
     }
   }
 
+  // إنشاء مرحلة "حجز" لكل شركة ليس لديها واحدة
+  try {
+    const result = await sql.unsafe(`
+      INSERT INTO pipeline_stages (id, tenant_id, name, color, position, is_default, is_exclusive, is_booking)
+      SELECT gen_random_uuid(), t.id, 'حجز', '#10B981', 
+             COALESCE((SELECT MAX(position) + 1 FROM pipeline_stages WHERE tenant_id = t.id), 5),
+             false, false, true
+      FROM tenants t
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pipeline_stages ps WHERE ps.tenant_id = t.id AND ps.is_booking = true
+      )
+    `);
+    if (result.count > 0) {
+      console.log(`  ✅ Created "حجز" stage for ${result.count} tenant(s)`);
+    }
+  } catch (e) {
+    console.warn("  ⚠️ Booking stage creation skipped:", e.message);
+  }
+
   console.log("✅ Migration complete!");
   await sql.end();
 }
