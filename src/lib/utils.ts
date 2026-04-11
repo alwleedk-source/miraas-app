@@ -233,9 +233,11 @@ export function validateAndNormalizePhone(
   }
 
   // 🔄 محاولة ذكية: أرقام سعودية بدون الصفر الأول
-  // مثال: 501234569 → 0501234569 → +966501234569
+  // مثال: 501234569 (9 أرقام) → 0501234569 → +966501234569
+  // مثال: 5678765456 (10 أرقام تبدأ بـ56) → 05678765456 خطأ، نجرب كـ 0567876545
   const digitsOnly = cleaned.replace(/\D/g, "");
 
+  // 9 أرقام تبدأ بـ 5 → إضافة 0
   if (digitsOnly.length === 9 && digitsOnly.startsWith("5")) {
     const withZero = parsePhoneNumberFromString("0" + digitsOnly, defaultCountry);
     if (withZero && withZero.isValid()) {
@@ -243,6 +245,32 @@ export function validateAndNormalizePhone(
         valid: true,
         phone: withZero.format("E.164"),
         country: withZero.country || null,
+        error: null,
+      };
+    }
+  }
+
+  // 10 أرقام تبدأ بـ 05 → رقم سعودي بالصفر
+  if (digitsOnly.length === 10 && digitsOnly.startsWith("05")) {
+    const parsed = parsePhoneNumberFromString(digitsOnly, defaultCountry);
+    if (parsed && parsed.isValid()) {
+      return {
+        valid: true,
+        phone: parsed.format("E.164"),
+        country: parsed.country || null,
+        error: null,
+      };
+    }
+  }
+
+  // 10 أرقام تبدأ بـ 5 (بدون 0) → نجرب كسعودي مع +966
+  if (digitsOnly.length === 10 && digitsOnly.startsWith("5")) {
+    const withCode = parsePhoneNumberFromString("+966" + digitsOnly.slice(0, 9));
+    if (withCode && withCode.isValid()) {
+      return {
+        valid: true,
+        phone: withCode.format("E.164"),
+        country: withCode.country || null,
         error: null,
       };
     }

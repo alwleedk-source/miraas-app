@@ -137,6 +137,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (phone) {
+        // فحص التكرار بالرقم
         const [existing] = await db
           .select({ id: leads.id, isDeleted: leads.isDeleted })
           .from(leads)
@@ -145,6 +146,19 @@ export async function POST(request: NextRequest) {
 
         if (existing && !existing.isDeleted) { skippedDuplicate++; continue; }
         if (existing && existing.isDeleted) { skippedDeleted++; continue; }
+      } else {
+        // بدون رقم — فحص التكرار بالاسم لمنع إنشاء سجلات مكررة
+        const [existingByName] = await db
+          .select({ id: leads.id, isDeleted: leads.isDeleted })
+          .from(leads)
+          .where(and(
+            eq(leads.tenantId, webhook.tenantId),
+            eq(leads.name, entry.name.trim()),
+            eq(leads.isDeleted, false)
+          ))
+          .limit(1);
+
+        if (existingByName) { skippedDuplicate++; continue; }
       }
 
       // Fix #1: حملة لكل عميل
