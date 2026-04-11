@@ -5,9 +5,12 @@ import { eq, and, gte, lte, isNotNull } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
 
 // =============================================
-// Cron: تذكير حجوزات الغد عبر واتساب
-// يُستدعى يومياً الساعة 8 صباحاً عبر cron-job.org
-// GET /api/cron/booking-reminders?secret=XXXXX
+// Cron: تذكير حجوزات عبر واتساب
+// مبني على دراسات: التذكير المزدوج يقلل عدم الحضور 39%
+//
+// رابطين في cron-job.org:
+// 8 مساءً → ?type=evening (تذكير بحجوزات الغد)
+// 8 صباحاً → ?type=morning (تذكير بحجوزات اليوم)
 // =============================================
 
 const CRON_SECRET = process.env.CRON_SECRET || "miras-cron-2026";
@@ -19,11 +22,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // نوع التذكير: evening (اليوم السابق) أو morning (يوم الموعد)
+  const type = request.nextUrl.searchParams.get("type") || "morning";
+  if (type !== "evening" && type !== "morning") {
+    return NextResponse.json({ error: "type must be 'evening' or 'morning'" }, { status: 400 });
+  }
+
   try {
-    // حساب نطاق "الغد"
     const now = new Date();
-    const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const tomorrowEnd = new Date(tomorrowStart.getTime() + 86400000);
+    let rangeStart: Date;
+    let rangeEnd: Date;
+
+    if (type === "evening") {
+      // 8 مساءً — نذكّر بحجوزات الغد
+      const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      rangeStart = tomorrowStart;
+      rangeEnd = new Date(tomorrowStart.getTime() + 86400000);
+    } else {
+      // 8 صباحاً — نذكّر بحجوزات اليوم
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      rangeStart = todayStart;
+      rangeEnd = new Date(todayStart.getTime() + 86400000);
+    }
 
     // جلب كل الشركات المفعّلة للواتساب
     const configs = await db
@@ -34,6 +54,8 @@ export async function GET(request: NextRequest) {
         reminderTemplateName: whatsappConfigs.reminderTemplateName,
         templateLanguage: whatsappConfigs.templateLanguage,
         isActive: whatsappConfigs.isActive,
+        reminderEvening: whatsappConfigs.reminderEvening,
+        reminderMorning: whatsappConfigs.reminderMorning,
       })
       .from(whatsappConfigs)
       .where(eq(whatsappConfigs.isActive, true));
@@ -43,14 +65,24 @@ export async function GET(request: NextRequest) {
     let totalSkipped = 0;
 
     for (const config of configs) {
-      // تخطي إذا لم يُعد قالب التذكير
+      // تخطي إذا لم يُعد قالب التذكير أو البيانات غير مكتملة
       if (!config.reminderTemplateName || !config.apiKeyEncrypted || !config.phoneNumber) {
         totalSkipped++;
         continue;
       }
 
-      // جلب حجوزات الغد لهذه الشركة
-      const tomorrowBookings = await db
+      // تخطي إذا نوع التذكير معطّل لهذه الشركة
+      if (type === "evening" && !config.reminderEvening) {
+        totalSkipped++;
+        continue;
+      }
+      if (type === "morning" && !config.reminderMorning) {
+        totalSkipped++;
+        continue;
+      }
+
+      // جلب الحجوزات في النطاق الزمني
+      const bookings = await db
         .select({
           id: leads.id,
           name: leads.name,
@@ -65,24 +97,24 @@ export async function GET(request: NextRequest) {
             eq(leads.isDeleted, false),
             eq(leads.bookingStatus, "PENDING"),
             isNotNull(leads.phone),
-            gte(leads.bookingDate, tomorrowStart),
-            lte(leads.bookingDate, tomorrowEnd)
+            gte(leads.bookingDate, rangeStart),
+            lte(leads.bookingDate, rangeEnd)
           )
         );
 
-      if (tomorrowBookings.length === 0) continue;
+      if (bookings.length === 0) continue;
 
       // فك تشفير Access Token
       let accessToken: string;
       try {
         accessToken = decrypt(config.apiKeyEncrypted);
       } catch {
-        totalFailed += tomorrowBookings.length;
+        totalFailed += bookings.length;
         continue;
       }
 
       // إرسال تذكير لكل عميل
-      for (const booking of tomorrowBookings) {
+      for (const booking of bookings) {
         if (!booking.phone) continue;
 
         const toPhone = booking.phone.replace(/\D/g, "");
@@ -94,7 +126,7 @@ export async function GET(request: NextRequest) {
               hour: "2-digit",
               minute: "2-digit",
             })
-          : "غداً";
+          : type === "evening" ? "غداً" : "اليوم";
 
         try {
           const response = await fetch(
@@ -142,7 +174,7 @@ export async function GET(request: NextRequest) {
             entityType: "lead",
             entityId: booking.id,
             details: {
-              type: "booking_reminder",
+              type: `booking_reminder_${type}`,
               to: toPhone,
               leadName: booking.name,
               bookingDate: bookingTime,
@@ -159,6 +191,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      type,
       sent: totalSent,
       failed: totalFailed,
       skipped: totalSkipped,

@@ -251,6 +251,9 @@ export const whatsappConfigs = pgTable("whatsapp_configs", {
   templateParams: jsonb("template_params").default(["name"]).$type<string[]>(),
   // قالب تذكير الحجوزات
   reminderTemplateName: varchar("reminder_template_name", { length: 255 }),
+  // استراتيجية التذكير — مبنية على دراسات: التذكير المزدوج يقلل عدم الحضور 39%
+  reminderEvening: boolean("reminder_evening").default(true).notNull(),  // 8 مساءً — اليوم السابق
+  reminderMorning: boolean("reminder_morning").default(true).notNull(),  // 8 صباحاً — يوم الموعد
   isActive: boolean("is_active").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -197,6 +197,8 @@ export async function saveWhatsappConfig(input: {
   templateLanguage?: string;
   templateParams?: string[];
   reminderTemplateName?: string;
+  reminderEvening?: boolean;
+  reminderMorning?: boolean;
   isActive?: boolean;
 }) {
   const { tenantId, userId } = await getOwnerTenant();
@@ -216,6 +218,8 @@ export async function saveWhatsappConfig(input: {
         ...(input.templateLanguage !== undefined && { templateLanguage: input.templateLanguage }),
         ...(input.templateParams !== undefined && { templateParams: input.templateParams }),
         ...(input.reminderTemplateName !== undefined && { reminderTemplateName: input.reminderTemplateName }),
+        ...(input.reminderEvening !== undefined && { reminderEvening: input.reminderEvening }),
+        ...(input.reminderMorning !== undefined && { reminderMorning: input.reminderMorning }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
         updatedAt: new Date(),
       })
@@ -229,6 +233,8 @@ export async function saveWhatsappConfig(input: {
       templateLanguage: input.templateLanguage || "ar",
       templateParams: input.templateParams || ["name"],
       reminderTemplateName: input.reminderTemplateName,
+      reminderEvening: input.reminderEvening ?? true,
+      reminderMorning: input.reminderMorning ?? true,
       isActive: input.isActive || false,
     });
   }

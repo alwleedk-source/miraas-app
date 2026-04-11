@@ -59,6 +59,8 @@ export default function WhatsAppSettingsPage() {
 
   // قالب التذكير بالحجوزات
   const [reminderTemplateName, setReminderTemplateName] = useState("");
+  const [reminderEvening, setReminderEvening] = useState(true);
+  const [reminderMorning, setReminderMorning] = useState(true);
 
   // دليل نصائح القوالب
   const [showGuide, setShowGuide] = useState(false);
@@ -75,6 +77,8 @@ export default function WhatsAppSettingsPage() {
           setTemplateLang(config.templateLanguage || "ar");
           setTemplateParams((config.templateParams as string[]) || ["name"]);
           setReminderTemplateName((config as Record<string, unknown>).reminderTemplateName as string || "");
+          if ((config as Record<string, unknown>).reminderEvening !== undefined) setReminderEvening((config as Record<string, unknown>).reminderEvening as boolean);
+          if ((config as Record<string, unknown>).reminderMorning !== undefined) setReminderMorning((config as Record<string, unknown>).reminderMorning as boolean);
         }
       })
       .catch(() => {});
@@ -113,7 +117,12 @@ export default function WhatsAppSettingsPage() {
     }
     startTransition(async () => {
       try {
-        await saveWhatsappConfig({ templateName, templateLanguage, templateParams, reminderTemplateName: reminderTemplateName || undefined });
+        await saveWhatsappConfig({
+          templateName, templateLanguage, templateParams,
+          reminderTemplateName: reminderTemplateName || undefined,
+          reminderEvening,
+          reminderMorning,
+        });
         setTemplateSaved(true);
         setTimeout(() => setTemplateSaved(false), 2000);
       } catch {
@@ -468,15 +477,19 @@ export default function WhatsAppSettingsPage() {
             )}
           </Button>
 
-          {/* قالب تذكير الحجوزات */}
-          <div className="pt-4 mt-4 border-t border-surface-200 space-y-3">
-            <div className="flex items-center gap-2">
-              <CalendarDays className="h-4 w-4 text-success-500" />
-              <h4 className="font-semibold text-sm text-surface-900">قالب تذكير الحجوزات (اختياري)</h4>
+          {/* ============================
+              استراتيجية التذكير بالحجوزات
+              ============================ */}
+          <div className="pt-4 mt-4 border-t border-surface-200 space-y-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-success-500" />
+                <h4 className="font-semibold text-sm text-surface-900">استراتيجية تذكير الحجوزات</h4>
+              </div>
+              <p className="text-xs text-surface-500 mt-1">
+                يُرسل تلقائياً للعميل عبر واتساب قبل موعده — مبني على دراسات تقلل عدم الحضور بنسبة 39%
+              </p>
             </div>
-            <p className="text-xs text-surface-500">
-              يُرسل تلقائياً للعميل قبل موعده بيوم عبر واتساب — كل صباح الساعة 8
-            </p>
 
             {/* خطوات التفعيل */}
             <div className="p-3 rounded-lg bg-primary-50 border border-primary-200 text-xs text-primary-700 space-y-2">
@@ -490,13 +503,86 @@ export default function WhatsAppSettingsPage() {
                   {" "}→ أنشئ Template جديد من نوع <strong>Utility</strong>
                 </li>
                 <li>سمّه <code className="bg-primary-100 px-1 rounded">booking_reminder</code> وانتظر <strong>1-5 دقائق</strong> حتى توافق عليه Meta تلقائياً</li>
-                <li>بعد الموافقة → اكتب اسم القالب هنا في الحقل أدناه</li>
+                <li>بعد الموافقة → اكتب اسم القالب في الحقل أدناه واختر استراتيجيتك</li>
               </ol>
+            </div>
+
+            {/* اسم القالب */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">اسم القالب المعتمد من Meta</Label>
+              <Input
+                value={reminderTemplateName}
+                onChange={(e) => setReminderTemplateName(e.target.value)}
+                placeholder="أدخل اسم القالب بعد موافقة Meta عليه"
+                dir="ltr"
+                className="text-left font-mono"
+                maxLength={50}
+              />
             </div>
 
             {/* تحذير */}
             <div className="p-2.5 rounded-lg bg-warning-50 border border-warning-200 text-xs text-warning-700">
               <p>⚠️ <strong>مهم:</strong> لن تُرسل التذكيرات إلا بعد إنشاء القالب في Meta والموافقة عليه. كتابة اسم قالب غير موجود لن يسبب مشاكل — فقط لن يُرسل شيء.</p>
+            </div>
+
+            {/* استراتيجية التذكير — toggles */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-surface-700">متى يُرسل التذكير؟</p>
+
+              {/* تذكير مسائي */}
+              <label className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                reminderEvening
+                  ? "border-primary-300 bg-primary-50/50"
+                  : "border-surface-200 bg-white hover:border-surface-300"
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={reminderEvening}
+                  onChange={(e) => setReminderEvening(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${
+                  reminderEvening ? "bg-primary-500" : "bg-surface-300"
+                }`}>
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                    reminderEvening ? "right-0.5" : "left-0.5"
+                  }`} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-surface-900">🌙 تذكير مسائي — اليوم السابق</p>
+                  <p className="text-[11px] text-surface-500">يُرسل الساعة 8 مساءً لتذكير العميل بموعد الغد</p>
+                </div>
+              </label>
+
+              {/* تذكير صباحي */}
+              <label className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                reminderMorning
+                  ? "border-primary-300 bg-primary-50/50"
+                  : "border-surface-200 bg-white hover:border-surface-300"
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={reminderMorning}
+                  onChange={(e) => setReminderMorning(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${
+                  reminderMorning ? "bg-primary-500" : "bg-surface-300"
+                }`}>
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                    reminderMorning ? "right-0.5" : "left-0.5"
+                  }`} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-surface-900">☀️ تذكير صباحي — يوم الموعد</p>
+                  <p className="text-[11px] text-surface-500">يُرسل الساعة 8 صباحاً لتذكير العميل بموعد اليوم</p>
+                </div>
+              </label>
+
+              {/* معلومة */}
+              <div className="p-2 rounded-lg bg-surface-50 border border-surface-100 text-[11px] text-surface-500">
+                📊 <strong>بحسب الدراسات:</strong> التذكير المزدوج (مسائي + صباحي) يقلل حالات عدم الحضور بنسبة تصل إلى 39% مقارنة بتذكير واحد.
+              </div>
             </div>
 
             {/* المتغيرات */}
@@ -514,15 +600,6 @@ export default function WhatsAppSettingsPage() {
                 نتطلع لرؤيتك!
               </p>
             </div>
-
-            <Input
-              value={reminderTemplateName}
-              onChange={(e) => setReminderTemplateName(e.target.value)}
-              placeholder="أدخل اسم القالب بعد موافقة Meta عليه"
-              dir="ltr"
-              className="text-left font-mono"
-              maxLength={50}
-            />
           </div>
         </CardContent>
       </Card>
