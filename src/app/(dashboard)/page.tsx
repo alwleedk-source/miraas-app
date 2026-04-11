@@ -8,7 +8,7 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { getDashboardStats } from "@/app/actions/leads";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { activityLog, users, followUps, leads, leadSources } from "@/db/schema";
@@ -17,11 +17,7 @@ import TodayTasks from "./today-tasks";
 import ActivityLog from "./activity-log";
 
 export default async function DashboardPage() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  const tenantId = user.tenantId as string;
-  const userId = session.user.id;
-  const userRole = user.role as string;
+  const { tenantId, role: userRole, session, userId } = await requireTenant();
 
   if (!tenantId) {
     redirect("/register");

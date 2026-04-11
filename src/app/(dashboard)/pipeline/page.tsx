@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { pipelineStages, leads } from "@/db/schema";
@@ -6,8 +6,7 @@ import { eq, and, asc, count } from "drizzle-orm";
 import { PipelineManager } from "@/components/pipeline/pipeline-manager";
 
 export default async function PipelinePage() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  const { tenantId } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   // جلب المراحل مع عدد العملاء لكل مرحلة

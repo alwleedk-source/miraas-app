@@ -3,15 +3,11 @@
 import { db } from "@/db";
 import { leads, activityLog, leadSources } from "@/db/schema";
 import { eq, and, isNotNull, gte, lte, sql } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
 const RIYADH_TZ = "Asia/Riyadh";
 
-/**
- * حساب بداية/نهاية يوم بتوقيت الرياض
- * Fix #1: التوقيت الصحيح بدل UTC
- */
 function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
   const now = new Date();
   const riyadhStr = now.toLocaleDateString("en-CA", { timeZone: RIYADH_TZ });
@@ -31,9 +27,7 @@ export async function createBooking(input: {
   bookingService: string;
   bookingNotes?: string;
 }) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId, userId } = await requireTenant();
 
   const [lead] = await db
     .update(leads)
@@ -51,7 +45,7 @@ export async function createBooking(input: {
 
   await db.insert(activityLog).values({
     tenantId,
-    userId: session.user.id,
+    userId,
     action: "LEAD_UPDATED",
     entityType: "lead",
     entityId: lead.id,
@@ -77,9 +71,7 @@ export async function updateBookingStatus(input: {
   postponeDate?: string;
   postponeReason?: string;
 }) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId, userId } = await requireTenant();
 
   // Fix #4: جلب الملاحظات الحالية قبل التحديث
   const [currentLead] = await db
@@ -99,7 +91,6 @@ export async function updateBookingStatus(input: {
     const postponeNote = input.postponeReason
       ? `[تأجيل: ${input.postponeReason}]`
       : "[تأجيل]";
-    // إضافة سبب التأجيل مع الحفاظ على الملاحظة الأصلية
     updateData.bookingNotes = originalNote
       ? `${originalNote}\n${postponeNote}`
       : postponeNote;
@@ -115,7 +106,7 @@ export async function updateBookingStatus(input: {
 
   await db.insert(activityLog).values({
     tenantId,
-    userId: session.user.id,
+    userId,
     action: "LEAD_UPDATED",
     entityType: "lead",
     entityId: lead.id,
@@ -135,7 +126,6 @@ export async function updateBookingStatus(input: {
 // جلب الحجوزات
 // =============================================
 
-// Fix #10: الأعمدة بدون leadSources (لا تحتاج JOIN دائماً)
 const baseBookingCols = {
   id: leads.id,
   name: leads.name,
@@ -147,9 +137,7 @@ const baseBookingCols = {
 };
 
 export async function getBookings() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   return db
     .select({ ...baseBookingCols, sourceName: leadSources.name })
@@ -170,17 +158,13 @@ export async function getBookings() {
 // =============================================
 
 export async function getBookingsSummary() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
-  // Fix #1: استخدام توقيت الرياض
   const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
-  const { start: _tmrStart, end: tomorrowEnd } = getRiyadhDate(1);
+  const { end: tomorrowEnd } = getRiyadhDate(1);
 
   const selectCols = { ...baseBookingCols, sourceName: leadSources.name };
 
-  // مواعيد اليوم
   const todayBookings = await db
     .select(selectCols)
     .from(leads)
@@ -196,7 +180,6 @@ export async function getBookingsSummary() {
     )
     .orderBy(leads.bookingDate);
 
-  // مواعيد الغد
   const tomorrowBookings = await db
     .select(selectCols)
     .from(leads)
@@ -212,7 +195,6 @@ export async function getBookingsSummary() {
     )
     .orderBy(leads.bookingDate);
 
-  // المتأخرة (فات الموعد ولا زالت PENDING)
   const overdueBookings = await db
     .select(selectCols)
     .from(leads)
@@ -227,7 +209,6 @@ export async function getBookingsSummary() {
     )
     .orderBy(leads.bookingDate);
 
-  // إحصائيات
   const [stats] = await db
     .select({
       total: sql<number>`count(*)::int`,
@@ -241,7 +222,6 @@ export async function getBookingsSummary() {
       and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false), isNotNull(leads.bookingStatus))
     );
 
-  // إحصائيات حسب الحملة
   const campaignStats = await db
     .select({
       sourceName: sql<string>`COALESCE(${leadSources.name}, 'بدون حملة')`,
@@ -274,9 +254,7 @@ export async function updateBookingDate(input: {
   bookingService?: string;
   bookingNotes?: string;
 }) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId, userId } = await requireTenant();
 
   await db
     .update(leads)
@@ -288,10 +266,9 @@ export async function updateBookingDate(input: {
     })
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
 
-  // Fix #3: تسجيل التعديل في سجل النشاط
   await db.insert(activityLog).values({
     tenantId,
-    userId: session.user.id,
+    userId,
     action: "LEAD_UPDATED",
     entityType: "lead",
     entityId: input.leadId,

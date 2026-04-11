@@ -3,17 +3,10 @@
 import { db } from "@/db";
 import { notifications } from "@/db/schema";
 import { eq, and, isNull, desc, count } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
-async function getContext() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  return {
-    userId: session.user.id,
-    tenantId: user.tenantId as string,
-  };
-}
+const getContext = requireTenant;
 
 // جلب إشعارات المستخدم
 export async function getNotifications(limit = 20) {

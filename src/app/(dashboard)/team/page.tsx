@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { getInitials } from "@/lib/utils";
 import { getTeamMembers } from "@/app/actions/team";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import TeamActions from "./team-actions";
 import MemberActions from "./member-actions";
@@ -23,9 +23,7 @@ const roleLabels: Record<string, string> = {
 };
 
 export default async function TeamPage() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  const currentUserId = session.user.id;
+  const { tenantId, userId: currentUserId } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   let members: Awaited<ReturnType<typeof getTeamMembers>> = [];

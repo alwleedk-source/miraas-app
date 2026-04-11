@@ -1,5 +1,5 @@
 import { getLeads } from "@/app/actions/leads";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { pipelineStages, users, tags, services } from "@/db/schema";
@@ -7,11 +7,7 @@ import { eq, asc, and } from "drizzle-orm";
 import LeadsClient from "./leads-client";
 
 export default async function LeadsPage() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  const tenantId = user.tenantId as string;
-  const userRole = user.role as string;
-  const userId = session.user.id;
+  const { tenantId, role: userRole, userId } = await requireTenant();
 
   if (!tenantId) {
     redirect("/register");

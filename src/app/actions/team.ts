@@ -12,18 +12,20 @@ import { headers } from "next/headers";
 // Helper
 // =============================================
 
-async function requireOwnerOrAdmin() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  const role = user.role as string;
-  const tenantId = user.tenantId as string;
+import { requireTenant } from "@/lib/auth-server";
 
-  if (!tenantId) throw new Error("المستخدم غير مرتبط بشركة");
+// =============================================
+// Helper
+// =============================================
+
+async function requireOwnerOrAdmin() {
+  const { tenantId, userId, role, session } = await requireTenant();
+
   if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) {
     throw new Error("ليس لديك صلاحية لهذا الإجراء");
   }
 
-  return { tenantId, userId: session.user.id, role };
+  return { tenantId, userId, role, session };
 }
 
 // =============================================
@@ -31,9 +33,7 @@ async function requireOwnerOrAdmin() {
 // =============================================
 
 export async function getTeamMembers() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("المستخدم غير مرتبط بشركة");
+  const { tenantId } = await requireTenant();
 
   const members = await db
     .select({

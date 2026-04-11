@@ -3,14 +3,13 @@ import {
   Webhook,
   ExternalLink,
 } from "lucide-react";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getWebhookKeys } from "@/app/actions/settings";
 import WebhookActions from "./webhook-actions";
 
 export default async function WebhooksSettingsPage() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  const { tenantId } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   let webhooks: Awaited<ReturnType<typeof getWebhookKeys>> = [];

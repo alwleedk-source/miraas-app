@@ -3,15 +3,10 @@
 import { db } from "@/db";
 import { tags, tagAssignments } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
-async function getTenantId() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("المستخدم غير مرتبط بشركة");
-  return { tenantId, userId: session.user.id };
-}
+const getTenantId = requireTenant;
 
 // إنشاء تصنيف جديد
 export async function createTag(input: { name: string; color?: string }) {

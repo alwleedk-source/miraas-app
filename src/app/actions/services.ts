@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import { services } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
 // =============================================
@@ -11,16 +11,10 @@ import { revalidatePath } from "next/cache";
 // =============================================
 
 export async function getServices() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   return db
-    .select({
-      id: services.id,
-      name: services.name,
-      isActive: services.isActive,
-    })
+    .select({ id: services.id, name: services.name, isActive: services.isActive })
     .from(services)
     .where(eq(services.tenantId, tenantId))
     .orderBy(services.createdAt);
@@ -31,9 +25,7 @@ export async function getServices() {
 // =============================================
 
 export async function getActiveServices() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   return db
     .select({ id: services.id, name: services.name })
@@ -47,9 +39,7 @@ export async function getActiveServices() {
 // =============================================
 
 export async function addService(name: string) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   const trimmed = name.trim();
   if (!trimmed) throw new Error("اسم الخدمة مطلوب");
@@ -63,11 +53,7 @@ export async function addService(name: string) {
 
   if (existing) throw new Error("هذه الخدمة موجودة بالفعل");
 
-  await db.insert(services).values({
-    tenantId,
-    name: trimmed,
-  });
-
+  await db.insert(services).values({ tenantId, name: trimmed });
   revalidatePath("/settings");
 }
 
@@ -76,9 +62,7 @@ export async function addService(name: string) {
 // =============================================
 
 export async function toggleService(serviceId: string) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   const [existing] = await db
     .select({ isActive: services.isActive })
@@ -100,9 +84,7 @@ export async function toggleService(serviceId: string) {
 // =============================================
 
 export async function deleteService(serviceId: string) {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
-  if (!tenantId) throw new Error("unauthorized");
+  const { tenantId } = await requireTenant();
 
   await db
     .delete(services)

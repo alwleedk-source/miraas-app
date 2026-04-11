@@ -18,7 +18,7 @@ import {
   Megaphone,
 } from "lucide-react";
 import { getInitials } from "@/lib/utils";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { leads, followUps, leadSources, pipelineStages, users } from "@/db/schema";
@@ -32,8 +32,7 @@ export default async function AnalyticsPage({
 }) {
   const params = await searchParams;
   const range = params.range || "";
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  const { tenantId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   // حساب فلتر التاريخ

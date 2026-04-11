@@ -3,22 +3,12 @@
 import { db } from "@/db";
 import { tenants, webhookEndpoints, whatsappConfigs, activityLog } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { encrypt } from "@/lib/encryption";
 
-// =============================================
-// Helper
-// =============================================
-
-async function getOwnerTenant() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  const tenantId = user.tenantId as string;
-  if (!tenantId) throw new Error("المستخدم غير مرتبط بشركة");
-  return { tenantId, userId: session.user.id };
-}
+const getOwnerTenant = requireTenant;
 
 // =============================================
 // جلب إعدادات الشركة

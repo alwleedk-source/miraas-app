@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Building2, Globe, Clock, Palette, Tag, Briefcase } from "lucide-react";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getTenantSettings } from "@/app/actions/settings";
 import SettingsForm from "./settings-form";
@@ -19,8 +19,7 @@ const planLabels: Record<string, string> = {
 };
 
 export default async function SettingsPage() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  const { tenantId } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   let tenant;

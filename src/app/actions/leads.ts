@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import { leads, followUps, activityLog, pipelineStages, notifications, leadSources, users } from "@/db/schema";
 import { eq, and, desc, asc, ilike, or, count, sql } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { normalizePhone } from "@/lib/utils";
 
@@ -24,20 +24,7 @@ type CreateLeadInput = {
 
 type UpdateLeadInput = Partial<CreateLeadInput> & { id: string };
 
-// =============================================
-// Helper: الحصول على tenantId من الجلسة
-// =============================================
-
-async function getTenantId() {
-  const session = await requireAuth();
-  const user = session.user as Record<string, unknown>;
-  const tenantId = user.tenantId as string;
-  const role = (user.role as string) || "COORDINATOR";
-  if (!tenantId) {
-    throw new Error("المستخدم غير مرتبط بشركة");
-  }
-  return { tenantId, userId: session.user.id, role };
-}
+const getTenantId = requireTenant;
 
 // =============================================
 // إنشاء عميل جديد

@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getBookings, getBookingsSummary } from "@/app/actions/bookings";
 import BookingBoard from "./booking-board";
@@ -9,8 +9,7 @@ import { services } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
-  const session = await requireAuth();
-  const tenantId = (session.user as Record<string, unknown>).tenantId as string;
+  const { tenantId } = await requireTenant();
   if (!tenantId) redirect("/register");
 
   let bookings: Awaited<ReturnType<typeof getBookings>> = [];
