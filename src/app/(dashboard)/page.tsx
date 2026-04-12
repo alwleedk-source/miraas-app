@@ -149,17 +149,36 @@ export default async function DashboardPage() {
     // ignore
   }
 
-  // إحصائيات الحجوزات
-  let todayBookings = 0;
+  // حجوزات اليوم — بيانات كاملة
+  let todayBookingsList: {
+    id: string;
+    name: string;
+    phone: string | null;
+    bookingDate: Date | null;
+    bookingService: string | null;
+    bookingNotes: string | null;
+    bookingStatus: string | null;
+    sourceName: string | null;
+  }[] = [];
   try {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    const [result] = await db
-      .select({ count: count() })
+    todayBookingsList = await db
+      .select({
+        id: leads.id,
+        name: leads.name,
+        phone: leads.phone,
+        bookingDate: leads.bookingDate,
+        bookingService: leads.bookingService,
+        bookingNotes: leads.bookingNotes,
+        bookingStatus: leads.bookingStatus,
+        sourceName: leadSources.name,
+      })
       .from(leads)
+      .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
       .where(
         and(
           eq(leads.tenantId, tenantId),
@@ -168,11 +187,12 @@ export default async function DashboardPage() {
           gte(leads.bookingDate, startOfDay),
           lte(leads.bookingDate, endOfDay)
         )
-      );
-    todayBookings = result?.count || 0;
+      )
+      .orderBy(leads.bookingDate);
   } catch {
     // ignore
   }
+  const todayBookings = todayBookingsList.length;
 
   const statCards = [
     {
@@ -257,6 +277,111 @@ export default async function DashboardPage() {
       {/* مهام اليوم */}
       {scheduledTasks.length > 0 && (
         <TodayTasks tasks={scheduledTasks} />
+      )}
+
+      {/* حجوزات اليوم */}
+      {todayBookingsList.length > 0 && (
+        <Card className="border-purple-200 bg-purple-50/30">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-purple-600" />
+                حجوزات اليوم
+                <span className="bg-purple-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                  {todayBookingsList.length}
+                </span>
+              </CardTitle>
+              <a
+                href="/bookings"
+                className="text-xs text-purple-600 hover:text-purple-800 hover:underline"
+              >
+                عرض الكل ←
+              </a>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {todayBookingsList.map((b) => {
+              const statusLabels: Record<string, string> = {
+                PENDING: "⏳ بانتظار",
+                COMPLETED: "✅ حضر",
+                ATTENDED_NOT_SUITABLE: "😕 لم يناسبه",
+                CANCELLED: "🚫 ألغى",
+                NO_RESPONSE: "📵 لم يرد",
+                POSTPONED: "🔄 مؤجّل",
+              };
+              const statusColors: Record<string, string> = {
+                PENDING: "bg-yellow-50 text-yellow-700 border-yellow-200",
+                COMPLETED: "bg-green-50 text-green-700 border-green-200",
+                CANCELLED: "bg-gray-50 text-gray-500 border-gray-200",
+                NO_RESPONSE: "bg-red-50 text-red-600 border-red-200",
+                POSTPONED: "bg-blue-50 text-blue-600 border-blue-200",
+                ATTENDED_NOT_SUITABLE: "bg-orange-50 text-orange-600 border-orange-200",
+              };
+              return (
+                <div key={b.id} className="flex items-start gap-3 p-3 rounded-lg bg-white border border-surface-200 transition-all">
+                  {/* الوقت */}
+                  <div className="w-14 text-center shrink-0">
+                    <p className="text-lg font-bold text-surface-900 tabular-nums">
+                      {b.bookingDate
+                        ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            timeZone: "Asia/Riyadh",
+                          })
+                        : "--:--"}
+                    </p>
+                  </div>
+
+                  {/* المحتوى */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                      <a
+                        href={`/leads?search=${encodeURIComponent(b.name)}`}
+                        className="text-sm font-semibold text-surface-900 hover:text-primary-600 hover:underline"
+                      >
+                        {b.name}
+                      </a>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${statusColors[b.bookingStatus || "PENDING"]}`}>
+                        {statusLabels[b.bookingStatus || "PENDING"]}
+                      </span>
+                      {b.sourceName && (
+                        <span className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5">
+                          📢 {b.sourceName}
+                        </span>
+                      )}
+                    </div>
+                    {b.bookingService && (
+                      <p className="text-xs text-surface-500">🏷️ {b.bookingService}</p>
+                    )}
+                    {b.bookingNotes && (
+                      <p className="text-xs text-surface-400 mt-0.5 truncate">💬 {b.bookingNotes}</p>
+                    )}
+                    {/* أزرار التواصل */}
+                    {b.phone && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <a
+                          href={`tel:${b.phone}`}
+                          className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-800 bg-primary-50 hover:bg-primary-100 px-2 py-1 rounded-lg transition-colors"
+                        >
+                          📞 اتصال
+                        </a>
+                        <a
+                          href={`https://wa.me/${b.phone.replace("+", "")}`}
+                          target="_blank"
+                          rel="noopener"
+                          className="flex items-center gap-1 text-xs text-success-600 hover:text-success-800 bg-success-50 hover:bg-success-100 px-2 py-1 rounded-lg transition-colors"
+                        >
+                          💬 واتساب
+                        </a>
+                        <span className="text-[10px] text-surface-300 mr-auto" dir="ltr">{b.phone}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
       )}
 
       {/* صف ثاني — الأنابيب + النشاطات */}

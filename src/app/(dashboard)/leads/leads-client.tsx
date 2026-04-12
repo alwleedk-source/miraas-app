@@ -62,6 +62,10 @@ interface LeadData {
   priority: string;
   welcomeSentAt?: Date | null;
   createdAt: Date;
+  bookingStatus?: string | null;
+  bookingDate?: Date | null;
+  bookingService?: string | null;
+  bookingNotes?: string | null;
   assignedUser: { id: string; name: string; image: string | null } | null;
   stage: { id: string; name: string; color: string } | null;
   source: { id: string; name: string; platform: string | null } | null;
@@ -1344,6 +1348,67 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                             </button>
                           );
                         })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* معلومات الحجز */}
+                  {selectedLead.bookingStatus && (
+                    <div className="border-t border-surface-100 pt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-surface-800 flex items-center gap-1.5">
+                          📅 الحجز
+                        </h4>
+                        <a
+                          href="/bookings"
+                          className="text-[11px] text-primary-500 hover:text-primary-700 hover:underline"
+                        >
+                          فتح الحجوزات ←
+                        </a>
+                      </div>
+                      <div className="space-y-2 bg-surface-50 rounded-lg p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-surface-500">الحالة</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            selectedLead.bookingStatus === "COMPLETED" ? "bg-green-100 text-green-700" :
+                            selectedLead.bookingStatus === "PENDING" ? "bg-yellow-100 text-yellow-700" :
+                            selectedLead.bookingStatus === "POSTPONED" ? "bg-blue-100 text-blue-700" :
+                            selectedLead.bookingStatus === "CANCELLED" ? "bg-gray-100 text-gray-500" :
+                            selectedLead.bookingStatus === "NO_RESPONSE" ? "bg-red-100 text-red-600" :
+                            "bg-surface-100 text-surface-600"
+                          }`}>
+                            {selectedLead.bookingStatus === "PENDING" && "⏳ بانتظار"}
+                            {selectedLead.bookingStatus === "COMPLETED" && "✅ حضر"}
+                            {selectedLead.bookingStatus === "POSTPONED" && "🔄 مؤجّل"}
+                            {selectedLead.bookingStatus === "CANCELLED" && "🚫 ملغي"}
+                            {selectedLead.bookingStatus === "NO_RESPONSE" && "📵 لم يرد"}
+                            {selectedLead.bookingStatus === "ATTENDED_NOT_SUITABLE" && "😕 لم يناسبه"}
+                          </span>
+                        </div>
+                        {selectedLead.bookingDate && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-surface-500">الموعد</span>
+                            <span className="text-xs font-medium text-surface-800" dir="ltr">
+                              {new Date(selectedLead.bookingDate).toLocaleDateString("ar-SA", {
+                                weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Riyadh",
+                              })}{" — "}
+                              {new Date(selectedLead.bookingDate).toLocaleTimeString("ar-SA", {
+                                hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh",
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        {selectedLead.bookingService && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-surface-500">الخدمة</span>
+                            <span className="text-xs text-surface-700">🏷️ {selectedLead.bookingService}</span>
+                          </div>
+                        )}
+                        {selectedLead.bookingNotes && (
+                          <p className="text-xs text-surface-500 bg-white rounded p-2 mt-1">
+                            💬 {selectedLead.bookingNotes}
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}

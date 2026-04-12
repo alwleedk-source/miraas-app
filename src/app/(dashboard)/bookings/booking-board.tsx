@@ -154,7 +154,12 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                 >
                   {/* الاسم + زر التعديل */}
                   <div className="flex items-start justify-between mb-1">
-                    <p className="font-medium text-sm text-surface-900">{booking.name}</p>
+                    <a
+                      href={`/leads?search=${encodeURIComponent(booking.name)}`}
+                      className="font-medium text-sm text-surface-900 hover:text-primary-600 hover:underline transition-colors"
+                    >
+                      {booking.name}
+                    </a>
                     <button
                       onClick={() => openEditModal(booking)}
                       className="p-1 rounded-lg hover:bg-surface-100 text-surface-400 hover:text-primary-500 transition-colors shrink-0"
@@ -182,11 +187,13 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                         weekday: "short",
                         month: "short",
                         day: "numeric",
+                        timeZone: "Asia/Riyadh",
                       })}{" "}
                       —{" "}
                       {new Date(booking.bookingDate).toLocaleTimeString("ar-SA", {
                         hour: "2-digit",
                         minute: "2-digit",
+                        timeZone: "Asia/Riyadh",
                       })}
                     </p>
                   )}

@@ -146,7 +146,7 @@ export default async function BookingsPage() {
                         </div>
                       </div>
                       <p className="text-xs text-surface-500">
-                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }) : ""} — {b.bookingService}
+                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" }) : ""} — {b.bookingService}
                       </p>
                       {b.sourceName && (
                         <p className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5 inline-block">📢 {b.sourceName}</p>
@@ -186,7 +186,7 @@ export default async function BookingsPage() {
                         </div>
                       </div>
                       <p className="text-xs text-surface-500">
-                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }) : ""} — {b.bookingService}
+                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" }) : ""} — {b.bookingService}
                       </p>
                       {b.sourceName && (
                         <p className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5 inline-block">📢 {b.sourceName}</p>
@@ -243,8 +243,28 @@ export default async function BookingsPage() {
         </div>
       )}
 
-      {/* Kanban الحجوزات */}
-      <BookingBoard bookings={bookings} services={servicesData} />
+      {/* Kanban الحجوزات أو Empty State */}
+      {bookings.length > 0 ? (
+        <BookingBoard bookings={bookings} services={servicesData} />
+      ) : (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <CalendarDays className="h-12 w-12 mx-auto mb-4 text-surface-300" />
+            <h3 className="text-lg font-semibold text-surface-700 mb-2">
+              لا توجد حجوزات بعد
+            </h3>
+            <p className="text-surface-500 text-sm mb-4">
+              اذهب لصفحة العملاء واسحب عميل على مرحلة &quot;حجز&quot; لإنشاء أول موعد
+            </p>
+            <a
+              href="/leads"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
+            >
+              ← اذهب للعملاء
+            </a>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
