@@ -3,16 +3,10 @@
 import { db } from "@/db";
 import { users, activityLog, leads } from "@/db/schema";
 import { eq, and, count, desc } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-server";
+import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-
-// =============================================
-// Helper
-// =============================================
-
-import { requireTenant } from "@/lib/auth-server";
 
 // =============================================
 // Helper
