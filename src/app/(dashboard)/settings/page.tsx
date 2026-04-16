@@ -1,15 +1,16 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Globe, Clock, Palette, Tag, Briefcase } from "lucide-react";
+import { Building2, Globe, Clock, Palette, Tag, Briefcase, LayoutGrid } from "lucide-react";
 import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getTenantSettings } from "@/app/actions/settings";
 import SettingsForm from "./settings-form";
 import TagsManager from "./tags-manager";
 import ServicesManager from "./services-manager";
+import DepartmentsManager from "./departments-manager";
 import { db } from "@/db";
-import { tags, services } from "@/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { tags, services, departments, users } from "@/db/schema";
+import { eq, and, asc } from "drizzle-orm";
 
 const planLabels: Record<string, string> = {
   TRIAL: "الخطة التجريبية",
@@ -47,6 +48,33 @@ export default async function SettingsPage() {
       .from(services)
       .where(eq(services.tenantId, tenantId))
       .orderBy(asc(services.createdAt));
+  } catch {}
+
+  // جلب الأقسام
+  let departmentsData: { id: string; name: string; color: string; defaultGapMinutes: number; position: number; isActive: boolean }[] = [];
+  try {
+    departmentsData = await db
+      .select({
+        id: departments.id,
+        name: departments.name,
+        color: departments.color,
+        defaultGapMinutes: departments.defaultGapMinutes,
+        position: departments.position,
+        isActive: departments.isActive,
+      })
+      .from(departments)
+      .where(eq(departments.tenantId, tenantId))
+      .orderBy(asc(departments.position));
+  } catch {}
+
+  // جلب مقدمي الخدمة (لربطهم بالأقسام)
+  let providersData: { id: string; name: string; email: string }[] = [];
+  try {
+    providersData = await db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.role, "PROVIDER"), eq(users.isActive, true)))
+      .orderBy(asc(users.name));
   } catch {}
 
   return (
@@ -94,6 +122,20 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <TagsManager initialTags={tagsData} />
+        </CardContent>
+      </Card>
+
+      {/* الأقسام */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <LayoutGrid className="h-5 w-5 text-primary-500" />
+            الأقسام
+          </CardTitle>
+          <CardDescription>أنشئ أقساماً لتنظيم الحجوزات (مثل: عيادة العيون، عيادة الجلدية) وحدد الفجوة الزمنية بين المواعيد</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DepartmentsManager initialDepartments={departmentsData} allProviders={providersData} />
         </CardContent>
       </Card>
 
