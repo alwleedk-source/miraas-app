@@ -143,6 +143,7 @@ export const ROLE_LABELS: Record<string, string> = {
   OWNER: "مالك الشركة",
   ADMIN: "مدير",
   COORDINATOR: "منسق",
+  PROVIDER: "مقدم خدمة",
 };
 
 /**

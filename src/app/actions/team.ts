@@ -66,7 +66,7 @@ export async function inviteTeamMember(input: {
   name: string;
   email: string;
   password: string;
-  role: "ADMIN" | "COORDINATOR";
+  role: "ADMIN" | "COORDINATOR" | "PROVIDER";
 }) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
@@ -147,7 +147,7 @@ export async function toggleTeamMember(memberId: string) {
 
 export async function updateMemberRole(
   memberId: string,
-  newRole: "ADMIN" | "COORDINATOR"
+  newRole: "ADMIN" | "COORDINATOR" | "PROVIDER"
 ) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 

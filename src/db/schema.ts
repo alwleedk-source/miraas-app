@@ -20,6 +20,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "OWNER",
   "ADMIN",
   "COORDINATOR",
+  "PROVIDER",
 ]);
 
 export const tenantStatusEnum = pgEnum("tenant_status", [
@@ -73,6 +74,9 @@ export const activityActionEnum = pgEnum("activity_action", [
   "WEBHOOK_RECEIVED",
   "WHATSAPP_SENT",
   "WHATSAPP_FAILED",
+  "DEPARTMENT_CREATED",
+  "DEPARTMENT_UPDATED",
+  "INTERNAL_MESSAGE",
 ]);
 
 export const notificationTypeEnum = pgEnum("notification_type", [
@@ -196,8 +200,82 @@ export const leadSources = pgTable("lead_sources", {
 export const services = pgTable("services", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  departmentId: uuid("department_id").references(() => departments.id, { onDelete: "set null" }),
   name: varchar("name", { length: 255 }).notNull(),
+  defaultDurationMin: integer("default_duration_min").default(30),
   isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4c. Departments (الأقسام)
+// ============================================
+
+export const departments = pgTable("departments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  color: varchar("color", { length: 20 }).notNull().default("#3B82F6"),
+  defaultGapMinutes: integer("default_gap_minutes").notNull().default(15),
+  position: integer("position").notNull().default(0),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4d. Department Providers (ربط الموارد بالأقسام)
+// ============================================
+
+export const departmentProviders = pgTable("department_providers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  departmentId: uuid("department_id").notNull().references(() => departments.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4e. Provider Schedules (ساعات العمل الأسبوعية)
+// ============================================
+
+export const providerSchedules = pgTable("provider_schedules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  dayOfWeek: integer("day_of_week").notNull(), // 0=الأحد ... 6=السبت
+  startTime: varchar("start_time", { length: 5 }).notNull(), // "09:00"
+  endTime: varchar("end_time", { length: 5 }).notNull(), // "17:00"
+  breakStart: varchar("break_start", { length: 5 }), // "12:30" nullable
+  breakEnd: varchar("break_end", { length: 5 }), // "13:30" nullable
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4f. Provider Day Offs (الإجازات والاستثناءات)
+// ============================================
+
+export const providerDayOffs = pgTable("provider_day_offs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: timestamp("date", { withTimezone: true }).notNull(),
+  reason: varchar("reason", { length: 255 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================
+// 4g. Internal Messages (الرسائل الداخلية السريعة)
+// ============================================
+
+export const internalMessages = pgTable("internal_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  senderId: uuid("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  senderRole: varchar("sender_role", { length: 20 }).notNull(), // PROVIDER | COORDINATOR
+  departmentId: uuid("department_id").references(() => departments.id, { onDelete: "cascade" }),
+  messageType: varchar("message_type", { length: 20 }).notNull().default("CUSTOM"), // QUICK_STATUS | CUSTOM
+  content: text("content").notNull(),
+  isRead: boolean("is_read").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -224,6 +302,10 @@ export const leads = pgTable("leads", {
   bookingDate: timestamp("booking_date", { withTimezone: true }),
   bookingService: varchar("booking_service", { length: 255 }),
   bookingNotes: text("booking_notes"),
+  bookingDepartmentId: uuid("booking_department_id").references(() => departments.id, { onDelete: "set null" }),
+  bookingResourceId: uuid("booking_resource_id").references(() => users.id, { onDelete: "set null" }),
+  bookingDurationMin: integer("booking_duration_min"),
+  bookingEndTime: timestamp("booking_end_time", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -390,6 +472,35 @@ export const leadSourcesRelations = relations(leadSources, ({ one, many }) => ({
 
 export const servicesRelations = relations(services, ({ one }) => ({
   tenant: one(tenants, { fields: [services.tenantId], references: [tenants.id] }),
+  department: one(departments, { fields: [services.departmentId], references: [departments.id] }),
+}));
+
+export const departmentsRelations = relations(departments, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [departments.tenantId], references: [tenants.id] }),
+  providers: many(departmentProviders),
+  services: many(services),
+  messages: many(internalMessages),
+}));
+
+export const departmentProvidersRelations = relations(departmentProviders, ({ one }) => ({
+  department: one(departments, { fields: [departmentProviders.departmentId], references: [departments.id] }),
+  user: one(users, { fields: [departmentProviders.userId], references: [users.id] }),
+}));
+
+export const providerSchedulesRelations = relations(providerSchedules, ({ one }) => ({
+  tenant: one(tenants, { fields: [providerSchedules.tenantId], references: [tenants.id] }),
+  user: one(users, { fields: [providerSchedules.userId], references: [users.id] }),
+}));
+
+export const providerDayOffsRelations = relations(providerDayOffs, ({ one }) => ({
+  tenant: one(tenants, { fields: [providerDayOffs.tenantId], references: [tenants.id] }),
+  user: one(users, { fields: [providerDayOffs.userId], references: [users.id] }),
+}));
+
+export const internalMessagesRelations = relations(internalMessages, ({ one }) => ({
+  tenant: one(tenants, { fields: [internalMessages.tenantId], references: [tenants.id] }),
+  sender: one(users, { fields: [internalMessages.senderId], references: [users.id] }),
+  department: one(departments, { fields: [internalMessages.departmentId], references: [departments.id] }),
 }));
 
 export const tagsRelations = relations(tags, ({ one, many }) => ({

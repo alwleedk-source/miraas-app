@@ -20,6 +20,7 @@ const roleLabels: Record<string, string> = {
   OWNER: "مالك",
   ADMIN: "مدير",
   COORDINATOR: "منسق",
+  PROVIDER: "مقدم خدمة",
 };
 
 export default async function TeamPage() {

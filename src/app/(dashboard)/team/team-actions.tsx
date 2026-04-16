@@ -18,7 +18,7 @@ export default function TeamActions() {
     const name = formData.get("name") as string;
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
-    const role = formData.get("role") as "ADMIN" | "COORDINATOR";
+    const role = formData.get("role") as "ADMIN" | "COORDINATOR" | "PROVIDER";
 
     if (!name || !email || !password) return;
 
@@ -41,7 +41,7 @@ export default function TeamActions() {
     return (
       <Button onClick={() => setShowForm(true)}>
         <Plus className="h-4 w-4 me-2" />
-        إضافة منسق
+        إضافة عضو
       </Button>
     );
   }
@@ -93,6 +93,7 @@ export default function TeamActions() {
             >
               <option value="COORDINATOR">منسق</option>
               <option value="ADMIN">مدير</option>
+              <option value="PROVIDER">مقدم خدمة</option>
             </select>
           </div>
           <div className="sm:col-span-2 flex gap-2 justify-end">

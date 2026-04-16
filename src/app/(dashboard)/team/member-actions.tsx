@@ -40,7 +40,7 @@ export default function MemberActions({ memberId, isActive, role, isOwner, isSel
     });
   };
 
-  const handleRoleChange = (newRole: "ADMIN" | "COORDINATOR") => {
+  const handleRoleChange = (newRole: "ADMIN" | "COORDINATOR" | "PROVIDER") => {
     setShowRoleMenu(false);
     startTransition(async () => {
       await updateMemberRole(memberId, newRole);
@@ -50,6 +50,7 @@ export default function MemberActions({ memberId, isActive, role, isOwner, isSel
   const roleLabels: Record<string, string> = {
     ADMIN: "مدير",
     COORDINATOR: "منسق",
+    PROVIDER: "مقدم خدمة",
   };
 
   return (
@@ -94,7 +95,7 @@ export default function MemberActions({ memberId, isActive, role, isOwner, isSel
           <>
             <div className="fixed inset-0 z-30" onClick={() => setShowRoleMenu(false)} />
             <div className="absolute top-full mt-1 end-0 z-40 bg-white rounded-lg shadow-lg border border-surface-200 py-1 min-w-[130px]">
-              {(["ADMIN", "COORDINATOR"] as const).map((r) => (
+              {(["ADMIN", "COORDINATOR", "PROVIDER"] as const).map((r) => (
                 <button
                   key={r}
                   onClick={() => handleRoleChange(r)}
