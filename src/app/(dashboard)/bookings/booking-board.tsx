@@ -314,14 +314,14 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                   {booking.bookingDate ? (
                     <p className="text-xs text-surface-500 mb-1">
                       📅{" "}
-                      {new Date(booking.bookingDate).toLocaleDateString("ar-SA", {
+                      {new Date(booking.bookingDate).toLocaleDateString("ar-SA-u-ca-gregory", {
                         weekday: "short",
                         month: "short",
                         day: "numeric",
                         timeZone: "Asia/Riyadh",
                       })}{" "}
                       —{" "}
-                      {new Date(booking.bookingDate).toLocaleTimeString("ar-SA", {
+                      {new Date(booking.bookingDate).toLocaleTimeString("ar-SA-u-ca-gregory", {
                         hour: "2-digit",
                         minute: "2-digit",
                         timeZone: "Asia/Riyadh",

@@ -188,8 +188,8 @@ export default function TodayBookingsPanel({
         >
           {b.bookingDate
             ? variant === "overdue"
-              ? new Date(b.bookingDate).toLocaleDateString("ar-SA")
-              : new Date(b.bookingDate).toLocaleTimeString("ar-SA", {
+              ? new Date(b.bookingDate).toLocaleDateString("ar-SA-u-ca-gregory")
+              : new Date(b.bookingDate).toLocaleTimeString("ar-SA-u-ca-gregory", {
                   hour: "2-digit",
                   minute: "2-digit",
                   timeZone: "Asia/Riyadh",
