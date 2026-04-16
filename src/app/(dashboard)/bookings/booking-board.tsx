@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo } from "react";
 import { updateBookingStatus, updateBookingDate } from "@/app/actions/bookings";
 import {
   BOOKING_STATUSES,
@@ -8,7 +8,7 @@ import {
   BOOKING_STATUS_COLORS,
   BOOKING_STATUS_ICONS,
 } from "@/lib/utils";
-import { Phone, MessageCircle, Calendar, X, Loader2, Pencil } from "lucide-react";
+import { Phone, MessageCircle, Calendar, X, Loader2, Pencil, Search, EyeOff, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +22,7 @@ type Booking = {
   bookingService: string | null;
   bookingNotes: string | null;
   sourceName: string | null;
+  assignedUserName: string | null;
 };
 
 type PostponeData = {
@@ -43,7 +44,13 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
   const [postponeModal, setPostponeModal] = useState<PostponeData | null>(null);
   const [postponeDate, setPostponeDate] = useState("");
   const [postponeReason, setPostponeReason] = useState("");
+  const [postponeWaitlist, setPostponeWaitlist] = useState(false);
   const [editModal, setEditModal] = useState<EditData | null>(null);
+  const [dateFilter, setDateFilter] = useState<"all" | "today" | "tomorrow" | "next_7" | "past">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [hideCompleted, setHideCompleted] = useState(false);
+
+  const COMPLETED_STATUSES = ["COMPLETED", "ATTENDED_NOT_SUITABLE", "CANCELLED", "NO_RESPONSE"];
 
   const handleDrop = (status: string, leadId: string) => {
     if (status === "POSTPONED") {
@@ -58,17 +65,21 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
   };
 
   const handlePostponeConfirm = () => {
-    if (!postponeModal || !postponeDate) return;
+    if (!postponeModal) return;
+    // إذا كان في وضع قائمة الانتظار لا نحتاج تاريخ
+    if (!postponeWaitlist && !postponeDate) return;
+
     startTransition(async () => {
       await updateBookingStatus({
         leadId: postponeModal.leadId,
         status: "POSTPONED",
-        postponeDate,
+        postponeDate: postponeWaitlist ? undefined : postponeDate,
         postponeReason,
       });
       setPostponeModal(null);
       setPostponeDate("");
       setPostponeReason("");
+      setPostponeWaitlist(false);
     });
   };
 
@@ -97,18 +108,132 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
     });
   };
 
+  // فلترة متقدمة: تاريخ + بحث + إخفاء المكتمل
+  const filteredBookings = useMemo(() => {
+    let result = bookings;
+
+    // فلتر التاريخ
+    if (dateFilter !== "all") {
+      result = result.filter((b) => {
+        if (!b.bookingDate) return false;
+        const bDate = new Date(b.bookingDate);
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrowStart = new Date(todayStart.getTime() + 86400000);
+        const dayAfterTomorrowStart = new Date(tomorrowStart.getTime() + 86400000);
+        const next7End = new Date(todayStart.getTime() + 7 * 86400000);
+
+        if (dateFilter === "past") return bDate < todayStart;
+        if (dateFilter === "today") return bDate >= todayStart && bDate < tomorrowStart;
+        if (dateFilter === "tomorrow") return bDate >= tomorrowStart && bDate < dayAfterTomorrowStart;
+        if (dateFilter === "next_7") return bDate >= todayStart && bDate < next7End;
+        return true;
+      });
+    }
+
+    // فلتر البحث
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (b) =>
+          b.name.toLowerCase().includes(q) ||
+          (b.phone && b.phone.includes(q)) ||
+          (b.bookingService && b.bookingService.toLowerCase().includes(q))
+      );
+    }
+
+    // إخفاء المكتمل
+    if (hideCompleted) {
+      result = result.filter((b) => !COMPLETED_STATUSES.includes(b.bookingStatus || ""));
+    }
+
+    return result;
+  }, [bookings, dateFilter, searchQuery, hideCompleted]);
+
   const grouped = BOOKING_STATUSES.reduce(
     (acc, status) => {
-      acc[status] = bookings.filter((b) => b.bookingStatus === status);
+      acc[status] = filteredBookings.filter((b) => b.bookingStatus === status);
       return acc;
     },
     {} as Record<string, Booking[]>
   );
 
+  // الأعمدة المعروضة (إخفاء أعمدة المكتمل إذا مفعلة)
+  const visibleStatuses = hideCompleted
+    ? BOOKING_STATUSES.filter((s) => !COMPLETED_STATUSES.includes(s))
+    : BOOKING_STATUSES;
+
   return (
     <>
+      {/* شريط البحث + الفلاتر */}
+      <div className="space-y-3 mb-4">
+        {/* صف البحث + إخفاء المكتمل */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ابحث بالاسم أو الجوال أو الخدمة..."
+              className="pl-9 h-9 text-sm"
+            />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400" />
+          </div>
+          <button
+            onClick={() => setHideCompleted(!hideCompleted)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              hideCompleted
+                ? "bg-primary-100 text-primary-700 border border-primary-200"
+                : "bg-white border border-surface-200 text-surface-500 hover:bg-surface-50"
+            }`}
+          >
+            {hideCompleted ? (
+              <>
+                <Eye className="h-3.5 w-3.5" />
+                إظهار المنتهية
+              </>
+            ) : (
+              <>
+                <EyeOff className="h-3.5 w-3.5" />
+                إخفاء المنتهية
+              </>
+            )}
+          </button>
+          {searchQuery && (
+            <span className="text-xs text-surface-400">
+              {filteredBookings.length} نتيجة
+            </span>
+          )}
+        </div>
+
+        {/* فلتر التاريخ */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          {(
+            [
+              { id: "all", label: "كل الأوقات" },
+              { id: "today", label: "اليوم" },
+              { id: "tomorrow", label: "غداً" },
+              { id: "next_7", label: "القادمة (7 أيام)" },
+              { id: "past", label: "السابقة" },
+            ] as const
+          ).map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setDateFilter(f.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                dateFilter === f.id
+                  ? "bg-primary-100 text-primary-700"
+                  : "bg-white border border-surface-200 text-surface-600 hover:bg-surface-50"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Kanban Board */}
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {BOOKING_STATUSES.map((status) => (
+        {visibleStatuses.map((status) => (
           <div
             key={status}
             className="min-w-[280px] w-[280px] flex-shrink-0"
@@ -176,11 +301,17 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                     </p>
                   )}
 
+                  {booking.assignedUserName && (
+                    <p className="text-[10px] text-surface-400 mb-1">
+                      👤 {booking.assignedUserName}
+                    </p>
+                  )}
+
                   {booking.bookingService && (
                     <p className="text-xs text-surface-500 mb-1">🏷️ {booking.bookingService}</p>
                   )}
 
-                  {booking.bookingDate && (
+                  {booking.bookingDate ? (
                     <p className="text-xs text-surface-500 mb-1">
                       📅{" "}
                       {new Date(booking.bookingDate).toLocaleDateString("ar-SA", {
@@ -196,7 +327,11 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                         timeZone: "Asia/Riyadh",
                       })}
                     </p>
-                  )}
+                  ) : status === "POSTPONED" ? (
+                    <p className="text-xs text-blue-500 mb-1 flex items-center gap-1">
+                      ⏸️ قائمة انتظار — بدون موعد
+                    </p>
+                  ) : null}
 
                   {/* الملاحظات — تظهر دائماً */}
                   {booking.bookingNotes && (
@@ -246,7 +381,7 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
         ))}
       </div>
 
-      {/* نافذة التأجيل */}
+      {/* نافذة التأجيل — التاريخ اختياري */}
       {postponeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPostponeModal(null)}>
           <div
@@ -266,16 +401,48 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
             </div>
 
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>الموعد الجديد *</Label>
-                <Input
-                  type="datetime-local"
-                  value={postponeDate}
-                  onChange={(e) => setPostponeDate(e.target.value)}
-                  dir="ltr"
-                  required
-                />
+              {/* خيار قائمة الانتظار */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setPostponeWaitlist(false)}
+                  className={`flex-1 p-3 rounded-xl border-2 text-sm font-medium transition-all ${
+                    !postponeWaitlist
+                      ? "border-primary-500 bg-primary-50 text-primary-700"
+                      : "border-surface-200 text-surface-500 hover:border-surface-300"
+                  }`}
+                >
+                  📅 تأجيل لموعد محدد
+                </button>
+                <button
+                  onClick={() => setPostponeWaitlist(true)}
+                  className={`flex-1 p-3 rounded-xl border-2 text-sm font-medium transition-all ${
+                    postponeWaitlist
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-surface-200 text-surface-500 hover:border-surface-300"
+                  }`}
+                >
+                  ⏸️ قائمة انتظار
+                </button>
               </div>
+
+              {!postponeWaitlist && (
+                <div className="space-y-2">
+                  <Label>الموعد الجديد *</Label>
+                  <Input
+                    type="datetime-local"
+                    value={postponeDate}
+                    onChange={(e) => setPostponeDate(e.target.value)}
+                    dir="ltr"
+                    required
+                  />
+                </div>
+              )}
+
+              {postponeWaitlist && (
+                <p className="text-xs text-blue-600 bg-blue-50 rounded-lg p-3">
+                  💡 العميل سيظهر في قائمة الانتظار بدون موعد محدد. يمكنك لاحقاً تعديل الموعد عند الاتفاق مع العميل.
+                </p>
+              )}
 
               <div className="space-y-2">
                 <Label>سبب التأجيل</Label>
@@ -289,7 +456,7 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
               <div className="flex gap-2 pt-2">
                 <Button
                   onClick={handlePostponeConfirm}
-                  disabled={!postponeDate || isPending}
+                  disabled={(!postponeWaitlist && !postponeDate) || isPending}
                   className="flex-1"
                 >
                   {isPending ? (
@@ -297,7 +464,7 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                   ) : (
                     <>
                       <Calendar className="h-4 w-4" />
-                      تأكيد التأجيل
+                      {postponeWaitlist ? "تأكيد (قائمة انتظار)" : "تأكيد التأجيل"}
                     </>
                   )}
                 </Button>

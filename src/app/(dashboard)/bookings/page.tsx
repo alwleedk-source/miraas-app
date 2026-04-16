@@ -2,6 +2,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getBookings, getBookingsSummary } from "@/app/actions/bookings";
 import BookingBoard from "./booking-board";
+import BookingsHeader from "./bookings-header";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
@@ -40,10 +41,8 @@ export default async function BookingsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold text-surface-900">إدارة الحجوزات</h1>
-        <p className="text-surface-500 mt-1">تتبع مواعيد العملاء وحالاتهم</p>
-      </div>
+      {/* العنوان + زر موعد سريع */}
+      <BookingsHeader services={servicesData} />
 
       {/* إحصائيات سريعة */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -254,7 +253,7 @@ export default async function BookingsPage() {
               لا توجد حجوزات بعد
             </h3>
             <p className="text-surface-500 text-sm mb-4">
-              اذهب لصفحة العملاء واسحب عميل على مرحلة &quot;حجز&quot; لإنشاء أول موعد
+              اضغط على &quot;موعد سريع&quot; لإنشاء أول حجز، أو اذهب لصفحة العملاء
             </p>
             <a
               href="/leads"
