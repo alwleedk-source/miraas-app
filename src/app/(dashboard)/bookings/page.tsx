@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getBookings, getBookingsSummary } from "@/app/actions/bookings";
 import BookingBoard from "./booking-board";
 import BookingsHeader from "./bookings-header";
+import TodayBookingsPanel from "./today-bookings-panel";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
@@ -18,6 +19,7 @@ export default async function BookingsPage() {
     today: [], tomorrow: [], overdue: [],
     stats: { total: 0, pending: 0, completed: 0, noShow: 0, cancelled: 0 },
     campaignStats: [],
+    remindedLeadIds: [],
   };
 
   try {
@@ -117,130 +119,13 @@ export default async function BookingsPage() {
         </Card>
       )}
 
-      {/* لوحة المواعيد: اليوم + الغد + المتأخرة */}
-      {(summary.today.length > 0 || summary.tomorrow.length > 0 || summary.overdue.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* مواعيد اليوم */}
-          <Card className={summary.today.length > 0 ? "border-warning-200 bg-warning-50/30" : ""}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">📅</span>
-                <h3 className="font-semibold text-surface-800">مواعيد اليوم ({summary.today.length})</h3>
-              </div>
-              {summary.today.length === 0 ? (
-                <p className="text-sm text-surface-400">لا توجد مواعيد اليوم</p>
-              ) : (
-                <div className="space-y-2">
-                  {summary.today.map((b) => (
-                    <div key={b.id} className="p-2.5 rounded-lg bg-white shadow-sm space-y-1">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">{b.name}</p>
-                        <div className="flex items-center gap-1">
-                          {b.phone && (
-                            <>
-                              <a href={`tel:${b.phone}`} className="p-1.5 rounded-lg hover:bg-surface-100 text-surface-500" title="اتصل">📞</a>
-                              <a href={`https://wa.me/${b.phone.replace("+", "")}`} target="_blank" rel="noopener" className="p-1.5 rounded-lg hover:bg-success-50 text-success-600" title="واتساب">💬</a>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs text-surface-500">
-                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" }) : ""} — {b.bookingService}
-                      </p>
-                      {b.sourceName && (
-                        <p className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5 inline-block">📢 {b.sourceName}</p>
-                      )}
-                      {b.bookingNotes && (
-                        <p className="text-[11px] text-surface-500 bg-surface-50 rounded p-1.5 mt-1">💬 {b.bookingNotes}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* مواعيد الغد */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">📆</span>
-                <h3 className="font-semibold text-surface-800">مواعيد الغد ({summary.tomorrow.length})</h3>
-              </div>
-              {summary.tomorrow.length === 0 ? (
-                <p className="text-sm text-surface-400">لا توجد مواعيد الغد</p>
-              ) : (
-                <div className="space-y-2">
-                  {summary.tomorrow.map((b) => (
-                    <div key={b.id} className="p-2.5 rounded-lg bg-surface-50 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">{b.name}</p>
-                        <div className="flex items-center gap-1">
-                          {b.phone && (
-                            <>
-                              <a href={`tel:${b.phone}`} className="p-1.5 rounded-lg hover:bg-surface-100 text-surface-500" title="اتصل">📞</a>
-                              <a href={`https://wa.me/${b.phone.replace("+", "")}`} target="_blank" rel="noopener" className="p-1.5 rounded-lg hover:bg-success-50 text-success-600" title="واتساب">💬</a>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs text-surface-500">
-                        {b.bookingDate ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" }) : ""} — {b.bookingService}
-                      </p>
-                      {b.sourceName && (
-                        <p className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5 inline-block">📢 {b.sourceName}</p>
-                      )}
-                      {b.bookingNotes && (
-                        <p className="text-[11px] text-surface-500 bg-surface-50 rounded p-1.5 mt-1 border border-surface-100">💬 {b.bookingNotes}</p>
-                      )}
-                      {b.phone && (
-                        <p className="text-[10px] text-surface-300 mt-0.5" dir="ltr">{b.phone}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* المتأخرة */}
-          <Card className={summary.overdue.length > 0 ? "border-danger-200 bg-danger-50/30" : ""}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">⚠️</span>
-                <h3 className="font-semibold text-surface-800">متأخرة ({summary.overdue.length})</h3>
-              </div>
-              {summary.overdue.length === 0 ? (
-                <p className="text-sm text-surface-400">لا توجد مواعيد متأخرة 🎉</p>
-              ) : (
-                <div className="space-y-2">
-                  {summary.overdue.map((b) => (
-                    <div key={b.id} className="p-2.5 rounded-lg bg-white shadow-sm border border-danger-100 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">{b.name}</p>
-                        <div className="flex items-center gap-1">
-                          {b.phone && (
-                            <>
-                              <a href={`tel:${b.phone}`} className="p-1.5 rounded-lg hover:bg-danger-50 text-danger-500" title="اتصل الآن!">📞</a>
-                              <a href={`https://wa.me/${b.phone.replace("+", "")}`} target="_blank" rel="noopener" className="p-1.5 rounded-lg hover:bg-success-50 text-success-600" title="واتساب">💬</a>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs text-danger-500">
-                        {b.bookingDate ? new Date(b.bookingDate).toLocaleDateString("ar-SA") : ""} — {b.bookingService}
-                      </p>
-                      {b.bookingNotes && (
-                        <p className="text-[11px] text-surface-500 bg-surface-50 rounded p-1.5 mt-1">💬 {b.bookingNotes}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* لوحة المواعيد التفاعلية: اليوم + الغد + المتأخرة مع أزرار التذكير */}
+      <TodayBookingsPanel
+        today={summary.today}
+        tomorrow={summary.tomorrow}
+        overdue={summary.overdue}
+        remindedLeadIds={summary.remindedLeadIds}
+      />
 
       {/* Kanban الحجوزات أو Empty State */}
       {bookings.length > 0 ? (

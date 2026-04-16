@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, activityLog, leadSources, users, pipelineStages } from "@/db/schema";
+import { leads, activityLog, leadSources, users, pipelineStages, followUps } from "@/db/schema";
 import { eq, and, isNotNull, gte, lte, sql, ilike, or } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -252,12 +252,28 @@ export async function getBookingsSummary() {
     .groupBy(leadSources.name)
     .orderBy(sql`count(*) desc`);
 
+  // جلب حالة التذكيرات المرسلة اليوم
+  const todayReminders = await db
+    .select({ leadId: followUps.leadId })
+    .from(followUps)
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.type, "WHATSAPP"),
+        gte(followUps.createdAt, todayStart),
+        sql`${followUps.notes} LIKE '%تذكير بالموعد%'`
+      )
+    );
+
+  const remindedLeadIds = todayReminders.map((r) => r.leadId);
+
   return {
     today: todayBookings,
     tomorrow: tomorrowBookings,
     overdue: overdueBookings,
     stats: stats || { total: 0, pending: 0, completed: 0, noShow: 0, cancelled: 0 },
     campaignStats,
+    remindedLeadIds,
   };
 }
 
@@ -297,6 +313,41 @@ export async function updateBookingDate(input: {
   });
 
   revalidatePath("/bookings");
+}
+
+// =============================================
+// تسجيل تذكير بالموعد
+// =============================================
+
+export async function markBookingReminded(leadId: string) {
+  const { tenantId, userId } = await requireTenant();
+
+  // إنشاء متابعة مكتملة من نوع واتساب
+  const [followUp] = await db
+    .insert(followUps)
+    .values({
+      tenantId,
+      leadId,
+      userId,
+      type: "WHATSAPP",
+      notes: "تذكير بالموعد",
+      completedAt: new Date(),
+    })
+    .returning({ id: followUps.id });
+
+  // تسجيل في سجل النشاطات
+  await db.insert(activityLog).values({
+    tenantId,
+    userId,
+    action: "FOLLOW_UP_CREATED",
+    entityType: "follow_up",
+    entityId: followUp.id,
+    details: { action: "booking_reminder_sent", leadId },
+  });
+
+  revalidatePath("/bookings");
+  revalidatePath("/");
+  return { success: true };
 }
 
 // =============================================
