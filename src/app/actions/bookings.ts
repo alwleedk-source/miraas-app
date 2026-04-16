@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, activityLog, leadSources, users, pipelineStages, followUps } from "@/db/schema";
+import { leads, activityLog, leadSources, users, pipelineStages, followUps, departments } from "@/db/schema";
 import { eq, and, isNotNull, gte, lte, sql, ilike, or } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -399,6 +399,9 @@ export async function quickCreateBooking(input: {
   bookingDate: string;
   bookingService: string;
   bookingNotes?: string;
+  bookingDepartmentId?: string;
+  bookingResourceId?: string;
+  bookingDurationMin?: number;
 }) {
   const { tenantId, userId, role } = await requireTenant();
 
@@ -481,14 +484,32 @@ export async function quickCreateBooking(input: {
     }
   }
 
+  // حساب وقت الانتهاء (bookingEndTime)
+  const bookingStart = new Date(input.bookingDate);
+  const durationMin = input.bookingDurationMin || 30;
+  let gapMinutes = 15;
+  if (input.bookingDepartmentId) {
+    const [dept] = await db
+      .select({ defaultGapMinutes: departments.defaultGapMinutes })
+      .from(departments)
+      .where(eq(departments.id, input.bookingDepartmentId))
+      .limit(1);
+    if (dept) gapMinutes = dept.defaultGapMinutes;
+  }
+  const bookingEndTime = new Date(bookingStart.getTime() + (durationMin + gapMinutes) * 60000);
+
   // إنشاء الحجز
   const [lead] = await db
     .update(leads)
     .set({
       bookingStatus: "PENDING",
-      bookingDate: new Date(input.bookingDate),
+      bookingDate: bookingStart,
       bookingService: input.bookingService,
       bookingNotes: input.bookingNotes || null,
+      bookingDepartmentId: input.bookingDepartmentId || null,
+      bookingResourceId: input.bookingResourceId || null,
+      bookingDurationMin: durationMin,
+      bookingEndTime,
       updatedAt: new Date(),
     })
     .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))

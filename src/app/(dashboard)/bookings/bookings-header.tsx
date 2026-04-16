@@ -5,9 +5,16 @@ import { CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import QuickBookingModal from "./quick-booking-modal";
 
-type Service = { id: string; name: string };
+type Service = { id: string; name: string; departmentId?: string | null; defaultDurationMin?: number | null };
+type Department = { id: string; name: string; color: string; defaultGapMinutes: number };
 
-export default function BookingsHeader({ services }: { services: Service[] }) {
+export default function BookingsHeader({
+  services,
+  departments = [],
+}: {
+  services: Service[];
+  departments?: Department[];
+}) {
   const [showQuickBooking, setShowQuickBooking] = useState(false);
 
   return (
@@ -30,6 +37,7 @@ export default function BookingsHeader({ services }: { services: Service[] }) {
         open={showQuickBooking}
         onClose={() => setShowQuickBooking(false)}
         services={services}
+        departments={departments}
       />
     </>
   );

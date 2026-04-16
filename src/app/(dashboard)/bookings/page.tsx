@@ -7,7 +7,7 @@ import TodayBookingsPanel from "./today-bookings-panel";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
-import { services } from "@/db/schema";
+import { services, departments } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
@@ -31,20 +31,40 @@ export default async function BookingsPage() {
     // الأعمدة لم تُنشأ بعد — نعرض صفحة فارغة
   }
 
-  // جلب الخدمات النشطة
-  let servicesData: { id: string; name: string }[] = [];
+  // جلب الخدمات النشطة مع القسم والمدة الافتراضية
+  let servicesData: { id: string; name: string; departmentId: string | null; defaultDurationMin: number | null }[] = [];
   try {
     servicesData = await db
-      .select({ id: services.id, name: services.name })
+      .select({
+        id: services.id,
+        name: services.name,
+        departmentId: services.departmentId,
+        defaultDurationMin: services.defaultDurationMin,
+      })
       .from(services)
       .where(and(eq(services.tenantId, tenantId), eq(services.isActive, true)))
       .orderBy(asc(services.name));
   } catch {}
 
+  // جلب الأقسام النشطة
+  let departmentsData: { id: string; name: string; color: string; defaultGapMinutes: number }[] = [];
+  try {
+    departmentsData = await db
+      .select({
+        id: departments.id,
+        name: departments.name,
+        color: departments.color,
+        defaultGapMinutes: departments.defaultGapMinutes,
+      })
+      .from(departments)
+      .where(and(eq(departments.tenantId, tenantId), eq(departments.isActive, true)))
+      .orderBy(asc(departments.position));
+  } catch {}
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* العنوان + زر موعد سريع */}
-      <BookingsHeader services={servicesData} />
+      <BookingsHeader services={servicesData} departments={departmentsData} />
 
       {/* إحصائيات سريعة */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

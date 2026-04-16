@@ -352,6 +352,61 @@ export default async function AnalyticsPage({
   // ألوان الحملات
   const sourceColors = ["#1877F2", "#E4405F", "#4285F4", "#1DA1F2", "#6B7280", "#F97316", "#8B5CF6"];
 
+  // =============================================
+  // تحليلات الحجوزات والخدمات
+  // =============================================
+
+  const bookingBreakdown = await db
+    .select({
+      status: leads.bookingStatus,
+      count: count(),
+    })
+    .from(leads)
+    .where(and(...baseConditions, sql`${leads.bookingStatus} IS NOT NULL`))
+    .groupBy(leads.bookingStatus);
+
+  const totalBookings = bookingBreakdown.reduce((s, b) => s + b.count, 0);
+
+  // حجوزات المنسقين (الحضور مقابل عدم الحضور)
+  const coordinatorBookingsData = await db
+    .select({
+      assignedTo: leads.assignedTo,
+      status: leads.bookingStatus,
+      count: count(),
+    })
+    .from(leads)
+    .where(and(...baseConditions, sql`${leads.bookingStatus} IS NOT NULL`))
+    .groupBy(leads.assignedTo, leads.bookingStatus);
+
+  const coordinatorBookingsMap = new Map<string, { total: number; attended: number; noShow: number }>();
+  coordinatorBookingsData.forEach((row) => {
+    if (!row.assignedTo) return;
+    const current = coordinatorBookingsMap.get(row.assignedTo) || { total: 0, attended: 0, noShow: 0 };
+    current.total += row.count;
+    if (row.status === "COMPLETED") current.attended += row.count;
+    if (["NO_RESPONSE", "CANCELLED", "ATTENDED_NOT_SUITABLE"].includes(row.status as string)) current.noShow += row.count;
+    coordinatorBookingsMap.set(row.assignedTo, current);
+  });
+
+  // تحليل الخدمات الأكثر طلباً
+  const servicesData = await db
+    .select({ service: leads.bookingService })
+    .from(leads)
+    .where(and(...baseConditions, sql`${leads.bookingService} IS NOT NULL`));
+
+  const servicesCountMap = new Map<string, number>();
+  servicesData.forEach((row) => {
+    if (!row.service) return;
+    const srvs = row.service.split("،").map((s) => s.trim()).filter(Boolean);
+    srvs.forEach((s) => {
+      servicesCountMap.set(s, (servicesCountMap.get(s) || 0) + 1);
+    });
+  });
+  const topServices = Array.from(servicesCountMap.entries())
+    .map(([name, val]) => ({ name, count: val }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
   const hasData = totalLeadsResult.count > 0;
 
   // =============================================
@@ -1049,6 +1104,176 @@ export default async function AnalyticsPage({
               )}
             </CardContent>
           </Card>
+
+          {/* =============================================
+              تحليلات الحجوزات والخدمات
+              ============================================= */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* إجمالي الحجوزات */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <CalendarDays className="h-5 w-5 text-purple-500" />
+                  نسبة حضور الحجوزات
+                </CardTitle>
+                <p className="text-xs text-surface-400 mt-1">
+                  إجمالي الحجوزات: {totalBookings}
+                </p>
+              </CardHeader>
+              <CardContent>
+                {totalBookings > 0 ? (
+                  <div className="space-y-3">
+                    {bookingBreakdown.map((b) => {
+                      const pct = Math.round((b.count / totalBookings) * 100);
+                      const statusLabels: Record<string, string> = {
+                        PENDING: "⏳ بانتظار",
+                        COMPLETED: "✅ حضر واستفاد",
+                        ATTENDED_NOT_SUITABLE: "😕 حضر ولم يناسبه",
+                        CANCELLED: "🚫 ألغى",
+                        NO_RESPONSE: "📵 لم يرد",
+                        POSTPONED: "🔄 مؤجّل",
+                      };
+                      const statusColors: Record<string, string> = {
+                        PENDING: "#EAB308", // yellow-500
+                        COMPLETED: "#22C55E", // green-500
+                        CANCELLED: "#9CA3AF", // gray-400
+                        NO_RESPONSE: "#EF4444", // red-500
+                        POSTPONED: "#3B82F6", // blue-500
+                        ATTENDED_NOT_SUITABLE: "#F97316", // orange-500
+                      };
+                      const s = b.status || "PENDING";
+                      return (
+                        <div key={s} className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-surface-700">{statusLabels[s]}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-surface-900">{b.count}</span>
+                              <Badge variant="secondary" className="text-xs">{pct}%</Badge>
+                            </div>
+                          </div>
+                          <div className="w-full h-2 bg-surface-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-700"
+                              style={{ width: `${pct}%`, backgroundColor: statusColors[s] }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }).sort((a, b) => {
+                      // ترتيب وهمي: الأكبر أولاً
+                      return 0;
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-surface-400 text-sm">لا توجد حجوزات في هذه الفترة</div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* الخدمات الأكثر طلباً */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Star className="h-5 w-5 text-amber-500" />
+                  الخدمات الأكثر طلباً
+                </CardTitle>
+                <p className="text-xs text-surface-400 mt-1">حسب المواعيد التي تم إنشاؤها</p>
+              </CardHeader>
+              <CardContent>
+                {topServices.length > 0 ? (
+                  <div className="space-y-3">
+                    {topServices.map((srv, idx) => {
+                      const maxCount = topServices[0].count;
+                      const pct = Math.round((srv.count / maxCount) * 100);
+                      return (
+                        <div key={srv.name} className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-surface-400 w-4">{idx + 1}</span>
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-surface-800">{srv.name}</span>
+                              <span className="text-sm font-bold text-surface-900">{srv.count}</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-surface-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-amber-400 transition-all duration-700"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-surface-400 text-sm">لا توجد خدمات مسجلة في الحجوزات</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* أداء المنسقين في الحجوزات */}
+          {coordinatorBookingsMap.size > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Users className="h-5 w-5 text-blue-500" />
+                  أداء المنسقين في جودة الحجوزات
+                </CardTitle>
+                <p className="text-xs text-surface-400 mt-1">
+                  نسبة الحضور مقابل عدم الحضور لكل منسق
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {Array.from(coordinatorBookingsMap.entries()).map(([userId, data]) => {
+                    const coord = coordinatorPerformance.find(c => c.userId === userId);
+                    if (!coord) return null;
+                    const attendedPct = data.total > 0 ? Math.round((data.attended / data.total) * 100) : 0;
+                    const noShowPct = data.total > 0 ? Math.round((data.noShow / data.total) * 100) : 0;
+                    return (
+                      <div key={userId} className="p-4 bg-surface-50 rounded-xl border border-surface-200">
+                        <div className="flex items-center gap-3 mb-4">
+                          <Avatar className="h-10 w-10 shrink-0">
+                            <AvatarFallback className="bg-primary-100 text-primary-700 font-bold">
+                              {getInitials(coord.userName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm font-bold text-surface-900">{coord.userName}</p>
+                            <p className="text-xs text-surface-500">{data.total} حجز إجمالي</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          {/* الحضور */}
+                          <div>
+                            <div className="flex items-center justify-between text-xs mb-1">
+                              <span className="text-success-700 font-medium">✅ حضر ({data.attended})</span>
+                              <span className="text-surface-600 font-bold">{attendedPct}%</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-surface-200 rounded-full overflow-hidden">
+                              <div className="h-full bg-success-500 rounded-full" style={{ width: `${attendedPct}%` }} />
+                            </div>
+                          </div>
+                          {/* عدم حضور / إلغاء */}
+                          <div>
+                            <div className="flex items-center justify-between text-xs mb-1">
+                              <span className="text-danger-700 font-medium">📵 لم يحضر/ألغى ({data.noShow})</span>
+                              <span className="text-surface-600 font-bold">{noShowPct}%</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-surface-200 rounded-full overflow-hidden">
+                              <div className="h-full bg-danger-500 rounded-full" style={{ width: `${noShowPct}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
         </>
       ) : (
         <Card>

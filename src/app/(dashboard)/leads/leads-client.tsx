@@ -130,6 +130,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   const [filterStage, setFilterStage] = useState<string>("");
   const [filterPriority, setFilterPriority] = useState<string>("");
   const [filterAssigned, setFilterAssigned] = useState<string>("");
+  const [filterBooking, setFilterBooking] = useState<string>("");
   const [showFilters, setShowFilters] = useState(false);
 
   // تحديد جماعي
@@ -212,11 +213,15 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     const matchesStage = !filterStage || lead.stage?.id === filterStage;
     const matchesPriority = !filterPriority || lead.priority === filterPriority;
     const matchesAssigned = !filterAssigned || lead.assignedUser?.id === filterAssigned;
+    const matchesBooking = !filterBooking ||
+      (filterBooking === "HAS_BOOKING" && !!lead.bookingStatus) ||
+      (filterBooking === "NO_BOOKING" && !lead.bookingStatus) ||
+      lead.bookingStatus === filterBooking;
 
-    return matchesSearch && matchesStage && matchesPriority && matchesAssigned;
+    return matchesSearch && matchesStage && matchesPriority && matchesAssigned && matchesBooking;
   });
 
-  const activeFiltersCount = [filterStage, filterPriority, filterAssigned].filter(Boolean).length;
+  const activeFiltersCount = [filterStage, filterPriority, filterAssigned, filterBooking].filter(Boolean).length;
 
   // إجراءات جماعية
   const isAllSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selectedIds.has(l.id));
@@ -765,9 +770,26 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
               ))}
             </select>
           </div>
+          <div className="space-y-1">
+            <Label className="text-xs">الحجز</Label>
+            <select
+              value={filterBooking}
+              onChange={(e) => setFilterBooking(e.target.value)}
+              className="h-8 rounded-md border border-surface-200 bg-white px-2 text-sm"
+            >
+              <option value="">الكل</option>
+              <option value="HAS_BOOKING">لديه حجز</option>
+              <option value="NO_BOOKING">بدون حجز</option>
+              <option value="PENDING">⏳ بانتظار</option>
+              <option value="COMPLETED">✅ حضر</option>
+              <option value="NO_RESPONSE">📵 لم يرد</option>
+              <option value="POSTPONED">🔄 مؤجّل</option>
+              <option value="CANCELLED">🚫 ملغي</option>
+            </select>
+          </div>
           {activeFiltersCount > 0 && (
             <button
-              onClick={() => { setFilterStage(""); setFilterPriority(""); setFilterAssigned(""); }}
+              onClick={() => { setFilterStage(""); setFilterPriority(""); setFilterAssigned(""); setFilterBooking(""); }}
               className="self-end text-xs text-danger-500 hover:text-danger-700 pb-1.5"
             >
               مسح الفلاتر
