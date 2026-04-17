@@ -23,6 +23,7 @@ import {
   unlinkProviderFromDepartment,
   getDepartmentProviders,
 } from "@/app/actions/departments";
+import ProviderScheduleEditor from "./provider-schedule-editor";
 
 type Department = {
   id: string;
@@ -70,6 +71,9 @@ export default function DepartmentsManager({
   const [editingDept, setEditingDept] = useState<Department | null>(null);
   const [deptProviders, setDeptProviders] = useState<DepartmentProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
+
+  // نافذة جدول العمل
+  const [scheduleEditor, setScheduleEditor] = useState<{ userId: string; userName: string } | null>(null);
 
   const handleAdd = () => {
     const trimmed = newName.trim();
@@ -397,14 +401,23 @@ export default function DepartmentsManager({
                               {dp.userEmail}
                             </p>
                           </div>
-                          <button
-                            onClick={() => handleUnlinkProvider(dp.id)}
-                            disabled={isPending}
-                            className="p-1 rounded-lg hover:bg-danger-50 text-surface-400 hover:text-danger-500"
-                            title="إلغاء الربط"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setScheduleEditor({ userId: dp.userId, userName: dp.userName })}
+                              className="p-1 rounded-lg hover:bg-primary-50 text-surface-400 hover:text-primary-600 transition-colors"
+                              title="جدول العمل"
+                            >
+                              <Clock className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleUnlinkProvider(dp.id)}
+                              disabled={isPending}
+                              className="p-1 rounded-lg hover:bg-danger-50 text-surface-400 hover:text-danger-500"
+                              title="إلغاء الربط"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -446,6 +459,15 @@ export default function DepartmentsManager({
             </div>
           </div>
         </div>
+      )}
+      {/* محرر جدول عمل المقدم */}
+      {scheduleEditor && (
+        <ProviderScheduleEditor
+          userId={scheduleEditor.userId}
+          userName={scheduleEditor.userName}
+          open={true}
+          onClose={() => setScheduleEditor(null)}
+        />
       )}
     </div>
   );

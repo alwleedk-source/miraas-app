@@ -149,7 +149,7 @@ export default async function SettingsPage() {
           <CardDescription>أضف الخدمات التي تقدمها لتظهر في نموذج الحجز (مثل: تنظيف أسنان، استشارة، عملية)</CardDescription>
         </CardHeader>
         <CardContent>
-          <ServicesManager initialServices={servicesData} />
+          <ServicesManager initialServices={servicesData} departments={departmentsData} />
         </CardContent>
       </Card>
 

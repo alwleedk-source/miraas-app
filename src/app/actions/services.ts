@@ -14,7 +14,13 @@ export async function getServices() {
   const { tenantId } = await requireTenant();
 
   return db
-    .select({ id: services.id, name: services.name, isActive: services.isActive })
+    .select({
+      id: services.id,
+      name: services.name,
+      isActive: services.isActive,
+      departmentId: services.departmentId,
+      defaultDurationMin: services.defaultDurationMin,
+    })
     .from(services)
     .where(eq(services.tenantId, tenantId))
     .orderBy(services.createdAt);
@@ -38,7 +44,7 @@ export async function getActiveServices() {
 // إضافة خدمة جديدة
 // =============================================
 
-export async function addService(name: string) {
+export async function addService(name: string, departmentId?: string, defaultDurationMin?: number) {
   const { tenantId } = await requireTenant();
 
   const trimmed = name.trim();
@@ -53,7 +59,34 @@ export async function addService(name: string) {
 
   if (existing) throw new Error("هذه الخدمة موجودة بالفعل");
 
-  await db.insert(services).values({ tenantId, name: trimmed });
+  await db.insert(services).values({
+    tenantId,
+    name: trimmed,
+    departmentId: departmentId || null,
+    defaultDurationMin: defaultDurationMin || 30,
+  });
+  revalidatePath("/settings");
+}
+
+// =============================================
+// تحديث تفاصيل خدمة (قسم + مدة)
+// =============================================
+
+export async function updateServiceDetails(
+  serviceId: string,
+  data: { departmentId?: string | null; defaultDurationMin?: number }
+) {
+  const { tenantId } = await requireTenant();
+
+  const updateData: Record<string, unknown> = {};
+  if (data.departmentId !== undefined) updateData.departmentId = data.departmentId;
+  if (data.defaultDurationMin !== undefined) updateData.defaultDurationMin = data.defaultDurationMin;
+
+  await db
+    .update(services)
+    .set(updateData)
+    .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
+
   revalidatePath("/settings");
 }
 
