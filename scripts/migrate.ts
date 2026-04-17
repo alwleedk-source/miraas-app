@@ -7,8 +7,8 @@ import { join } from "path";
 async function migrate() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    console.error("DATABASE_URL is not set");
-    process.exit(1);
+    console.log("⚠️ DATABASE_URL is not set — skipping migration (OK for local dev)");
+    process.exit(0);
   }
 
   const client = postgres(connectionString, { max: 1 });

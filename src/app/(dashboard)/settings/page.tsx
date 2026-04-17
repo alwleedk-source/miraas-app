@@ -41,10 +41,16 @@ export default async function SettingsPage() {
   } catch {}
 
   // جلب الخدمات
-  let servicesData: { id: string; name: string; isActive: boolean }[] = [];
+  let servicesData: { id: string; name: string; isActive: boolean; departmentId: string | null; defaultDurationMin: number | null }[] = [];
   try {
     servicesData = await db
-      .select({ id: services.id, name: services.name, isActive: services.isActive })
+      .select({
+        id: services.id,
+        name: services.name,
+        isActive: services.isActive,
+        departmentId: services.departmentId,
+        defaultDurationMin: services.defaultDurationMin,
+      })
       .from(services)
       .where(eq(services.tenantId, tenantId))
       .orderBy(asc(services.createdAt));
