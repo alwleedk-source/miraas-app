@@ -286,17 +286,31 @@ export async function updateBookingDate(input: {
   bookingDate: string;
   bookingService?: string;
   bookingNotes?: string;
+  departmentId?: string;
+  resourceId?: string;
+  duration?: number;
 }) {
   const { tenantId, userId } = await requireTenant();
 
+  const updateData: Record<string, unknown> = {
+    bookingDate: new Date(input.bookingDate),
+    updatedAt: new Date(),
+  };
+  if (input.bookingService !== undefined) updateData.bookingService = input.bookingService;
+  if (input.bookingNotes !== undefined) updateData.bookingNotes = input.bookingNotes;
+  if (input.departmentId !== undefined) updateData.bookingDepartmentId = input.departmentId || null;
+  if (input.resourceId !== undefined) updateData.bookingResourceId = input.resourceId || null;
+  if (input.duration !== undefined) {
+    updateData.bookingDurationMin = input.duration;
+    // حساب وقت النهاية تلقائياً
+    const endTime = new Date(input.bookingDate);
+    endTime.setMinutes(endTime.getMinutes() + input.duration);
+    updateData.bookingEndTime = endTime;
+  }
+
   await db
     .update(leads)
-    .set({
-      bookingDate: new Date(input.bookingDate),
-      ...(input.bookingService !== undefined && { bookingService: input.bookingService }),
-      ...(input.bookingNotes !== undefined && { bookingNotes: input.bookingNotes }),
-      updatedAt: new Date(),
-    })
+    .set(updateData)
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
 
   await db.insert(activityLog).values({

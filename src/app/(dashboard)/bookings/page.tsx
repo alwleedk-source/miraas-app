@@ -8,7 +8,7 @@ import InternalMessagesBar from "./internal-messages-bar";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
-import { services, departments } from "@/db/schema";
+import { services, departments, users } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
@@ -67,6 +67,16 @@ export default async function BookingsPage() {
   try {
     const { getUnreadMessagesForCoordinator } = await import("@/app/actions/provider");
     internalMessages = await getUnreadMessagesForCoordinator();
+  } catch {}
+
+  // جلب مقدمي الخدمة (PROVIDER)
+  let providersData: { id: string; name: string }[] = [];
+  try {
+    providersData = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.role, "PROVIDER"), eq(users.isActive, true)))
+      .orderBy(asc(users.name));
   } catch {}
 
   return (
@@ -162,7 +172,7 @@ export default async function BookingsPage() {
 
       {/* Kanban الحجوزات أو Empty State */}
       {bookings.length > 0 ? (
-        <BookingBoard bookings={bookings} services={servicesData} />
+        <BookingBoard bookings={bookings} services={servicesData} departments={departmentsData} providers={providersData} />
       ) : (
         <Card>
           <CardContent className="p-12 text-center">

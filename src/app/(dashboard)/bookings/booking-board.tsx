@@ -36,9 +36,25 @@ type EditData = {
   bookingDate: string;
   bookingService: string;
   bookingNotes: string;
+  departmentId: string;
+  resourceId: string;
+  duration: number;
 };
 
-export default function BookingBoard({ bookings, services = [] }: { bookings: Booking[]; services?: { id: string; name: string }[] }) {
+type Department = { id: string; name: string; color: string; defaultGapMinutes: number };
+type Provider = { id: string; name: string };
+
+export default function BookingBoard({
+  bookings,
+  services = [],
+  departments = [],
+  providers = [],
+}: {
+  bookings: Booking[];
+  services?: { id: string; name: string; departmentId?: string | null }[];
+  departments?: Department[];
+  providers?: Provider[];
+}) {
   const [isPending, startTransition] = useTransition();
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [postponeModal, setPostponeModal] = useState<PostponeData | null>(null);
@@ -92,6 +108,9 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
         : "",
       bookingService: booking.bookingService || "",
       bookingNotes: booking.bookingNotes || "",
+      departmentId: (booking as Record<string, unknown>).bookingDepartmentId as string || "",
+      resourceId: (booking as Record<string, unknown>).bookingResourceId as string || "",
+      duration: ((booking as Record<string, unknown>).bookingDurationMin as number) || 30,
     });
   };
 
@@ -103,10 +122,22 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
         bookingDate: editModal.bookingDate,
         bookingService: editModal.bookingService,
         bookingNotes: editModal.bookingNotes,
+        departmentId: editModal.departmentId || undefined,
+        resourceId: editModal.resourceId || undefined,
+        duration: editModal.duration || undefined,
       });
       setEditModal(null);
     });
   };
+
+  // تصفية الخدمات حسب القسم المختار في التعديل
+  const editFilteredServices = editModal?.departmentId
+    ? services.filter((s) => s.departmentId === editModal.departmentId || !s.departmentId)
+    : services;
+
+  // مقدمي الخدمة المرتبطين بالقسم المختار
+  // (حالياً نعرض الكل — يمكن تحسينه لاحقاً)
+  const editFilteredProviders = providers;
 
   // فلترة متقدمة: تاريخ + بحث + إخفاء المكتمل
   const filteredBookings = useMemo(() => {
@@ -508,11 +539,66 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
                 />
               </div>
 
+              {/* القسم */}
+              {departments.length > 0 && (
+                <div className="space-y-2">
+                  <Label>القسم</Label>
+                  <select
+                    value={editModal.departmentId}
+                    onChange={(e) => setEditModal({ ...editModal, departmentId: e.target.value, resourceId: "" })}
+                    className="w-full h-9 px-3 rounded-lg border border-surface-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">بدون قسم</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* مقدم الخدمة */}
+              {editFilteredProviders.length > 0 && (
+                <div className="space-y-2">
+                  <Label>مقدم الخدمة</Label>
+                  <select
+                    value={editModal.resourceId}
+                    onChange={(e) => setEditModal({ ...editModal, resourceId: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-surface-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">بدون مقدم خدمة</option>
+                    {editFilteredProviders.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* المدة */}
               <div className="space-y-2">
-                <Label>الخدمات</Label>
-                {services.length > 0 ? (
+                <Label>المدة (دقيقة)</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[15, 20, 30, 45, 60, 90].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setEditModal({ ...editModal, duration: d })}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        editModal.duration === d
+                          ? "bg-primary-600 text-white"
+                          : "bg-surface-100 text-surface-600 hover:bg-surface-200"
+                      }`}
+                    >
+                      {d} د
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>الخدمات *</Label>
+                {editFilteredServices.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {services.map((svc) => {
+                    {editFilteredServices.map((svc) => {
                       const currentServices = editModal.bookingService.split("،").map((s: string) => s.trim()).filter(Boolean);
                       const isSelected = currentServices.includes(svc.name);
                       return (
@@ -546,11 +632,11 @@ export default function BookingBoard({ bookings, services = [] }: { bookings: Bo
               </div>
 
               <div className="space-y-2">
-                <Label>ملاحظات</Label>
+                <Label>ملاحظات (اختياري)</Label>
                 <textarea
                   value={editModal.bookingNotes}
                   onChange={(e) => setEditModal({ ...editModal, bookingNotes: e.target.value })}
-                  placeholder="ملاحظات إضافية..."
+                  placeholder="أي ملاحظات إضافية..."
                   className="flex w-full rounded-lg border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 min-h-[80px] resize-none"
                 />
               </div>
