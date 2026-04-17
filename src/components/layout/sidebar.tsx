@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -14,13 +14,12 @@ import {
   Webhook,
   GitBranch,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   LogOut,
   Menu,
   X,
+  Stethoscope,
 } from "lucide-react";
-import { signOut } from "@/lib/auth-client";
+import { signOut, useSession } from "@/lib/auth-client";
 import NotificationBell from "@/app/(dashboard)/notification-bell";
 
 interface NavItem {
@@ -30,6 +29,7 @@ interface NavItem {
   badge?: number;
 }
 
+// القائمة الرئيسية للمدير/المنسق
 const mainNav: NavItem[] = [
   { label: "نظرة عامة", href: "/", icon: <LayoutDashboard className="h-5 w-5" /> },
   { label: "العملاء", href: "/leads", icon: <Users className="h-5 w-5" /> },
@@ -45,9 +45,18 @@ const settingsNav: NavItem[] = [
   { label: "الويب هوك", href: "/settings/webhooks", icon: <Webhook className="h-5 w-5" /> },
 ];
 
+// القائمة المخصصة لمقدم الخدمة
+const providerNav: NavItem[] = [
+  { label: "مواعيدي", href: "/provider", icon: <Stethoscope className="h-5 w-5" /> },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { data: session } = useSession();
+
+  const userRole = (session?.user as Record<string, unknown>)?.role as string || "";
+  const isProvider = userRole === "PROVIDER";
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -91,28 +100,43 @@ export function Sidebar() {
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-bold text-surface-900 truncate">مِراس</h1>
-          <p className="text-xs text-surface-400">إدارة العملاء</p>
+          <p className="text-xs text-surface-400">
+            {isProvider ? "بوابة مقدم الخدمة" : "إدارة العملاء"}
+          </p>
         </div>
-        <NotificationBell />
+        {!isProvider && <NotificationBell />}
       </div>
 
-      {/* التنقل الرئيسي */}
+      {/* التنقل */}
       <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-        <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
-          الرئيسية
-        </p>
-        {mainNav.map((item) => (
-          <NavLink key={item.href} item={item} />
-        ))}
+        {isProvider ? (
+          <>
+            <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
+              بوابتي
+            </p>
+            {providerNav.map((item) => (
+              <NavLink key={item.href} item={item} />
+            ))}
+          </>
+        ) : (
+          <>
+            <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
+              الرئيسية
+            </p>
+            {mainNav.map((item) => (
+              <NavLink key={item.href} item={item} />
+            ))}
 
-        <div className="my-4 border-t border-surface-100" />
+            <div className="my-4 border-t border-surface-100" />
 
-        <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
-          الأدوات
-        </p>
-        {settingsNav.map((item) => (
-          <NavLink key={item.href} item={item} />
-        ))}
+            <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
+              الأدوات
+            </p>
+            {settingsNav.map((item) => (
+              <NavLink key={item.href} item={item} />
+            ))}
+          </>
+        )}
       </nav>
 
       {/* تسجيل الخروج */}

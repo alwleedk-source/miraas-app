@@ -4,6 +4,7 @@ import { getBookings, getBookingsSummary } from "@/app/actions/bookings";
 import BookingBoard from "./booking-board";
 import BookingsHeader from "./bookings-header";
 import TodayBookingsPanel from "./today-bookings-panel";
+import InternalMessagesBar from "./internal-messages-bar";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
@@ -61,10 +62,22 @@ export default async function BookingsPage() {
       .orderBy(asc(departments.position));
   } catch {}
 
+  // جلب الرسائل الداخلية غير المقروءة من مقدمي الخدمة
+  let internalMessages: { id: string; content: string; senderRole: string; senderId: string; messageType: string; createdAt: Date; isRead: boolean }[] = [];
+  try {
+    const { getUnreadMessagesForCoordinator } = await import("@/app/actions/provider");
+    internalMessages = await getUnreadMessagesForCoordinator();
+  } catch {}
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* العنوان + زر موعد سريع */}
       <BookingsHeader services={servicesData} departments={departmentsData} />
+
+      {/* رسائل مقدمي الخدمة */}
+      {internalMessages.length > 0 && (
+        <InternalMessagesBar messages={internalMessages} />
+      )}
 
       {/* إحصائيات سريعة */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

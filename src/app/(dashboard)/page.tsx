@@ -23,6 +23,11 @@ export default async function DashboardPage() {
     redirect("/register");
   }
 
+  // مقدم الخدمة يُوجَّه لبوابته الخاصة
+  if (userRole === "PROVIDER") {
+    redirect("/provider");
+  }
+
   // جلب الإحصائيات
   let stats;
   try {
