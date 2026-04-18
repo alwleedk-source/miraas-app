@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { followUps, activityLog } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { followUps, activityLog, leads } from "@/db/schema";
+import { eq, and, lte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
@@ -69,3 +69,171 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
 
   revalidatePath("/");
 }
+
+// =============================================
+// متابعة سريعة بنقرة واحدة
+// =============================================
+
+export async function quickScheduleFollowUp(input: {
+  leadId: string;
+  daysFromNow: number; // 0 = اليوم، 1 = غداً، إلخ
+  notes?: string;
+  type?: "CALL" | "WHATSAPP" | "MESSAGE";
+  specificDate?: string; // YYYY-MM-DD
+}) {
+  const { tenantId, userId } = await getContext();
+
+  let scheduledAt: Date;
+  if (input.specificDate) {
+    scheduledAt = new Date(`${input.specificDate}T09:00:00`);
+  } else {
+    scheduledAt = new Date();
+    scheduledAt.setDate(scheduledAt.getDate() + input.daysFromNow);
+    scheduledAt.setHours(9, 0, 0, 0);
+  }
+
+  const defaultNotes = input.daysFromNow === 1
+    ? "تذكير — العميل طلب التواصل غداً"
+    : input.daysFromNow === 0
+    ? "متابعة اليوم"
+    : `تذكير — متابعة بعد ${input.daysFromNow} أيام`;
+
+  const [followUp] = await db
+    .insert(followUps)
+    .values({
+      tenantId,
+      leadId: input.leadId,
+      userId,
+      type: input.type || "CALL",
+      notes: input.notes || defaultNotes,
+      scheduledAt,
+    })
+    .returning({ id: followUps.id });
+
+  await db.insert(activityLog).values({
+    tenantId,
+    userId,
+    action: "FOLLOW_UP_CREATED",
+    entityType: "follow_up",
+    entityId: followUp.id,
+    details: {
+      leadId: input.leadId,
+      type: input.type || "CALL",
+      quick: true,
+      scheduledFor: scheduledAt.toISOString(),
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/leads");
+  return { success: true, scheduledAt };
+}
+
+// =============================================
+// "لم يرد" + إعادة محاولة تلقائية
+// =============================================
+
+export async function quickNoResponse(leadId: string, retryAfterDays: number = 1) {
+  const { tenantId, userId } = await getContext();
+
+  // 1. سجّل المحاولة الحالية كمكتملة
+  await db.insert(followUps).values({
+    tenantId,
+    leadId,
+    userId,
+    type: "CALL",
+    notes: "📵 لم يرد",
+    completedAt: new Date(),
+  });
+
+  // 2. أنشئ متابعة مجدولة جديدة للإعادة
+  const retryDate = new Date();
+  retryDate.setDate(retryDate.getDate() + retryAfterDays);
+  retryDate.setHours(10, 0, 0, 0);
+
+  const [retry] = await db
+    .insert(followUps)
+    .values({
+      tenantId,
+      leadId,
+      userId,
+      type: "CALL",
+      notes: `📞 إعادة محاولة — لم يرد المرة السابقة`,
+      scheduledAt: retryDate,
+    })
+    .returning({ id: followUps.id });
+
+  await db.insert(activityLog).values({
+    tenantId,
+    userId,
+    action: "FOLLOW_UP_CREATED",
+    entityType: "follow_up",
+    entityId: retry.id,
+    details: {
+      leadId,
+      action: "no_response_auto_retry",
+      retryDate: retryDate.toISOString(),
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/leads");
+  return { success: true, retryDate };
+}
+
+// =============================================
+// جلب عدد المتابعات المتأخرة (للإشعارات)
+// =============================================
+
+export async function getOverdueFollowUpsCount() {
+  const { tenantId, userId } = await getContext();
+  const userRole = await getUserRole(tenantId, userId);
+
+  const now = new Date();
+  const conditions = [
+    eq(followUps.tenantId, tenantId),
+    lte(followUps.scheduledAt, now),
+    isNull(followUps.completedAt),
+    isNotNull(followUps.scheduledAt),
+  ];
+
+  // المنسق يرى مهامه فقط
+  if (userRole === "COORDINATOR") {
+    conditions.push(eq(followUps.userId, userId));
+  }
+
+  const [result] = await db
+    .select({ total: count() })
+    .from(followUps)
+    .innerJoin(leads, eq(followUps.leadId, leads.id))
+    .where(and(...conditions, eq(leads.isDeleted, false)));
+
+  return result?.total || 0;
+}
+
+// =============================================
+// جلب عدد محاولات التواصل السابقة مع عميل
+// =============================================
+
+export async function getLeadFollowUpCount(leadId: string) {
+  const { tenantId } = await getContext();
+
+  const [result] = await db
+    .select({ total: count() })
+    .from(followUps)
+    .where(and(eq(followUps.tenantId, tenantId), eq(followUps.leadId, leadId)));
+
+  return result?.total || 0;
+}
+
+// Helper: جلب دور المستخدم
+async function getUserRole(tenantId: string, userId: string): Promise<string> {
+  const { users } = await import("@/db/schema");
+  const [user] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
+    .limit(1);
+  return user?.role || "COORDINATOR";
+}
+
