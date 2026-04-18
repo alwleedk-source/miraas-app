@@ -226,6 +226,59 @@ export async function getLeadFollowUpCount(leadId: string) {
   return result?.total || 0;
 }
 
+// =============================================
+// جلب آخر الملاحظات لعميل (رحلة الإقناع)
+// =============================================
+
+export async function getLeadRecentNotes(leadId: string) {
+  const { tenantId } = await getContext();
+  const { desc } = await import("drizzle-orm");
+
+  const notes = await db
+    .select({
+      id: followUps.id,
+      type: followUps.type,
+      notes: followUps.notes,
+      createdAt: followUps.createdAt,
+      scheduledAt: followUps.scheduledAt,
+    })
+    .from(followUps)
+    .where(and(eq(followUps.tenantId, tenantId), eq(followUps.leadId, leadId)))
+    .orderBy(desc(followUps.createdAt))
+    .limit(5);
+
+  return notes;
+}
+
+// =============================================
+// جلب المتابعات المجدولة المعلّقة لعميل
+// =============================================
+
+export async function getLeadPendingFollowUp(leadId: string) {
+  const { tenantId } = await getContext();
+
+  const [pending] = await db
+    .select({
+      id: followUps.id,
+      scheduledAt: followUps.scheduledAt,
+      notes: followUps.notes,
+      type: followUps.type,
+    })
+    .from(followUps)
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, leadId),
+        isNull(followUps.completedAt),
+        isNotNull(followUps.scheduledAt)
+      )
+    )
+    .orderBy(followUps.scheduledAt)
+    .limit(1);
+
+  return pending || null;
+}
+
 // Helper: جلب دور المستخدم
 async function getUserRole(tenantId: string, userId: string): Promise<string> {
   const { users } = await import("@/db/schema");

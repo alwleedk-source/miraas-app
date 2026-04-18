@@ -308,6 +308,12 @@ export async function getLeads(options?: {
           name: leadSources.name,
           platform: leadSources.platform,
         },
+        nextFollowUpDate: sql<string | null>`(
+          SELECT MIN(scheduled_at) FROM follow_ups
+          WHERE follow_ups.lead_id = ${leads.id}
+            AND follow_ups.completed_at IS NULL
+            AND follow_ups.scheduled_at IS NOT NULL
+        )`.as("next_follow_up_date"),
       })
       .from(leads)
       .leftJoin(users, eq(leads.assignedTo, users.id))
@@ -340,6 +346,7 @@ export async function getLeads(options?: {
     assignedUser: row.assignedUser?.id ? row.assignedUser : null,
     stage: row.stage?.id ? row.stage : null,
     source: row.source?.id ? row.source : null,
+    nextFollowUpDate: row.nextFollowUpDate ? new Date(row.nextFollowUpDate) : null,
   }));
 
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

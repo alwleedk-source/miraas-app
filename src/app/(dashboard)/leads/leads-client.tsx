@@ -73,6 +73,7 @@ interface LeadData {
   assignedUser: { id: string; name: string; image: string | null } | null;
   stage: { id: string; name: string; color: string } | null;
   source: { id: string; name: string; platform: string | null } | null;
+  nextFollowUpDate?: Date | null;
 }
 
 interface StageData {
@@ -996,6 +997,13 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                 </span>
                               )}
                             </span>
+                            {/* مؤشر المتابعة المجدولة */}
+                            {lead.nextFollowUpDate && (
+                              <span className="flex items-center gap-1 text-[10px] text-warning-600 bg-warning-50 rounded px-1.5 py-0.5 mt-0.5 w-fit">
+                                <CalendarClock className="h-2.5 w-2.5" />
+                                مجدول: {new Date(lead.nextFollowUpDate).toLocaleDateString("ar-SA", { day: "numeric", month: "short" })}
+                              </span>
+                            )}
                             {lead.email && (
                               <span className="text-xs text-surface-400">{lead.email}</span>
                             )}
