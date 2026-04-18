@@ -8,7 +8,7 @@ import {
   BOOKING_STATUS_COLORS,
   BOOKING_STATUS_ICONS,
 } from "@/lib/utils";
-import { Phone, MessageCircle, Calendar, X, Loader2, Pencil, Search, EyeOff, Eye } from "lucide-react";
+import { Phone, MessageCircle, Calendar, X, Loader2, Pencil, Search, EyeOff, Eye, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,7 @@ type Booking = {
   bookingNotes: string | null;
   sourceName: string | null;
   assignedUserName: string | null;
+  pendingFollowUps?: number;
 };
 
 type PostponeData = {
@@ -335,6 +336,14 @@ export default function BookingBoard({
                   {booking.assignedUserName && (
                     <p className="text-[10px] text-surface-400 mb-1">
                       👤 {booking.assignedUserName}
+                    </p>
+                  )}
+
+                  {/* مؤشر متابعة مجدولة */}
+                  {(booking.pendingFollowUps ?? 0) > 0 && (
+                    <p className="text-[10px] text-warning-600 bg-warning-50 rounded-md px-1.5 py-0.5 inline-flex items-center gap-1 mb-1">
+                      <Bell className="h-3 w-3" />
+                      {booking.pendingFollowUps} متابعة مجدولة
                     </p>
                   )}
 

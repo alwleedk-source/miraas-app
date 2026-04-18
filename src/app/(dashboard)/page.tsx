@@ -14,6 +14,7 @@ import { db } from "@/db";
 import { activityLog, users, followUps, leads, leadSources } from "@/db/schema";
 import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import TodayTasks from "./today-tasks";
+import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
 
 export default async function DashboardPage() {
@@ -82,6 +83,54 @@ export default async function DashboardPage() {
       .limit(20);
 
     scheduledTasks = raw.filter((r) => r.scheduledAt !== null) as typeof scheduledTasks;
+  } catch {
+    // ignore
+  }
+
+  // جلب المتابعات القادمة (الأسبوع القادم)
+  let upcomingTasks: {
+    id: string;
+    type: string;
+    notes: string | null;
+    scheduledAt: Date;
+    leadName: string;
+    leadPhone: string | null;
+  }[] = [];
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 8);
+    nextWeek.setHours(0, 0, 0, 0);
+
+    const upConditions = [
+      eq(followUps.tenantId, tenantId),
+      gte(followUps.scheduledAt, tomorrow),
+      lte(followUps.scheduledAt, nextWeek),
+      isNull(followUps.completedAt),
+      isNotNull(followUps.scheduledAt),
+    ];
+    if (userRole === "COORDINATOR") {
+      upConditions.push(eq(followUps.userId, userId));
+    }
+
+    const rawUpcoming = await db
+      .select({
+        id: followUps.id,
+        type: followUps.type,
+        notes: followUps.notes,
+        scheduledAt: followUps.scheduledAt,
+        leadName: leads.name,
+        leadPhone: leads.phone,
+      })
+      .from(followUps)
+      .innerJoin(leads, eq(followUps.leadId, leads.id))
+      .where(and(...upConditions, eq(leads.isDeleted, false)))
+      .orderBy(followUps.scheduledAt)
+      .limit(30);
+
+    upcomingTasks = rawUpcoming.filter((r) => r.scheduledAt !== null) as typeof upcomingTasks;
   } catch {
     // ignore
   }
@@ -282,6 +331,11 @@ export default async function DashboardPage() {
       {/* مهام اليوم */}
       {scheduledTasks.length > 0 && (
         <TodayTasks tasks={scheduledTasks} />
+      )}
+
+      {/* المتابعات القادمة */}
+      {upcomingTasks.length > 0 && (
+        <UpcomingFollowUps tasks={upcomingTasks} />
       )}
 
       {/* حجوزات اليوم */}

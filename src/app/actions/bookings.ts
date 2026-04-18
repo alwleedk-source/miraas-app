@@ -162,6 +162,12 @@ export async function getBookings() {
       ...baseBookingCols,
       sourceName: leadSources.name,
       assignedUserName: users.name,
+      pendingFollowUps: sql<number>`(
+        SELECT COUNT(*) FROM follow_ups
+        WHERE follow_ups.lead_id = ${leads.id}
+          AND follow_ups.completed_at IS NULL
+          AND follow_ups.scheduled_at IS NOT NULL
+      )`.as("pending_follow_ups"),
     })
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))

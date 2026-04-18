@@ -1562,6 +1562,11 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                             {followUpsList.length}
                           </span>
                         )}
+                        {followUpsList.length > 0 && (
+                          <span className="text-[10px] text-surface-400 bg-surface-50 rounded px-1.5 py-0.5 flex items-center gap-0.5">
+                            📞 {followUpsList.filter((f) => f.type !== "NOTE").length} محاولة
+                          </span>
+                        )}
                       </h4>
                       {!showFollowUp && (
                         <Button
