@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { followUps, activityLog, leads } from "@/db/schema";
-import { eq, and, lte, isNull, isNotNull, sql, count } from "drizzle-orm";
+import { eq, and, lte, isNull, isNotNull, sql, count, desc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
@@ -232,7 +232,6 @@ export async function getLeadFollowUpCount(leadId: string) {
 
 export async function getLeadRecentNotes(leadId: string) {
   const { tenantId } = await getContext();
-  const { desc } = await import("drizzle-orm");
 
   const notes = await db
     .select({
