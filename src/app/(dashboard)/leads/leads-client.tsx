@@ -35,8 +35,6 @@ import {
   Square,
   MinusSquare,
   Bell,
-  PhoneOff,
-  CalendarPlus,
 } from "lucide-react";
 import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS } from "@/lib/utils";
 import {
@@ -182,8 +180,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
 
   // أزرار المتابعة السريعة
   const [quickActionLeadId, setQuickActionLeadId] = useState<string | null>(null);
-  const [quickDatePicker, setQuickDatePicker] = useState<{ leadId: string; leadName: string } | null>(null);
-  const [quickDate, setQuickDate] = useState("");
+  const [quickDateTime, setQuickDateTime] = useState("");
   const [quickSuccess, setQuickSuccess] = useState<string | null>(null);
 
   // جلب المتابعات عند اختيار عميل
@@ -529,40 +526,38 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   // Quick Follow-Up Actions
   // =============================================
 
-  const handleQuickRemindTomorrow = (leadId: string) => {
-    startTransition(async () => {
-      try {
-        await quickScheduleFollowUp({ leadId, daysFromNow: 1 });
-        setQuickActionLeadId(null);
-        setQuickSuccess("✅ تم جدولة تذكير غداً");
-        setTimeout(() => setQuickSuccess(null), 2500);
-      } catch {
-        setError("فشل في جدولة التذكير");
-      }
-    });
+  const toDateTimeLocal = (date: Date) => {
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
   };
 
-  const handleQuickRemindIn3Days = (leadId: string) => {
-    startTransition(async () => {
-      try {
-        await quickScheduleFollowUp({ leadId, daysFromNow: 3 });
-        setQuickActionLeadId(null);
-        setQuickSuccess("✅ تم جدولة تذكير بعد 3 أيام");
-        setTimeout(() => setQuickSuccess(null), 2500);
-      } catch {
-        setError("فشل في جدولة التذكير");
-      }
-    });
+  const openQuickAction = (leadId: string) => {
+    if (quickActionLeadId === leadId) {
+      setQuickActionLeadId(null);
+      return;
+    }
+    const soon = new Date();
+    soon.setHours(soon.getHours() + 1);
+    soon.setMinutes(0, 0, 0);
+    setQuickDateTime(toDateTimeLocal(soon));
+    setQuickActionLeadId(leadId);
   };
 
-  const handleQuickRemindOnDate = () => {
-    if (!quickDatePicker || !quickDate) return;
+  const shiftQuickDateTime = (hours: number) => {
+    const now = new Date();
+    now.setHours(now.getHours() + hours);
+    now.setMinutes(0, 0, 0);
+    setQuickDateTime(toDateTimeLocal(now));
+  };
+
+  const handleQuickScheduleAt = (leadId: string) => {
+    if (!quickDateTime) return;
     startTransition(async () => {
       try {
-        await quickScheduleFollowUp({ leadId: quickDatePicker.leadId, daysFromNow: 0, specificDate: quickDate });
-        setQuickDatePicker(null);
-        setQuickDate("");
-        setQuickSuccess("✅ تم جدولة التذكير بالتاريخ المحدد");
+        const iso = new Date(quickDateTime).toISOString();
+        await quickScheduleFollowUp({ leadId, scheduledAt: iso });
+        setQuickActionLeadId(null);
+        setQuickSuccess("✅ تم جدولة التذكير في الموعد المحدد");
         setTimeout(() => setQuickSuccess(null), 2500);
       } catch {
         setError("فشل في جدولة التذكير");
@@ -1095,41 +1090,66 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                           {/* أزرار المتابعة السريعة */}
                           <div className="relative">
                             <button
-                              onClick={(e) => { e.stopPropagation(); setQuickActionLeadId(quickActionLeadId === lead.id ? null : lead.id); }}
+                              onClick={(e) => { e.stopPropagation(); openQuickAction(lead.id); }}
                               className={cn(
                                 "p-1.5 rounded-md transition-colors",
                                 quickActionLeadId === lead.id
                                   ? "bg-warning-50 text-warning-600"
                                   : "hover:bg-warning-50 text-surface-400 hover:text-warning-600"
                               )}
-                              title="متابعة سريعة"
+                              title="جدولة تذكير"
                             >
                               <Bell className="h-4 w-4" />
                             </button>
                             {quickActionLeadId === lead.id && (
-                              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-200 p-2 z-30 w-48 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-200 p-3 z-30 w-64 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                                <div className="text-xs font-semibold text-surface-700 mb-2">متى نتواصل معه؟</div>
+                                <div className="grid grid-cols-4 gap-1 mb-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => shiftQuickDateTime(1)}
+                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
+                                  >
+                                    +ساعة
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => shiftQuickDateTime(2)}
+                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
+                                  >
+                                    +ساعتين
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => shiftQuickDateTime(3)}
+                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
+                                  >
+                                    +٣ س
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => shiftQuickDateTime(24)}
+                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
+                                  >
+                                    +يوم
+                                  </button>
+                                </div>
+                                <input
+                                  type="datetime-local"
+                                  value={quickDateTime}
+                                  onChange={(e) => setQuickDateTime(e.target.value)}
+                                  min={toDateTimeLocal(new Date())}
+                                  dir="ltr"
+                                  className="w-full text-xs border border-surface-200 rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-warning-200"
+                                />
                                 <button
-                                  onClick={() => handleQuickRemindTomorrow(lead.id)}
-                                  disabled={isPending}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-warning-50 text-surface-700 transition-colors"
+                                  onClick={() => handleQuickScheduleAt(lead.id)}
+                                  disabled={!quickDateTime || isPending}
+                                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-lg bg-warning-500 hover:bg-warning-600 disabled:opacity-50 text-white font-medium transition-colors"
                                 >
-                                  🔔 ذكّرني غداً
+                                  {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Bell className="h-3.5 w-3.5" /> جدولة التذكير</>}
                                 </button>
-                                <button
-                                  onClick={() => handleQuickRemindIn3Days(lead.id)}
-                                  disabled={isPending}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-warning-50 text-surface-700 transition-colors"
-                                >
-                                  🔔 ذكّرني بعد 3 أيام
-                                </button>
-                                <button
-                                  onClick={() => { setQuickDatePicker({ leadId: lead.id, leadName: lead.name }); setQuickActionLeadId(null); }}
-                                  disabled={isPending}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-primary-50 text-surface-700 transition-colors"
-                                >
-                                  📅 ذكّرني بتاريخ...
-                                </button>
-                                <div className="border-t border-surface-100 my-1" />
+                                <div className="border-t border-surface-100 my-2" />
                                 <button
                                   onClick={() => handleQuickNoResponse(lead.id)}
                                   disabled={isPending}
@@ -1927,44 +1947,6 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                   إلغاء
                 </Button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* نافذة اختيار تاريخ التذكير */}
-      {quickDatePicker && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setQuickDatePicker(null)}>
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
-          <div className="relative bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full mx-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
-            <div className="text-center mb-4">
-              <div className="w-12 h-12 bg-warning-50 rounded-full flex items-center justify-center mx-auto mb-3">
-                <Bell className="h-6 w-6 text-warning-600" />
-              </div>
-              <h3 className="font-bold text-surface-900">ذكّرني بتاريخ</h3>
-              <p className="text-xs text-surface-500 mt-1">{quickDatePicker.leadName}</p>
-            </div>
-            <Input
-              type="date"
-              value={quickDate}
-              onChange={(e) => setQuickDate(e.target.value)}
-              min={new Date().toISOString().split("T")[0]}
-              dir="ltr"
-              className="mb-4"
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <Button
-                onClick={handleQuickRemindOnDate}
-                disabled={!quickDate || isPending}
-                className="flex-1"
-                size="sm"
-              >
-                {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "✅ جدولة"}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setQuickDatePicker(null)}>
-                إلغاء
-              </Button>
             </div>
           </div>
         </div>

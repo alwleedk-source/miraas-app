@@ -76,27 +76,28 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
 
 export async function quickScheduleFollowUp(input: {
   leadId: string;
-  daysFromNow: number; // 0 = اليوم، 1 = غداً، إلخ
+  scheduledAt: string; // ISO datetime
   notes?: string;
   type?: "CALL" | "WHATSAPP" | "MESSAGE";
-  specificDate?: string; // YYYY-MM-DD
 }) {
   const { tenantId, userId } = await getContext();
 
-  let scheduledAt: Date;
-  if (input.specificDate) {
-    scheduledAt = new Date(`${input.specificDate}T09:00:00`);
-  } else {
-    scheduledAt = new Date();
-    scheduledAt.setDate(scheduledAt.getDate() + input.daysFromNow);
-    scheduledAt.setHours(9, 0, 0, 0);
+  const scheduledAt = new Date(input.scheduledAt);
+  if (isNaN(scheduledAt.getTime())) {
+    throw new Error("تاريخ/وقت غير صالح");
   }
 
-  const defaultNotes = input.daysFromNow === 1
-    ? "تذكير — العميل طلب التواصل غداً"
-    : input.daysFromNow === 0
-    ? "متابعة اليوم"
-    : `تذكير — متابعة بعد ${input.daysFromNow} أيام`;
+  const diffMs = scheduledAt.getTime() - Date.now();
+  const diffHours = Math.round(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const defaultNotes =
+    diffMs < 0
+      ? "متابعة مجدولة"
+      : diffHours <= 12
+      ? `تذكير — التواصل بعد ${Math.max(1, diffHours)} ساعة`
+      : diffDays <= 1
+      ? "تذكير — العميل طلب التواصل غداً"
+      : `تذكير — متابعة بعد ${diffDays} أيام`;
 
   const [followUp] = await db
     .insert(followUps)
