@@ -70,6 +70,57 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
   revalidatePath("/");
 }
 
+// تعديل موعد متابعة موجودة (يقبل ISO كاملاً)
+export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO: string) {
+  const { tenantId } = await getContext();
+
+  const newDate = new Date(scheduledAtISO);
+  if (isNaN(newDate.getTime())) {
+    throw new Error("تاريخ/وقت غير صالح");
+  }
+
+  await db
+    .update(followUps)
+    .set({ scheduledAt: newDate, completedAt: null })
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+
+  revalidatePath("/");
+  revalidatePath("/leads");
+  return { scheduledAt: newDate };
+}
+
+// إلغاء متابعة مجدولة
+export async function cancelFollowUp(followUpId: string) {
+  const { tenantId, userId } = await getContext();
+
+  const [existing] = await db
+    .select({ notes: followUps.notes, leadId: followUps.leadId })
+    .from(followUps)
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+
+  if (!existing) return;
+
+  await db
+    .update(followUps)
+    .set({
+      completedAt: new Date(),
+      notes: `(ملغاة) ${existing.notes ?? ""}`.trim(),
+    })
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+
+  await db.insert(activityLog).values({
+    tenantId,
+    userId,
+    action: "FOLLOW_UP_CREATED",
+    entityType: "follow_up",
+    entityId: followUpId,
+    details: { action: "cancelled", leadId: existing.leadId },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/leads");
+}
+
 // تأجيل بالدقائق — من داخل إشعار الاستحقاق
 export async function snoozeFollowUpMinutes(followUpId: string, minutes: number) {
   const { tenantId } = await getContext();

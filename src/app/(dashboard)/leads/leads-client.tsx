@@ -47,7 +47,13 @@ import {
 } from "@/app/actions/leads";
 import { createBooking } from "@/app/actions/bookings";
 import { assignTag, removeTag, getLeadTags } from "@/app/actions/tags";
-import { quickScheduleFollowUp, quickNoResponse } from "@/app/actions/followups";
+import {
+  quickScheduleFollowUp,
+  quickNoResponse,
+  getLeadPendingFollowUp,
+  updateFollowUpSchedule,
+  cancelFollowUp,
+} from "@/app/actions/followups";
 
 const ImportDialog = lazy(() => import("./import-dialog"));
 
@@ -182,6 +188,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   const [quickActionLeadId, setQuickActionLeadId] = useState<string | null>(null);
   const [quickDateTime, setQuickDateTime] = useState("");
   const [quickSuccess, setQuickSuccess] = useState<string | null>(null);
+  const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
 
   // جلب المتابعات عند اختيار عميل
   useEffect(() => {
@@ -534,20 +541,36 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   const openQuickAction = (leadId: string) => {
     if (quickActionLeadId === leadId) {
       setQuickActionLeadId(null);
+      setEditingFollowUpId(null);
       return;
     }
-    const soon = new Date();
-    soon.setHours(soon.getHours() + 1);
-    soon.setMinutes(0, 0, 0);
-    setQuickDateTime(toDateTimeLocal(soon));
     setQuickActionLeadId(leadId);
+    setEditingFollowUpId(null);
+
+    const lead = leads.find((l) => l.id === leadId);
+    if (lead?.nextFollowUpDate) {
+      // عميل لديه موعد مجدول — حمّله للتعديل
+      setQuickDateTime(toDateTimeLocal(new Date(lead.nextFollowUpDate)));
+      getLeadPendingFollowUp(leadId)
+        .then((p) => {
+          if (p?.id) setEditingFollowUpId(p.id);
+        })
+        .catch(() => {});
+    } else {
+      // جديد — القيمة الافتراضية: الآن + ساعة
+      const soon = new Date();
+      soon.setHours(soon.getHours() + 1);
+      soon.setSeconds(0, 0);
+      setQuickDateTime(toDateTimeLocal(soon));
+    }
   };
 
+  // تراكمي — كل نقرة تُضاف على القيمة الحالية
   const shiftQuickDateTime = (hours: number) => {
-    const now = new Date();
-    now.setHours(now.getHours() + hours);
-    now.setMinutes(0, 0, 0);
-    setQuickDateTime(toDateTimeLocal(now));
+    const base = quickDateTime ? new Date(quickDateTime) : new Date();
+    base.setHours(base.getHours() + hours);
+    base.setSeconds(0, 0);
+    setQuickDateTime(toDateTimeLocal(base));
   };
 
   const applyNextFollowUp = (leadId: string, newDate: Date) => {
@@ -563,18 +586,47 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     );
   };
 
+  const setNextFollowUp = (leadId: string, newDate: Date | null) => {
+    setLeads((prev) =>
+      prev.map((l) => (l.id === leadId ? { ...l, nextFollowUpDate: newDate } : l))
+    );
+  };
+
   const handleQuickScheduleAt = (leadId: string) => {
     if (!quickDateTime) return;
     startTransition(async () => {
       try {
         const picked = new Date(quickDateTime);
-        const result = await quickScheduleFollowUp({ leadId, scheduledAt: picked.toISOString() });
-        applyNextFollowUp(leadId, new Date(result.scheduledAt));
+        if (editingFollowUpId) {
+          const result = await updateFollowUpSchedule(editingFollowUpId, picked.toISOString());
+          setNextFollowUp(leadId, new Date(result.scheduledAt));
+          setQuickSuccess("✅ تم تحديث الموعد");
+        } else {
+          const result = await quickScheduleFollowUp({ leadId, scheduledAt: picked.toISOString() });
+          applyNextFollowUp(leadId, new Date(result.scheduledAt));
+          setQuickSuccess("✅ تم جدولة التذكير في الموعد المحدد");
+        }
         setQuickActionLeadId(null);
-        setQuickSuccess("✅ تم جدولة التذكير في الموعد المحدد");
+        setEditingFollowUpId(null);
         setTimeout(() => setQuickSuccess(null), 2500);
       } catch {
-        setError("فشل في جدولة التذكير");
+        setError("فشل في حفظ الموعد");
+      }
+    });
+  };
+
+  const handleQuickCancelSchedule = (leadId: string) => {
+    if (!editingFollowUpId) return;
+    startTransition(async () => {
+      try {
+        await cancelFollowUp(editingFollowUpId);
+        setNextFollowUp(leadId, null);
+        setQuickActionLeadId(null);
+        setEditingFollowUpId(null);
+        setQuickSuccess("🗑️ تم إلغاء الجدولة");
+        setTimeout(() => setQuickSuccess(null), 2500);
+      } catch {
+        setError("فشل في إلغاء الجدولة");
       }
     });
   };
@@ -1139,8 +1191,15 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                               <Bell className="h-4 w-4" />
                             </button>
                             {quickActionLeadId === lead.id && (
-                              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-200 p-3 z-30 w-64 animate-fade-in" onClick={(e) => e.stopPropagation()}>
-                                <div className="text-xs font-semibold text-surface-700 mb-2">متى نتواصل معه؟</div>
+                              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-200 p-3 z-30 w-72 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="text-xs font-semibold text-surface-700">
+                                    {editingFollowUpId ? "✏️ تعديل موعد موجود" : "متى نتواصل معه؟"}
+                                  </div>
+                                  {editingFollowUpId && (
+                                    <span className="text-[10px] text-primary-600 bg-primary-50 rounded-full px-2 py-0.5">تعديل</span>
+                                  )}
+                                </div>
                                 <div className="grid grid-cols-4 gap-1 mb-2">
                                   <button
                                     type="button"
@@ -1175,17 +1234,53 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                   type="datetime-local"
                                   value={quickDateTime}
                                   onChange={(e) => setQuickDateTime(e.target.value)}
-                                  min={toDateTimeLocal(new Date())}
                                   dir="ltr"
                                   className="w-full text-xs border border-surface-200 rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-warning-200"
                                 />
+                                {quickDateTime && (() => {
+                                  const d = new Date(quickDateTime);
+                                  const now = new Date();
+                                  const diffMs = d.getTime() - now.getTime();
+                                  const diffMin = Math.round(diffMs / 60000);
+                                  const absMin = Math.abs(diffMin);
+                                  const isPast = diffMs < 0;
+                                  const isToday = d.toDateString() === now.toDateString();
+                                  const dateLabel = isToday
+                                    ? "اليوم"
+                                    : d.toLocaleDateString("ar-SA", { weekday: "long", day: "numeric", month: "short" });
+                                  const timeLabel = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+                                  const rel = isPast
+                                    ? "⚠️ وقت سابق — تحقق"
+                                    : absMin < 60
+                                    ? `بعد ${absMin} دقيقة`
+                                    : absMin < 60 * 24
+                                    ? `بعد ${Math.round(absMin / 60)} ساعة`
+                                    : `بعد ${Math.round(absMin / (60 * 24))} يوم`;
+                                  return (
+                                    <div className={cn(
+                                      "text-[11px] rounded-md px-2 py-1.5 mb-2 text-center",
+                                      isPast ? "bg-danger-50 text-danger-700" : "bg-warning-50 text-warning-700"
+                                    )}>
+                                      🔔 {dateLabel} {timeLabel} — {rel}
+                                    </div>
+                                  );
+                                })()}
                                 <button
                                   onClick={() => handleQuickScheduleAt(lead.id)}
                                   disabled={!quickDateTime || isPending}
                                   className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-lg bg-warning-500 hover:bg-warning-600 disabled:opacity-50 text-white font-medium transition-colors"
                                 >
-                                  {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Bell className="h-3.5 w-3.5" /> جدولة التذكير</>}
+                                  {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Bell className="h-3.5 w-3.5" /> {editingFollowUpId ? "تحديث الموعد" : "جدولة التذكير"}</>}
                                 </button>
+                                {editingFollowUpId && (
+                                  <button
+                                    onClick={() => handleQuickCancelSchedule(lead.id)}
+                                    disabled={isPending}
+                                    className="w-full flex items-center justify-center gap-2 px-3 py-1.5 mt-1 text-[11px] rounded-lg border border-danger-200 hover:bg-danger-50 text-danger-600 font-medium transition-colors"
+                                  >
+                                    🗑️ إلغاء الجدولة
+                                  </button>
+                                )}
                                 <div className="border-t border-surface-100 my-2" />
                                 <button
                                   onClick={() => handleQuickNoResponse(lead.id)}
