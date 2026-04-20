@@ -1,5 +1,6 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import OverdueFollowUpsBar from "@/components/layout/overdue-bar";
+import DueFollowUpsWatcher from "@/components/layout/due-watcher";
 import { getOverdueFollowUpsCount } from "@/app/actions/followups";
 
 export default async function DashboardLayout({
@@ -25,6 +26,9 @@ export default async function DashboardLayout({
           {children}
         </div>
       </main>
+
+      {/* إشعارات المتابعات حين يحين موعدها (داخل التطبيق) */}
+      <DueFollowUpsWatcher />
     </div>
   );
 }

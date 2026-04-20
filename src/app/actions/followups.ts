@@ -70,6 +70,65 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
   revalidatePath("/");
 }
 
+// تأجيل بالدقائق — من داخل إشعار الاستحقاق
+export async function snoozeFollowUpMinutes(followUpId: string, minutes: number) {
+  const { tenantId } = await getContext();
+
+  const newDate = new Date();
+  newDate.setMinutes(newDate.getMinutes() + minutes);
+
+  await db
+    .update(followUps)
+    .set({ scheduledAt: newDate })
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+
+  revalidatePath("/");
+  revalidatePath("/leads");
+  return { scheduledAt: newDate };
+}
+
+// =============================================
+// المتابعات التي حان موعدها للتو (للـ in-app toasts)
+// =============================================
+
+export async function getJustDueFollowUps(sinceISO: string) {
+  const { tenantId, userId } = await getContext();
+  const since = new Date(sinceISO);
+  const now = new Date();
+  if (isNaN(since.getTime())) return [];
+
+  const userRole = await getUserRole(tenantId, userId);
+  const conditions = [
+    eq(followUps.tenantId, tenantId),
+    isNull(followUps.completedAt),
+    isNotNull(followUps.scheduledAt),
+    sql`${followUps.scheduledAt} > ${since.toISOString()}`,
+    sql`${followUps.scheduledAt} <= ${now.toISOString()}`,
+    eq(leads.isDeleted, false),
+  ];
+  if (userRole === "COORDINATOR") {
+    conditions.push(eq(followUps.userId, userId));
+  }
+
+  const rows = await db
+    .select({
+      id: followUps.id,
+      leadId: followUps.leadId,
+      leadName: leads.name,
+      leadPhone: leads.phone,
+      type: followUps.type,
+      notes: followUps.notes,
+      scheduledAt: followUps.scheduledAt,
+    })
+    .from(followUps)
+    .innerJoin(leads, eq(followUps.leadId, leads.id))
+    .where(and(...conditions))
+    .orderBy(followUps.scheduledAt)
+    .limit(20);
+
+  return rows;
+}
+
 // =============================================
 // متابعة سريعة بنقرة واحدة
 // =============================================
