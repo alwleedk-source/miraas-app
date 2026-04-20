@@ -35,6 +35,7 @@ import {
   Square,
   MinusSquare,
   Bell,
+  MessageCircle,
 } from "lucide-react";
 import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS } from "@/lib/utils";
 import {
@@ -187,8 +188,24 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   // أزرار المتابعة السريعة
   const [quickActionLeadId, setQuickActionLeadId] = useState<string | null>(null);
   const [quickDateTime, setQuickDateTime] = useState("");
-  const [quickSuccess, setQuickSuccess] = useState<string | null>(null);
+  const [quickNote, setQuickNote] = useState("");
+  const [quickType, setQuickType] = useState<"CALL" | "WHATSAPP" | "MESSAGE">("CALL");
   const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
+  const [undoToast, setUndoToast] = useState<{
+    message: string;
+    followUpId: string;
+    leadId: string;
+    expiresAt: number;
+  } | null>(null);
+  const [quickSuccess, setQuickSuccess] = useState<string | null>(null);
+
+  // تمرير نافذة التراجع — تنتهي تلقائياً بعد ٨ ثوانٍ
+  useEffect(() => {
+    if (!undoToast) return;
+    const ms = Math.max(0, undoToast.expiresAt - Date.now());
+    const t = setTimeout(() => setUndoToast(null), ms);
+    return () => clearTimeout(t);
+  }, [undoToast]);
 
   // جلب المتابعات عند اختيار عميل
   useEffect(() => {
@@ -546,18 +563,23 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     }
     setQuickActionLeadId(leadId);
     setEditingFollowUpId(null);
+    setQuickNote("");
+    setQuickType("CALL");
 
     const lead = leads.find((l) => l.id === leadId);
     if (lead?.nextFollowUpDate) {
-      // عميل لديه موعد مجدول — حمّله للتعديل
       setQuickDateTime(toDateTimeLocal(new Date(lead.nextFollowUpDate)));
       getLeadPendingFollowUp(leadId)
         .then((p) => {
-          if (p?.id) setEditingFollowUpId(p.id);
+          if (!p?.id) return;
+          setEditingFollowUpId(p.id);
+          if (p.type === "WHATSAPP" || p.type === "MESSAGE" || p.type === "CALL") {
+            setQuickType(p.type);
+          }
+          if (p.notes) setQuickNote(p.notes);
         })
         .catch(() => {});
     } else {
-      // جديد — القيمة الافتراضية: الآن + ساعة
       const soon = new Date();
       soon.setHours(soon.getHours() + 1);
       soon.setSeconds(0, 0);
@@ -584,22 +606,58 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     startTransition(async () => {
       try {
         const picked = new Date(quickDateTime);
+        const noteValue = quickNote.trim();
         let savedAt: Date;
+        let newFollowUpId: string | null = null;
         if (editingFollowUpId) {
-          const result = await updateFollowUpSchedule(editingFollowUpId, picked.toISOString());
+          const result = await updateFollowUpSchedule(editingFollowUpId, picked.toISOString(), {
+            notes: noteValue,
+            type: quickType,
+          });
           savedAt = new Date(result.scheduledAt);
         } else {
-          const result = await quickScheduleFollowUp({ leadId, scheduledAt: picked.toISOString() });
+          const result = await quickScheduleFollowUp({
+            leadId,
+            scheduledAt: picked.toISOString(),
+            notes: noteValue || undefined,
+            type: quickType,
+          });
           savedAt = new Date(result.scheduledAt);
+          newFollowUpId = result.followUpId;
         }
         setNextFollowUp(leadId, savedAt);
         const label = `${savedAt.toLocaleDateString("ar-SA", { day: "numeric", month: "short" })} ${savedAt.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`;
-        setQuickSuccess(editingFollowUpId ? `✅ تم تحديث التذكير إلى ${label}` : `✅ تم ضبط التذكير: ${label}`);
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
-        setTimeout(() => setQuickSuccess(null), 3000);
+        if (newFollowUpId) {
+          setUndoToast({
+            message: `✅ تم ضبط التذكير: ${label}`,
+            followUpId: newFollowUpId,
+            leadId,
+            expiresAt: Date.now() + 8000,
+          });
+        } else {
+          setQuickSuccess(`✅ تم تحديث التذكير إلى ${label}`);
+          setTimeout(() => setQuickSuccess(null), 3000);
+        }
       } catch {
         setError("فشل في حفظ التذكير");
+      }
+    });
+  };
+
+  const handleUndoSchedule = () => {
+    if (!undoToast) return;
+    const { followUpId, leadId } = undoToast;
+    setUndoToast(null);
+    startTransition(async () => {
+      try {
+        await cancelFollowUp(followUpId);
+        setNextFollowUp(leadId, null);
+        setQuickSuccess("↶ تم التراجع");
+        setTimeout(() => setQuickSuccess(null), 2000);
+      } catch {
+        setError("فشل في التراجع");
       }
     });
   };
@@ -1190,6 +1248,29 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                     <span className="text-[10px] text-primary-600 bg-primary-50 rounded-full px-2 py-0.5">تعديل</span>
                                   )}
                                 </div>
+                                {/* نوع التذكير */}
+                                <div className="flex items-center gap-1 mb-2">
+                                  {([
+                                    { t: "CALL" as const, icon: Phone, label: "اتصال" },
+                                    { t: "WHATSAPP" as const, icon: MessageCircle, label: "واتساب" },
+                                    { t: "MESSAGE" as const, icon: MessageSquare, label: "رسالة" },
+                                  ]).map(({ t, icon: Icn, label }) => (
+                                    <button
+                                      key={t}
+                                      type="button"
+                                      onClick={() => setQuickType(t)}
+                                      className={cn(
+                                        "flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] rounded-md border transition-colors",
+                                        quickType === t
+                                          ? "bg-primary-50 border-primary-300 text-primary-700 font-semibold"
+                                          : "bg-white border-surface-200 text-surface-500 hover:bg-surface-50"
+                                      )}
+                                    >
+                                      <Icn className="h-3 w-3" />
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
                                 <div className="grid grid-cols-4 gap-1 mb-2">
                                   <button
                                     type="button"
@@ -1255,6 +1336,14 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                     </div>
                                   );
                                 })()}
+                                <input
+                                  type="text"
+                                  value={quickNote}
+                                  onChange={(e) => setQuickNote(e.target.value)}
+                                  placeholder="ملاحظة سريعة (اختياري)"
+                                  maxLength={200}
+                                  className="w-full text-xs border border-surface-200 rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-warning-200"
+                                />
                                 <button
                                   onClick={() => handleQuickScheduleAt(lead.id)}
                                   disabled={!quickDateTime || isPending}
@@ -2078,6 +2167,26 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
       {quickSuccess && (
         <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white px-5 py-3 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-2">
           {quickSuccess}
+        </div>
+      )}
+
+      {/* Toast التراجع — على نمط Gmail/Linear */}
+      {undoToast && (
+        <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white ps-4 pe-2 py-2 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-3">
+          <span>{undoToast.message}</span>
+          <button
+            onClick={handleUndoSchedule}
+            className="flex items-center gap-1 px-3 py-1 rounded-lg bg-warning-500 hover:bg-warning-600 text-white text-xs font-semibold transition-colors"
+          >
+            ↶ تراجع
+          </button>
+          <button
+            onClick={() => setUndoToast(null)}
+            className="p-1 rounded hover:bg-white/10 text-white/60"
+            title="إخفاء"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
     </div>

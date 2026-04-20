@@ -70,8 +70,12 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
   revalidatePath("/");
 }
 
-// تعديل موعد تذكير موجود (يقبل ISO كاملاً)
-export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO: string) {
+// تعديل تذكير موجود (يقبل ISO + نوع + ملاحظة اختيارية)
+export async function updateFollowUpSchedule(
+  followUpId: string,
+  scheduledAtISO: string,
+  input: { notes?: string; type?: "CALL" | "WHATSAPP" | "MESSAGE" } = {},
+) {
   const { tenantId } = await getContext();
 
   const newDate = new Date(scheduledAtISO);
@@ -79,7 +83,6 @@ export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO:
     throw new Error("تاريخ/وقت غير صالح");
   }
 
-  // جلب leadId لتنظيف بقية التذكيرات المعلّقة للعميل نفسه
   const [target] = await db
     .select({ leadId: followUps.leadId })
     .from(followUps)
@@ -101,9 +104,16 @@ export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO:
       )
     );
 
+  const patch: Partial<typeof followUps.$inferInsert> = {
+    scheduledAt: newDate,
+    completedAt: null,
+  };
+  if (input.type) patch.type = input.type;
+  if (input.notes !== undefined) patch.notes = input.notes;
+
   await db
     .update(followUps)
-    .set({ scheduledAt: newDate, completedAt: null })
+    .set(patch)
     .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
 
   revalidatePath("/");
@@ -283,7 +293,7 @@ export async function quickScheduleFollowUp(input: {
 
   revalidatePath("/");
   revalidatePath("/leads");
-  return { success: true, scheduledAt };
+  return { success: true, scheduledAt, followUpId: followUp.id };
 }
 
 // =============================================
