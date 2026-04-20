@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { followUps, activityLog, leads } from "@/db/schema";
-import { eq, and, lte, isNull, isNotNull, sql, count, desc } from "drizzle-orm";
+import { eq, ne, and, lte, isNull, isNotNull, sql, count, desc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 
@@ -70,7 +70,7 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
   revalidatePath("/");
 }
 
-// تعديل موعد متابعة موجودة (يقبل ISO كاملاً)
+// تعديل موعد تذكير موجود (يقبل ISO كاملاً)
 export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO: string) {
   const { tenantId } = await getContext();
 
@@ -78,6 +78,28 @@ export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO:
   if (isNaN(newDate.getTime())) {
     throw new Error("تاريخ/وقت غير صالح");
   }
+
+  // جلب leadId لتنظيف بقية التذكيرات المعلّقة للعميل نفسه
+  const [target] = await db
+    .select({ leadId: followUps.leadId })
+    .from(followUps)
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+
+  if (!target) throw new Error("التذكير غير موجود");
+
+  // إلغاء أي تذكير آخر معلّق لنفس العميل (ضمان: تذكير واحد نشط)
+  await db
+    .update(followUps)
+    .set({ completedAt: new Date() })
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, target.leadId),
+        isNull(followUps.completedAt),
+        isNotNull(followUps.scheduledAt),
+        ne(followUps.id, followUpId),
+      )
+    );
 
   await db
     .update(followUps)
@@ -89,7 +111,7 @@ export async function updateFollowUpSchedule(followUpId: string, scheduledAtISO:
   return { scheduledAt: newDate };
 }
 
-// إلغاء متابعة مجدولة
+// إلغاء تذكير + أي تذكيرات معلّقة أخرى للعميل
 export async function cancelFollowUp(followUpId: string) {
   const { tenantId, userId } = await getContext();
 
@@ -100,12 +122,23 @@ export async function cancelFollowUp(followUpId: string) {
 
   if (!existing) return;
 
+  // إلغاء كل تذكير معلّق لهذا العميل (ليختفي البادج تماماً)
   await db
     .update(followUps)
-    .set({
-      completedAt: new Date(),
-      notes: `(ملغاة) ${existing.notes ?? ""}`.trim(),
-    })
+    .set({ completedAt: new Date() })
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, existing.leadId),
+        isNull(followUps.completedAt),
+        isNotNull(followUps.scheduledAt),
+      )
+    );
+
+  // تمييز التذكير المستهدف بأنه ملغى صراحةً في الملاحظات
+  await db
+    .update(followUps)
+    .set({ notes: `(ملغى) ${existing.notes ?? ""}`.trim() })
     .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
 
   await db.insert(activityLog).values({
