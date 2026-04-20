@@ -171,6 +171,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     notes: string | null;
     createdAt: Date;
     scheduledAt?: Date | null;
+    completedAt?: Date | null;
     user: { id: string; name: string; image: string | null } | null;
   }>>([]);
   const [loadingFollowUps, setLoadingFollowUps] = useState(false);
@@ -587,12 +588,45 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     }
   };
 
-  // تراكمي — كل نقرة تُضاف على القيمة الحالية
-  const shiftQuickDateTime = (hours: number) => {
+  // تعيين اليوم — يحافظ على الوقت المُختار، ويقفز لوقت منطقي إذا صار الوقت ماضياً
+  const setQuickDay = (daysFromNow: number) => {
+    const now = new Date();
+    const target = new Date();
+    target.setDate(now.getDate() + daysFromNow);
+    const base = quickDateTime ? new Date(quickDateTime) : null;
+    if (base) {
+      target.setHours(base.getHours(), base.getMinutes(), 0, 0);
+    } else {
+      target.setHours(now.getHours() + 1, 0, 0, 0);
+    }
+    if (target.getTime() < Date.now()) {
+      target.setHours(now.getHours() + 1, 0, 0, 0);
+    }
+    setQuickDateTime(toDateTimeLocal(target));
+  };
+
+  // تعيين الساعة — يحافظ على اليوم المُختار، ويقفز للغد إذا صار الوقت ماضياً
+  const setQuickHour = (hour24: number) => {
     const base = quickDateTime ? new Date(quickDateTime) : new Date();
-    base.setHours(base.getHours() + hours);
-    base.setSeconds(0, 0);
+    base.setHours(hour24, 0, 0, 0);
+    if (base.getTime() < Date.now()) {
+      base.setDate(base.getDate() + 1);
+    }
     setQuickDateTime(toDateTimeLocal(base));
+  };
+
+  // هل اليوم المختار يطابق يوم معيّناً من الآن؟
+  const isDaySelected = (daysFromNow: number) => {
+    if (!quickDateTime) return false;
+    const d = new Date(quickDateTime);
+    const target = new Date();
+    target.setDate(target.getDate() + daysFromNow);
+    return d.toDateString() === target.toDateString();
+  };
+
+  const isHourSelected = (hour24: number) => {
+    if (!quickDateTime) return false;
+    return new Date(quickDateTime).getHours() === hour24;
   };
 
   const setNextFollowUp = (leadId: string, newDate: Date | null) => {
@@ -1271,35 +1305,48 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                     </button>
                                   ))}
                                 </div>
-                                <div className="grid grid-cols-4 gap-1 mb-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => shiftQuickDateTime(1)}
-                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
-                                  >
-                                    +ساعة
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => shiftQuickDateTime(2)}
-                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
-                                  >
-                                    +ساعتين
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => shiftQuickDateTime(3)}
-                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
-                                  >
-                                    +٣ س
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => shiftQuickDateTime(24)}
-                                    className="px-2 py-1.5 text-[11px] rounded-md bg-surface-50 hover:bg-warning-50 text-surface-700 hover:text-warning-700 transition-colors"
-                                  >
-                                    +يوم
-                                  </button>
+                                {/* اختيار اليوم */}
+                                <div className="grid grid-cols-3 gap-1 mb-1.5">
+                                  {([
+                                    { d: 0, label: "اليوم" },
+                                    { d: 1, label: "غداً" },
+                                    { d: 2, label: "بعد غد" },
+                                  ]).map(({ d, label }) => (
+                                    <button
+                                      key={d}
+                                      type="button"
+                                      onClick={() => setQuickDay(d)}
+                                      className={cn(
+                                        "px-2 py-1.5 text-[11px] rounded-md border transition-colors",
+                                        isDaySelected(d)
+                                          ? "bg-warning-500 border-warning-500 text-white font-semibold"
+                                          : "bg-surface-50 border-surface-100 text-surface-700 hover:bg-warning-50 hover:text-warning-700"
+                                      )}
+                                    >
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
+                                {/* اختيار الساعة — ساعات عمل شائعة */}
+                                <div className="grid grid-cols-6 gap-1 mb-2">
+                                  {([10, 12, 14, 16, 18, 20]).map((h) => {
+                                    const label = h < 12 ? `${h}ص` : h === 12 ? "١٢م" : `${h - 12}م`;
+                                    return (
+                                      <button
+                                        key={h}
+                                        type="button"
+                                        onClick={() => setQuickHour(h)}
+                                        className={cn(
+                                          "px-1 py-1.5 text-[11px] rounded-md border transition-colors",
+                                          isHourSelected(h)
+                                            ? "bg-warning-500 border-warning-500 text-white font-semibold"
+                                            : "bg-surface-50 border-surface-100 text-surface-700 hover:bg-warning-50 hover:text-warning-700"
+                                        )}
+                                      >
+                                        {label}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                                 <input
                                   type="datetime-local"
@@ -1955,19 +2002,59 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                   MEETING: User,
                                 }[fu.type] || MessageSquare;
                                 const IconComp = typeIcon;
+
+                                // حالة التذكير
+                                const rawNotes = fu.notes ?? "";
+                                const isCancelled = /^\(?ملغ[اى]ة?\)?\s*/.test(rawNotes);
+                                const displayNotes = rawNotes.replace(/^\(?ملغ[اى]ة?\)?\s*/, "").trim();
+                                const now = Date.now();
+                                const scheduled = fu.scheduledAt ? new Date(fu.scheduledAt) : null;
+                                const status: "cancelled" | "completed" | "overdue" | "pending" =
+                                  isCancelled
+                                    ? "cancelled"
+                                    : fu.completedAt
+                                    ? "completed"
+                                    : scheduled && scheduled.getTime() < now
+                                    ? "overdue"
+                                    : "pending";
+
+                                const containerCls = {
+                                  cancelled: "bg-surface-50 border-surface-200 opacity-60",
+                                  completed: "bg-success-50/40 border-success-200/50",
+                                  overdue: "bg-danger-50/40 border-danger-200",
+                                  pending: "bg-warning-50/30 border-warning-200/50",
+                                }[status];
+
+                                const iconCls = {
+                                  cancelled: "bg-surface-100 text-surface-400",
+                                  completed: "bg-success-100 text-success-700",
+                                  overdue: "bg-danger-100 text-danger-700",
+                                  pending: "bg-warning-100 text-warning-700",
+                                }[status];
+
+                                const statusBadge = {
+                                  cancelled: { label: "ملغى", cls: "bg-surface-200 text-surface-600" },
+                                  completed: { label: "✓ تم", cls: "bg-success-100 text-success-700" },
+                                  overdue: { label: "⚠️ متأخر", cls: "bg-danger-100 text-danger-700" },
+                                  pending: { label: "🔔 مجدول", cls: "bg-warning-100 text-warning-700" },
+                                }[status];
+
                                 return (
                                   <div
                                     key={fu.id}
-                                    className="flex gap-3 p-3 bg-surface-50 rounded-lg border border-surface-100"
+                                    className={cn("flex gap-3 p-3 rounded-lg border", containerCls)}
                                   >
-                                    <div className="w-8 h-8 rounded-full bg-primary-50 text-primary-600 flex items-center justify-center shrink-0 mt-0.5">
+                                    <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5", iconCls)}>
                                       <IconComp className="h-4 w-4" />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
+                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                                         <Badge variant="outline" className="text-xs">
                                           {typeInfo?.label || fu.type}
                                         </Badge>
+                                        <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", statusBadge.cls)}>
+                                          {statusBadge.label}
+                                        </span>
                                         <span className="text-xs text-surface-400">
                                           {timeAgo(fu.createdAt)}
                                         </span>
@@ -1978,16 +2065,25 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                           </span>
                                         )}
                                       </div>
-                                      {fu.notes && (
-                                        <p className="text-sm text-surface-700 whitespace-pre-wrap">
-                                          {fu.notes}
+                                      {displayNotes && (
+                                        <p className={cn(
+                                          "text-sm whitespace-pre-wrap",
+                                          status === "cancelled" ? "text-surface-400 line-through" : "text-surface-700"
+                                        )}>
+                                          {displayNotes}
                                         </p>
                                       )}
-                                      {fu.scheduledAt && (
-                                        <div className="flex items-center gap-1.5 mt-1 text-xs text-warning-600 bg-warning-50 rounded px-2 py-1 w-fit">
+                                      {scheduled && (
+                                        <div className={cn(
+                                          "flex items-center gap-1.5 mt-1 text-xs rounded px-2 py-1 w-fit",
+                                          status === "overdue" ? "text-danger-700 bg-danger-100/60"
+                                            : status === "completed" ? "text-success-700 bg-success-100/60"
+                                            : status === "cancelled" ? "text-surface-500 bg-surface-100 line-through"
+                                            : "text-warning-700 bg-warning-100/60"
+                                        )}>
                                           <CalendarClock className="h-3 w-3" />
-                                          مجدول: {new Date(fu.scheduledAt).toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric" })}
-                                          {new Date(fu.scheduledAt).getHours() !== 0 && ` — ${new Date(fu.scheduledAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`}
+                                          {scheduled.toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric" })}
+                                          {scheduled.getHours() !== 0 && ` — ${scheduled.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`}
                                         </div>
                                       )}
                                     </div>

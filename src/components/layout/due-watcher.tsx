@@ -142,7 +142,7 @@ export default function DueFollowUpsWatcher() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 start-4 z-[80] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)]">
+    <div className="fixed bottom-4 start-4 z-[130] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)]">
       {toasts.map((t) => {
         const timeStr = t.scheduledAt.toLocaleTimeString("ar-SA", {
           hour: "2-digit",
