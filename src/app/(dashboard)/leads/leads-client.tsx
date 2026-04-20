@@ -550,12 +550,26 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     setQuickDateTime(toDateTimeLocal(now));
   };
 
+  const applyNextFollowUp = (leadId: string, newDate: Date) => {
+    setLeads((prev) =>
+      prev.map((l) => {
+        if (l.id !== leadId) return l;
+        const current = l.nextFollowUpDate ? new Date(l.nextFollowUpDate) : null;
+        if (!current || newDate < current) {
+          return { ...l, nextFollowUpDate: newDate };
+        }
+        return l;
+      })
+    );
+  };
+
   const handleQuickScheduleAt = (leadId: string) => {
     if (!quickDateTime) return;
     startTransition(async () => {
       try {
-        const iso = new Date(quickDateTime).toISOString();
-        await quickScheduleFollowUp({ leadId, scheduledAt: iso });
+        const picked = new Date(quickDateTime);
+        const result = await quickScheduleFollowUp({ leadId, scheduledAt: picked.toISOString() });
+        applyNextFollowUp(leadId, new Date(result.scheduledAt));
         setQuickActionLeadId(null);
         setQuickSuccess("✅ تم جدولة التذكير في الموعد المحدد");
         setTimeout(() => setQuickSuccess(null), 2500);
@@ -568,7 +582,8 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   const handleQuickNoResponse = (leadId: string) => {
     startTransition(async () => {
       try {
-        await quickNoResponse(leadId);
+        const result = await quickNoResponse(leadId);
+        applyNextFollowUp(leadId, new Date(result.retryDate));
         setQuickActionLeadId(null);
         setQuickSuccess("📵 تم تسجيل (لم يرد) + إعادة محاولة غداً");
         setTimeout(() => setQuickSuccess(null), 3000);
@@ -993,12 +1008,34 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                               )}
                             </span>
                             {/* مؤشر المتابعة المجدولة */}
-                            {lead.nextFollowUpDate && (
-                              <span className="flex items-center gap-1 text-[10px] text-warning-600 bg-warning-50 rounded px-1.5 py-0.5 mt-0.5 w-fit">
-                                <CalendarClock className="h-2.5 w-2.5" />
-                                مجدول: {new Date(lead.nextFollowUpDate).toLocaleDateString("ar-SA", { day: "numeric", month: "short" })}
-                              </span>
-                            )}
+                            {lead.nextFollowUpDate && (() => {
+                              const d = new Date(lead.nextFollowUpDate);
+                              const now = new Date();
+                              const isOverdue = d.getTime() < now.getTime();
+                              const isToday = d.toDateString() === now.toDateString();
+                              const timeStr = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+                              const dateStr = d.toLocaleDateString("ar-SA", { day: "numeric", month: "short" });
+                              const label = isOverdue
+                                ? `متأخر: ${isToday ? timeStr : `${dateStr} ${timeStr}`}`
+                                : isToday
+                                ? `اليوم ${timeStr}`
+                                : `${dateStr} ${timeStr}`;
+                              const cls = isOverdue
+                                ? "text-danger-700 bg-danger-50 border border-danger-200"
+                                : isToday
+                                ? "text-orange-700 bg-orange-50 border border-orange-200"
+                                : "text-warning-700 bg-warning-50 border border-warning-200";
+                              return (
+                                <span
+                                  className={cn("flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mt-0.5 w-fit", cls)}
+                                  title={`مجدول: ${dateStr} ${timeStr}`}
+                                >
+                                  <CalendarClock className="h-2.5 w-2.5" />
+                                  {isOverdue ? "⚠️ " : isToday ? "🔔 " : "📅 "}
+                                  {label}
+                                </span>
+                              );
+                            })()}
                             {lead.email && (
                               <span className="text-xs text-surface-400">{lead.email}</span>
                             )}
