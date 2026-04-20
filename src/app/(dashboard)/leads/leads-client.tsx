@@ -573,19 +573,6 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     setQuickDateTime(toDateTimeLocal(base));
   };
 
-  const applyNextFollowUp = (leadId: string, newDate: Date) => {
-    setLeads((prev) =>
-      prev.map((l) => {
-        if (l.id !== leadId) return l;
-        const current = l.nextFollowUpDate ? new Date(l.nextFollowUpDate) : null;
-        if (!current || newDate < current) {
-          return { ...l, nextFollowUpDate: newDate };
-        }
-        return l;
-      })
-    );
-  };
-
   const setNextFollowUp = (leadId: string, newDate: Date | null) => {
     setLeads((prev) =>
       prev.map((l) => (l.id === leadId ? { ...l, nextFollowUpDate: newDate } : l))
@@ -597,20 +584,22 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     startTransition(async () => {
       try {
         const picked = new Date(quickDateTime);
+        let savedAt: Date;
         if (editingFollowUpId) {
           const result = await updateFollowUpSchedule(editingFollowUpId, picked.toISOString());
-          setNextFollowUp(leadId, new Date(result.scheduledAt));
-          setQuickSuccess("✅ تم تحديث الموعد");
+          savedAt = new Date(result.scheduledAt);
         } else {
           const result = await quickScheduleFollowUp({ leadId, scheduledAt: picked.toISOString() });
-          applyNextFollowUp(leadId, new Date(result.scheduledAt));
-          setQuickSuccess("✅ تم جدولة التذكير في الموعد المحدد");
+          savedAt = new Date(result.scheduledAt);
         }
+        setNextFollowUp(leadId, savedAt);
+        const label = `${savedAt.toLocaleDateString("ar-SA", { day: "numeric", month: "short" })} ${savedAt.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`;
+        setQuickSuccess(editingFollowUpId ? `✅ تم تحديث التذكير إلى ${label}` : `✅ تم ضبط التذكير: ${label}`);
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
-        setTimeout(() => setQuickSuccess(null), 2500);
+        setTimeout(() => setQuickSuccess(null), 3000);
       } catch {
-        setError("فشل في حفظ الموعد");
+        setError("فشل في حفظ التذكير");
       }
     });
   };
@@ -623,10 +612,10 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
         setNextFollowUp(leadId, null);
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
-        setQuickSuccess("🗑️ تم إلغاء الجدولة");
+        setQuickSuccess("🗑️ تم إلغاء التذكير");
         setTimeout(() => setQuickSuccess(null), 2500);
       } catch {
-        setError("فشل في إلغاء الجدولة");
+        setError("فشل في إلغاء التذكير");
       }
     });
   };
@@ -635,8 +624,9 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     startTransition(async () => {
       try {
         const result = await quickNoResponse(leadId);
-        applyNextFollowUp(leadId, new Date(result.retryDate));
+        setNextFollowUp(leadId, new Date(result.retryDate));
         setQuickActionLeadId(null);
+        setEditingFollowUpId(null);
         setQuickSuccess("📵 تم تسجيل (لم يرد) + إعادة محاولة غداً");
         setTimeout(() => setQuickSuccess(null), 3000);
       } catch {
@@ -1194,7 +1184,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                               <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-200 p-3 z-30 w-72 animate-fade-in" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex items-center justify-between mb-2">
                                   <div className="text-xs font-semibold text-surface-700">
-                                    {editingFollowUpId ? "✏️ تعديل موعد موجود" : "متى نتواصل معه؟"}
+                                    {editingFollowUpId ? "✏️ تعديل التذكير" : "متى نتواصل معه؟"}
                                   </div>
                                   {editingFollowUpId && (
                                     <span className="text-[10px] text-primary-600 bg-primary-50 rounded-full px-2 py-0.5">تعديل</span>
@@ -1270,7 +1260,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                   disabled={!quickDateTime || isPending}
                                   className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-lg bg-warning-500 hover:bg-warning-600 disabled:opacity-50 text-white font-medium transition-colors"
                                 >
-                                  {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Bell className="h-3.5 w-3.5" /> {editingFollowUpId ? "تحديث الموعد" : "جدولة التذكير"}</>}
+                                  {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Bell className="h-3.5 w-3.5" /> {editingFollowUpId ? "تحديث التذكير" : "ضبط التذكير"}</>}
                                 </button>
                                 {editingFollowUpId && (
                                   <button
@@ -1278,7 +1268,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                     disabled={isPending}
                                     className="w-full flex items-center justify-center gap-2 px-3 py-1.5 mt-1 text-[11px] rounded-lg border border-danger-200 hover:bg-danger-50 text-danger-600 font-medium transition-colors"
                                   >
-                                    🗑️ إلغاء الجدولة
+                                    🗑️ إلغاء التذكير
                                   </button>
                                 )}
                                 <div className="border-t border-surface-100 my-2" />

@@ -209,6 +209,19 @@ export async function quickScheduleFollowUp(input: {
       ? "تذكير — العميل طلب التواصل غداً"
       : `تذكير — متابعة بعد ${diffDays} أيام`;
 
+  // إلغاء أي موعد معلّق سابق لنفس العميل (موعد واحد نشط فقط)
+  await db
+    .update(followUps)
+    .set({ completedAt: new Date() })
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, input.leadId),
+        isNull(followUps.completedAt),
+        isNotNull(followUps.scheduledAt),
+      )
+    );
+
   const [followUp] = await db
     .insert(followUps)
     .values({
@@ -257,7 +270,20 @@ export async function quickNoResponse(leadId: string, retryAfterDays: number = 1
     completedAt: new Date(),
   });
 
-  // 2. أنشئ متابعة مجدولة جديدة للإعادة
+  // 2. إلغاء أي موعد معلّق سابق لنفس العميل (موعد واحد نشط فقط)
+  await db
+    .update(followUps)
+    .set({ completedAt: new Date() })
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, leadId),
+        isNull(followUps.completedAt),
+        isNotNull(followUps.scheduledAt),
+      )
+    );
+
+  // 3. أنشئ متابعة مجدولة جديدة للإعادة
   const retryDate = new Date();
   retryDate.setDate(retryDate.getDate() + retryAfterDays);
   retryDate.setHours(10, 0, 0, 0);
