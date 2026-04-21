@@ -1,4 +1,6 @@
 import postgres from "postgres";
+import { readFileSync, readdirSync, existsSync } from "fs";
+import { join } from "path";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -305,6 +307,49 @@ async function migrate() {
       console.log("  ✅ Index:", idx.split("idx_")[1]?.split(" ON")[0] || "created");
     } catch (e) {
       console.warn("  ⚠️ Index skipped:", e.message);
+    }
+  }
+
+  // ============================================
+  // Apply drizzle/migrations/*.sql (v2+)
+  // يُطبّق ملفات migrations المرقّمة بالترتيب — idempotent عبر IF NOT EXISTS
+  // ============================================
+  const migrationsDir = join(process.cwd(), "drizzle/migrations");
+  if (existsSync(migrationsDir)) {
+    const files = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+
+    for (const file of files) {
+      // نتخطّى 0000 و 0001 إذا موجودان — الـ inline migrations أعلاه تُغطّيهما
+      if (file.startsWith("0000_") || file.startsWith("0001_")) continue;
+
+      console.log(`📄 Applying ${file}`);
+      const text = readFileSync(join(migrationsDir, file), "utf-8");
+      // قسّم على semicolon مع تجاهل السطور التعليقية
+      const statements = text
+        .split(";")
+        .map((s) =>
+          s
+            .split("\n")
+            .filter((l) => !l.trim().startsWith("--"))
+            .join("\n")
+            .trim(),
+        )
+        .filter((s) => s.length > 0);
+
+      for (const stmt of statements) {
+        try {
+          await sql.unsafe(stmt);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("already exists") || msg.includes("duplicate")) {
+            // idempotent — OK
+          } else {
+            console.warn(`  ⚠️ ${file}:`, msg.slice(0, 200));
+          }
+        }
+      }
     }
   }
 

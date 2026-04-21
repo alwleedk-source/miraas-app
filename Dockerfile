@@ -16,21 +16,22 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build arguments (needed at build time)
-ARG DATABASE_URL
-ARG BETTER_AUTH_SECRET
-ARG BETTER_AUTH_URL
+# Only NEXT_PUBLIC_* needed at build time (inlined into client bundle)
+# Secrets (DATABASE_URL, ENCRYPTION_KEY, BETTER_AUTH_SECRET, CRON_SECRET)
+# are runtime-only and injected by Coolify at container start.
 ARG NEXT_PUBLIC_APP_NAME
 ARG NEXT_PUBLIC_APP_URL
-ARG ENCRYPTION_KEY
-
-# Set as env for build
-ENV DATABASE_URL=$DATABASE_URL
-ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
-ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
-ENV ENCRYPTION_KEY=$ENCRYPTION_KEY
+
+# Placeholders for build-only env checks (auth & encryption are used
+# at runtime but some modules read env at import time).
+# These are dummy values ONLY used during `next build` — NOT production secrets.
+ENV BETTER_AUTH_SECRET=build-placeholder-not-a-real-secret-at-least-32-chars
+ENV BETTER_AUTH_URL=$NEXT_PUBLIC_APP_URL
+ENV ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+ENV DATABASE_URL=postgres://build:build@localhost:5432/build
+ENV CRON_SECRET=build-placeholder-cron-secret-not-real-at-least-32-chars
 
 RUN npm run build
 
@@ -44,23 +45,28 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
-# Create non-root user
+# Non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy standalone output
+# Next.js standalone output
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy migration script, startup, and postgres driver for migration
+# Migration infrastructure — runs in start.sh before server
 COPY --from=builder /app/migrate.mjs ./migrate.mjs
 COPY --from=builder /app/start.sh ./start.sh
+COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/node_modules/postgres ./node_modules/postgres
 RUN chmod +x ./start.sh
 
 USER nextjs
 
 EXPOSE 3000
+
+# Coolify / orchestrator can use this for health probes
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1
 
 CMD ["sh", "./start.sh"]
