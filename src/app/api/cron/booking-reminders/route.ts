@@ -3,6 +3,11 @@ import { db } from "@/db";
 import { leads, whatsappConfigs, activityLog } from "@/db/schema";
 import { eq, and, gte, lte, isNotNull, sql } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
+import { timingSafeEqual } from "crypto";
+import { logger } from "@/lib/logger";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // =============================================
 // Cron: تذكير حجوزات عبر واتساب
@@ -13,13 +18,145 @@ import { decrypt } from "@/lib/encryption";
 // 8 صباحاً → ?type=morning (تذكير بحجوزات اليوم)
 // =============================================
 
-const CRON_SECRET = process.env.CRON_SECRET || "miras-cron-2026";
+const CRON_SECRET = process.env.CRON_SECRET;
+if (!CRON_SECRET || CRON_SECRET.length < 32) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("CRON_SECRET required in production (min 32 chars)");
+  }
+  console.warn("⚠️ CRON_SECRET not set or too short — cron will reject all requests");
+}
 const RIYADH_TZ = "Asia/Riyadh";
 
 /**
  * حساب بداية/نهاية يوم بتوقيت الرياض
  * Fix #1: لضمان عدم اختلاف التاريخ بين UTC والسيرفر
  */
+type BookingForReminder = {
+  id: string;
+  name: string;
+  phone: string | null;
+  bookingDate: Date | null;
+  bookingService: string | null;
+};
+
+type WhatsappConfigRow = {
+  tenantId: string;
+  apiKeyEncrypted: string | null;
+  phoneNumber: string | null;
+  reminderTemplateName: string | null;
+  templateLanguage: string | null;
+};
+
+type SendOutcome = "sent" | "failed" | "retryable";
+
+/** أرسل تذكير واحد — يُرجع "retryable" على 429/5xx ليعيد cron في المرة التالية */
+async function sendReminder(args: {
+  booking: BookingForReminder;
+  config: WhatsappConfigRow;
+  accessToken: string;
+  type: "morning" | "evening";
+}): Promise<SendOutcome> {
+  const { booking, config, accessToken, type } = args;
+  if (!booking.phone || !config.phoneNumber || !config.reminderTemplateName) return "failed";
+
+  const toPhone = booking.phone.replace(/\D/g, "");
+  const bookingTime = booking.bookingDate
+    ? new Date(booking.bookingDate).toLocaleString("ar-SA", {
+        timeZone: RIYADH_TZ,
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : type === "evening"
+    ? "غداً"
+    : "اليوم";
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const response = await fetch(
+      `https://graph.facebook.com/v21.0/${config.phoneNumber}/messages`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: toPhone,
+          type: "template",
+          template: {
+            name: config.reminderTemplateName,
+            language: { code: config.templateLanguage || "ar" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: booking.name },
+                  { type: "text", text: bookingTime },
+                  { type: "text", text: booking.bookingService || "موعد" },
+                ],
+              },
+            ],
+          },
+        }),
+      },
+    );
+    clearTimeout(timeout);
+
+    const data = await response.json().catch(() => ({}));
+
+    // على 429/5xx: لا تسجّل — اتركها تُعاد في run تالٍ
+    if (response.status === 429 || response.status >= 500) {
+      return "retryable";
+    }
+
+    if (response.ok) {
+      await db.insert(activityLog).values({
+        tenantId: config.tenantId,
+        action: "WHATSAPP_SENT",
+        entityType: "lead",
+        entityId: booking.id,
+        details: {
+          type: `booking_reminder_${type}`,
+          to: toPhone,
+          leadName: booking.name,
+          bookingDate: bookingTime,
+          templateName: config.reminderTemplateName,
+          messageId: data?.messages?.[0]?.id,
+        },
+      });
+      return "sent";
+    }
+
+    // 4xx نهائي — سجّل فشل
+    await db.insert(activityLog).values({
+      tenantId: config.tenantId,
+      action: "WHATSAPP_FAILED",
+      entityType: "lead",
+      entityId: booking.id,
+      details: {
+        type: `booking_reminder_${type}`,
+        to: toPhone,
+        leadName: booking.name,
+        error: data?.error?.message ?? `HTTP ${response.status}`,
+      },
+    });
+    return "failed";
+  } catch (err) {
+    // Network / timeout — قابل للإعادة
+    logger.error("reminder network error", err, {
+      leadId: booking.id,
+      tenantId: config.tenantId,
+    });
+    return "retryable";
+  }
+}
+
 function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
   const now = new Date();
   // الوقت الحالي بتوقيت الرياض
@@ -34,9 +171,20 @@ function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
 }
 
 export async function GET(request: NextRequest) {
-  // التحقق من المفتاح السري
-  const secret = request.nextUrl.searchParams.get("secret");
-  if (secret !== CRON_SECRET) {
+  // التحقق من المفتاح السري — header مُفضّل (لا يظهر في logs)، query مدعوم للتوافق
+  const provided =
+    request.headers.get("x-cron-key") ??
+    request.nextUrl.searchParams.get("secret") ??
+    "";
+  if (!CRON_SECRET) {
+    return NextResponse.json({ error: "server not configured" }, { status: 500 });
+  }
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(CRON_SECRET);
+  const valid =
+    providedBuf.length === expectedBuf.length &&
+    timingSafeEqual(providedBuf, expectedBuf);
+  if (!valid) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -47,11 +195,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Fix #1: حساب النطاق الزمني بتوقيت الرياض
     const { start: rangeStart, end: rangeEnd } =
       type === "evening" ? getRiyadhDate(1) : getRiyadhDate(0);
+    const now = new Date();
 
-    // جلب كل الشركات المفعّلة للواتساب
     const configs = await db
       .select({
         tenantId: whatsappConfigs.tenantId,
@@ -66,28 +213,31 @@ export async function GET(request: NextRequest) {
       .from(whatsappConfigs)
       .where(eq(whatsappConfigs.isActive, true));
 
-    let totalSent = 0;
-    let totalFailed = 0;
-    let totalSkipped = 0;
+    // معالجة كل tenant بالتوازي (في حدود العقل)
+    const TENANT_CONCURRENCY = 3;
+    const BOOKING_CONCURRENCY = 5;
 
-    for (const config of configs) {
-      // تخطي إذا لم يُعد قالب التذكير أو البيانات غير مكتملة
+    type TenantStats = { sent: number; failed: number; skipped: number };
+
+    const processTenant = async (
+      config: (typeof configs)[number],
+    ): Promise<TenantStats> => {
+      const stats: TenantStats = { sent: 0, failed: 0, skipped: 0 };
+
       if (!config.reminderTemplateName || !config.apiKeyEncrypted || !config.phoneNumber) {
-        totalSkipped++;
-        continue;
+        stats.skipped++;
+        return stats;
       }
-
-      // تخطي إذا نوع التذكير معطّل لهذه الشركة
       if (type === "evening" && !config.reminderEvening) {
-        totalSkipped++;
-        continue;
+        stats.skipped++;
+        return stats;
       }
       if (type === "morning" && !config.reminderMorning) {
-        totalSkipped++;
-        continue;
+        stats.skipped++;
+        return stats;
       }
 
-      // جلب الحجوزات في النطاق الزمني
+      // حجوزات في النطاق + في المستقبل فقط (لا تُذكّر بمواعيد فائتة)
       const bookings = await db
         .select({
           id: leads.id,
@@ -104,13 +254,14 @@ export async function GET(request: NextRequest) {
             eq(leads.bookingStatus, "PENDING"),
             isNotNull(leads.phone),
             gte(leads.bookingDate, rangeStart),
-            lte(leads.bookingDate, rangeEnd)
-          )
+            lte(leads.bookingDate, rangeEnd),
+            gte(leads.bookingDate, now),
+          ),
         );
 
-      if (bookings.length === 0) continue;
+      if (bookings.length === 0) return stats;
 
-      // Fix #2: جلب التذكيرات المرسلة اليوم لمنع التكرار
+      // duplicate check
       const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
       const alreadySent = await db
         .select({ entityId: activityLog.entityId })
@@ -121,99 +272,72 @@ export async function GET(request: NextRequest) {
             eq(activityLog.action, "WHATSAPP_SENT"),
             gte(activityLog.createdAt, todayStart),
             lte(activityLog.createdAt, todayEnd),
-            sql`${activityLog.details}->>'type' = ${"booking_reminder_" + type}`
-          )
+            sql`${activityLog.details}->>'type' = ${"booking_reminder_" + type}`,
+          ),
         );
       const sentIds = new Set(alreadySent.map((r) => r.entityId));
 
-      // فك تشفير Access Token
+      // decrypt مرة واحدة
       let accessToken: string;
       try {
-        accessToken = decrypt(config.apiKeyEncrypted);
-      } catch {
-        totalFailed += bookings.length;
-        continue;
+        accessToken = decrypt(config.apiKeyEncrypted, `whatsapp:${config.tenantId}`);
+      } catch (err) {
+        // سجّل فشلاً واضحاً ليرى المالك في UI
+        await db.insert(activityLog).values({
+          tenantId: config.tenantId,
+          action: "WHATSAPP_FAILED",
+          entityType: "whatsapp_config",
+          details: {
+            type: `booking_reminder_${type}`,
+            reason: "decryption_failed",
+            error: err instanceof Error ? err.message : "unknown",
+          },
+        });
+        stats.failed += bookings.length;
+        return stats;
       }
 
-      // إرسال تذكير لكل عميل
-      for (const booking of bookings) {
-        if (!booking.phone) continue;
+      // أرسل في chunks متوازية
+      const pending = bookings.filter((b) => b.phone && !sentIds.has(b.id));
+      stats.skipped += bookings.length - pending.length;
 
-        // Fix #2: تخطي إذا أُرسل بالفعل
-        if (sentIds.has(booking.id)) {
-          totalSkipped++;
-          continue;
-        }
-
-        const toPhone = booking.phone.replace(/\D/g, "");
-        const bookingTime = booking.bookingDate
-          ? new Date(booking.bookingDate).toLocaleString("ar-SA", {
-              timeZone: RIYADH_TZ,
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : type === "evening" ? "غداً" : "اليوم";
-
-        try {
-          const response = await fetch(
-            `https://graph.facebook.com/v21.0/${config.phoneNumber}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                messaging_product: "whatsapp",
-                to: toPhone,
-                type: "template",
-                template: {
-                  name: config.reminderTemplateName,
-                  language: { code: config.templateLanguage || "ar" },
-                  components: [
-                    {
-                      type: "body",
-                      parameters: [
-                        { type: "text", text: booking.name },
-                        { type: "text", text: bookingTime },
-                        { type: "text", text: booking.bookingService || "موعد" },
-                      ],
-                    },
-                  ],
-                },
-              }),
-            }
-          );
-
-          const data = await response.json();
-
-          if (response.ok) {
-            totalSent++;
+      for (let i = 0; i < pending.length; i += BOOKING_CONCURRENCY) {
+        const chunk = pending.slice(i, i + BOOKING_CONCURRENCY);
+        const results = await Promise.allSettled(
+          chunk.map((booking) =>
+            sendReminder({
+              booking,
+              config,
+              accessToken,
+              type,
+            }),
+          ),
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            if (r.value === "sent") stats.sent++;
+            else if (r.value === "retryable") stats.skipped++; // سيُعاد في run تالٍ
+            else stats.failed++;
           } else {
-            totalFailed++;
+            stats.failed++;
           }
+        }
+      }
 
-          // تسجيل النشاط
-          await db.insert(activityLog).values({
-            tenantId: config.tenantId,
-            action: response.ok ? "WHATSAPP_SENT" : "WHATSAPP_FAILED",
-            entityType: "lead",
-            entityId: booking.id,
-            details: {
-              type: `booking_reminder_${type}`,
-              to: toPhone,
-              leadName: booking.name,
-              bookingDate: bookingTime,
-              templateName: config.reminderTemplateName,
-              messageId: data.messages?.[0]?.id,
-              error: data.error?.message,
-            },
-          });
-        } catch {
-          totalFailed++;
+      return stats;
+    };
+
+    const aggregate: TenantStats = { sent: 0, failed: 0, skipped: 0 };
+    for (let i = 0; i < configs.length; i += TENANT_CONCURRENCY) {
+      const chunk = configs.slice(i, i + TENANT_CONCURRENCY);
+      const results = await Promise.allSettled(chunk.map(processTenant));
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          aggregate.sent += r.value.sent;
+          aggregate.failed += r.value.failed;
+          aggregate.skipped += r.value.skipped;
+        } else {
+          aggregate.failed++;
         }
       }
     }
@@ -221,9 +345,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       type,
-      sent: totalSent,
-      failed: totalFailed,
-      skipped: totalSkipped,
+      sent: aggregate.sent,
+      failed: aggregate.failed,
+      skipped: aggregate.skipped,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

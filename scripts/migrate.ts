@@ -1,7 +1,5 @@
-import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { sql } from "drizzle-orm";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 
 async function migrate() {
@@ -12,39 +10,49 @@ async function migrate() {
   }
 
   const client = postgres(connectionString, { max: 1 });
-  const db = drizzle(client);
+  const migrationsDir = join(process.cwd(), "drizzle/migrations");
 
-  console.log("🔄 Running migration...");
+  console.log("🔄 Running migrations...");
+
+  // نشغّل كل ملفات .sql بالترتيب الأبجدي (0000_... ثم 0001_... ثم 0002_...)
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
 
   try {
-    const migrationSQL = readFileSync(
-      join(process.cwd(), "drizzle/migrations/0001_smart_scheduling.sql"),
-      "utf-8"
-    );
+    for (const file of files) {
+      console.log(`\n📄 ${file}`);
+      const migrationSQL = readFileSync(join(migrationsDir, file), "utf-8");
 
-    // Split by semicolons and run each statement
-    const statements = migrationSQL
-      .split(";")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.startsWith("--"));
+      const statements = migrationSQL
+        .split(";")
+        .map((s) =>
+          // strip inline comments بين SQL السطور
+          s
+            .split("\n")
+            .filter((line) => !line.trim().startsWith("--"))
+            .join("\n")
+            .trim(),
+        )
+        .filter((s) => s.length > 0);
 
-    for (const statement of statements) {
-      try {
-        await client.unsafe(statement);
-        console.log("✅", statement.substring(0, 60) + "...");
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Ignore "already exists" errors
-        if (msg.includes("already exists") || msg.includes("duplicate")) {
-          console.log("⏭️ Already exists, skipping:", statement.substring(0, 50));
-        } else {
-          console.error("❌ Error:", msg);
-          console.error("   Statement:", statement.substring(0, 80));
+      for (const statement of statements) {
+        try {
+          await client.unsafe(statement);
+          console.log("  ✅", statement.substring(0, 60).replace(/\s+/g, " ") + "...");
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("already exists") || msg.includes("duplicate")) {
+            console.log("  ⏭️ Already exists:", statement.substring(0, 50).replace(/\s+/g, " "));
+          } else {
+            console.error("  ❌ Error:", msg);
+            console.error("     Statement:", statement.substring(0, 80).replace(/\s+/g, " "));
+          }
         }
       }
     }
 
-    console.log("✅ Migration completed successfully!");
+    console.log("\n✅ All migrations completed!");
   } catch (err) {
     console.error("❌ Migration failed:", err);
     process.exit(1);

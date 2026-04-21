@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, X, Calendar } from "lucide-react";
+import { toWhatsappUrl } from "@/lib/utils";
 
 type BookingSummaryItem = {
   id: string;
@@ -171,7 +172,7 @@ export default function TodayBookingsPanel({
                   📞
                 </a>
                 <a
-                  href={`https://wa.me/${b.phone.replace("+", "")}`}
+                  href={toWhatsappUrl(b.phone) ?? "#"}
                   target="_blank"
                   rel="noopener"
                   className="p-1.5 rounded-lg hover:bg-success-50 text-success-600"

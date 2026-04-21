@@ -1,27 +1,37 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
+import { randomBytes } from "crypto";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export function generateSlug(name: string): string {
-  return name
+  // يدعم العربية + Latin + أرقام + شرطات (U+0621..U+064A للعربية الأساسية)
+  const base = name
+    .trim()
     .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^ء-ي\w-]/g, "")
+    .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .substring(0, 100);
+    .substring(0, 60);
+  // إذا تكوّن اسم فارغ (مثل رموز فقط) أعطِ suffix عشوائي كي لا يحدث unique collision
+  if (!base) return randomBytes(6).toString("base64url").toLowerCase();
+  return base;
+}
+
+/**
+ * توليد slug فريد لأي tenant — يضيف suffix زمني قصير كاحتياط
+ */
+export function generateUniqueSlug(name: string): string {
+  return generateSlug(name) + "-" + Date.now().toString(36).slice(-4);
 }
 
 export function generateSecretKey(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 48; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  // Cryptographically secure — 36 bytes → ~48 base64url chars
+  return randomBytes(36).toString("base64url");
 }
 
 export function formatDate(date: Date | string): string {
@@ -32,6 +42,7 @@ export function formatDate(date: Date | string): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Riyadh",
   }).format(d);
 }
 
@@ -293,6 +304,28 @@ export function validateAndNormalizePhone(
   }
 
   return { valid: false, phone: null, country: null, error: "رقم غير صالح" };
+}
+
+/**
+ * بناء رابط WhatsApp آمن من رقم — يقبل فقط الأرقام، يرفض query params مدسوسة
+ * يمنع phishing عبر phone يحوي `?text=Spam`
+ */
+export function toWhatsappUrl(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/[^0-9]/g, "");
+  if (digits.length < 4) return null;
+  return `https://wa.me/${digits}`;
+}
+
+/**
+ * بناء رابط tel: آمن
+ */
+export function toTelUrl(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  // tel: يسمح بـ + والأرقام فقط
+  const cleaned = phone.replace(/[^0-9+]/g, "");
+  if (cleaned.length < 4) return null;
+  return `tel:${cleaned}`;
 }
 
 /**

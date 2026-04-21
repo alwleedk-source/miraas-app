@@ -161,7 +161,10 @@ export async function getProviderDashboard() {
 export async function sendQuickMessage(content: string, messageType: string = "CUSTOM") {
   const { tenantId, userId, role } = await requireTenant();
 
-  if (!content.trim()) throw new Error("الرسالة مطلوبة");
+  const trimmed = content.trim();
+  if (!trimmed || trimmed.length > 1000) throw new Error("الرسالة غير صالحة (1-1000 حرف)");
+  const allowedTypes = ["CUSTOM", "QUICK_STATUS"];
+  const validType = allowedTypes.includes(messageType) ? messageType : "CUSTOM";
 
   // جلب القسم الافتراضي للمقدم
   const { departmentProviders } = await import("@/db/schema");
@@ -176,8 +179,8 @@ export async function sendQuickMessage(content: string, messageType: string = "C
     senderId: userId,
     senderRole: role,
     departmentId: link?.departmentId || null,
-    messageType,
-    content: content.trim(),
+    messageType: validType,
+    content: trimmed,
   });
 
   revalidatePath("/provider");
@@ -223,12 +226,20 @@ export async function getUnreadMessagesForCoordinator() {
 // =============================================
 
 export async function markMessagesAsRead(messageIds: string[]) {
+  const { tenantId } = await requireTenant();
   if (messageIds.length === 0) return;
+  if (messageIds.length > 100) throw new Error("الحد الأقصى 100");
 
+  // قيّد التحديث بـ tenantId — يمنع cross-tenant marking
   await db
     .update(internalMessages)
     .set({ isRead: true })
-    .where(inArray(internalMessages.id, messageIds));
+    .where(
+      and(
+        inArray(internalMessages.id, messageIds),
+        eq(internalMessages.tenantId, tenantId),
+      ),
+    );
 
   revalidatePath("/bookings");
   revalidatePath("/provider");

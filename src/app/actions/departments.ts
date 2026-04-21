@@ -5,6 +5,7 @@ import { departments, departmentProviders, providerSchedules, providerDayOffs, u
 import { eq, and, asc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
+import { assertRole, ROLE, assertUserInTenant, assertDepartmentInTenant } from "@/lib/tenant-guards";
 
 // =============================================
 // جلب الأقسام
@@ -38,9 +39,14 @@ export async function addDepartment(input: {
   color?: string;
   defaultGapMinutes?: number;
 }) {
-  const { tenantId, userId } = await requireTenant();
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
   const trimmed = input.name.trim();
-  if (!trimmed) throw new Error("اسم القسم مطلوب");
+  if (!trimmed || trimmed.length > 255) throw new Error("اسم القسم غير صالح");
+  if (input.color && !/^#[0-9A-Fa-f]{6}$/.test(input.color)) throw new Error("لون غير صالح");
+  if (input.defaultGapMinutes !== undefined && (input.defaultGapMinutes < 0 || input.defaultGapMinutes > 120)) {
+    throw new Error("فارق زمني غير صالح");
+  }
 
   // منع التكرار
   const [existing] = await db
@@ -89,7 +95,9 @@ export async function updateDepartment(
   departmentId: string,
   input: { name?: string; color?: string; defaultGapMinutes?: number; isActive?: boolean }
 ) {
-  const { tenantId, userId } = await requireTenant();
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertDepartmentInTenant(departmentId, tenantId);
 
   const updateData: Record<string, unknown> = {};
   if (input.name !== undefined) updateData.name = input.name.trim();
@@ -119,7 +127,9 @@ export async function updateDepartment(
 // =============================================
 
 export async function deleteDepartment(departmentId: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertDepartmentInTenant(departmentId, tenantId);
 
   await db
     .delete(departments)
@@ -174,7 +184,10 @@ export async function getAllProviders() {
 // =============================================
 
 export async function linkProviderToDepartment(departmentId: string, userId: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertDepartmentInTenant(departmentId, tenantId);
+  await assertUserInTenant(userId, tenantId);
 
   // تحقق أن القسم تابع للشركة
   const [dep] = await db
@@ -209,6 +222,18 @@ export async function linkProviderToDepartment(departmentId: string, userId: str
 // =============================================
 
 export async function unlinkProviderFromDepartment(linkId: string) {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  // تحقق أن الـ link يخص قسماً في الـ tenant (يمنع IDOR)
+  const [link] = await db
+    .select({ id: departmentProviders.id })
+    .from(departmentProviders)
+    .innerJoin(departments, eq(departmentProviders.departmentId, departments.id))
+    .where(and(eq(departmentProviders.id, linkId), eq(departments.tenantId, tenantId)))
+    .limit(1);
+  if (!link) throw new Error("الرابط غير موجود");
+
   await db.delete(departmentProviders).where(eq(departmentProviders.id, linkId));
   revalidatePath("/settings");
 }
@@ -250,28 +275,44 @@ export async function saveProviderSchedule(
     isActive: boolean;
   }>
 ) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertUserInTenant(userId, tenantId);
 
-  // حذف الجدول القديم
-  await db
-    .delete(providerSchedules)
-    .where(and(eq(providerSchedules.tenantId, tenantId), eq(providerSchedules.userId, userId)));
-
-  // إدراج الجديد
-  if (schedule.length > 0) {
-    await db.insert(providerSchedules).values(
-      schedule.map((s) => ({
-        tenantId,
-        userId,
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        breakStart: s.breakStart || null,
-        breakEnd: s.breakEnd || null,
-        isActive: s.isActive,
-      }))
-    );
+  // validate inputs
+  if (schedule.length > 7) throw new Error("أيام أكثر من اللازم");
+  const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+  for (const s of schedule) {
+    if (!Number.isInteger(s.dayOfWeek) || s.dayOfWeek < 0 || s.dayOfWeek > 6) {
+      throw new Error("يوم غير صالح");
+    }
+    if (!TIME_REGEX.test(s.startTime) || !TIME_REGEX.test(s.endTime)) {
+      throw new Error("وقت غير صالح");
+    }
+    if (s.breakStart && !TIME_REGEX.test(s.breakStart)) throw new Error("وقت استراحة غير صالح");
+    if (s.breakEnd && !TIME_REGEX.test(s.breakEnd)) throw new Error("وقت استراحة غير صالح");
   }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(providerSchedules)
+      .where(and(eq(providerSchedules.tenantId, tenantId), eq(providerSchedules.userId, userId)));
+
+    if (schedule.length > 0) {
+      await tx.insert(providerSchedules).values(
+        schedule.map((s) => ({
+          tenantId,
+          userId,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          breakStart: s.breakStart || null,
+          breakEnd: s.breakEnd || null,
+          isActive: s.isActive,
+        })),
+      );
+    }
+  });
 
   revalidatePath("/settings");
 }
@@ -299,12 +340,18 @@ export async function getProviderDayOffs(userId: string) {
 // =============================================
 
 export async function addProviderDayOff(userId: string, date: string, reason?: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertUserInTenant(userId, tenantId);
+
+  const parsedDate = new Date(date);
+  if (isNaN(parsedDate.getTime())) throw new Error("تاريخ غير صالح");
+  if (reason && reason.length > 255) throw new Error("سبب طويل جداً");
 
   await db.insert(providerDayOffs).values({
     tenantId,
     userId,
-    date: new Date(date),
+    date: parsedDate,
     reason: reason || null,
   });
 
@@ -316,6 +363,12 @@ export async function addProviderDayOff(userId: string, date: string, reason?: s
 // =============================================
 
 export async function deleteProviderDayOff(dayOffId: string) {
-  await db.delete(providerDayOffs).where(eq(providerDayOffs.id, dayOffId));
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  // قيّد الحذف بـ tenantId — يمنع IDOR
+  await db
+    .delete(providerDayOffs)
+    .where(and(eq(providerDayOffs.id, dayOffId), eq(providerDayOffs.tenantId, tenantId)));
   revalidatePath("/settings");
 }

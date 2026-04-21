@@ -5,9 +5,10 @@ import { services } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
+import { assertRole, ROLE, assertDepartmentInTenant } from "@/lib/tenant-guards";
 
 // =============================================
-// جلب خدمات الشركة
+// جلب خدمات الشركة (كل المستخدمين)
 // =============================================
 
 export async function getServices() {
@@ -41,22 +42,29 @@ export async function getActiveServices() {
 }
 
 // =============================================
-// إضافة خدمة جديدة
+// إضافة خدمة جديدة (OWNER/ADMIN)
 // =============================================
 
-export async function addService(name: string, departmentId?: string, defaultDurationMin?: number) {
-  const { tenantId } = await requireTenant();
+export async function addService(
+  name: string,
+  departmentId?: string,
+  defaultDurationMin?: number,
+) {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
 
   const trimmed = name.trim();
-  if (!trimmed) throw new Error("اسم الخدمة مطلوب");
+  if (!trimmed || trimmed.length > 255) throw new Error("اسم الخدمة غير صالح");
+  if (departmentId) await assertDepartmentInTenant(departmentId, tenantId);
+  if (defaultDurationMin !== undefined && (defaultDurationMin < 5 || defaultDurationMin > 480)) {
+    throw new Error("مدة غير صالحة (5-480 دقيقة)");
+  }
 
-  // Fix #5: منع التكرار
   const [existing] = await db
     .select({ id: services.id })
     .from(services)
     .where(and(eq(services.tenantId, tenantId), eq(services.name, trimmed)))
     .limit(1);
-
   if (existing) throw new Error("هذه الخدمة موجودة بالفعل");
 
   await db.insert(services).values({
@@ -74,9 +82,23 @@ export async function addService(name: string, departmentId?: string, defaultDur
 
 export async function updateServiceDetails(
   serviceId: string,
-  data: { departmentId?: string | null; defaultDurationMin?: number }
+  data: { departmentId?: string | null; defaultDurationMin?: number },
 ) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  // تحقق أن الخدمة في نفس الـ tenant
+  const [existing] = await db
+    .select({ id: services.id })
+    .from(services)
+    .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)))
+    .limit(1);
+  if (!existing) throw new Error("الخدمة غير موجودة");
+
+  if (data.departmentId) await assertDepartmentInTenant(data.departmentId, tenantId);
+  if (data.defaultDurationMin !== undefined && (data.defaultDurationMin < 5 || data.defaultDurationMin > 480)) {
+    throw new Error("مدة غير صالحة");
+  }
 
   const updateData: Record<string, unknown> = {};
   if (data.departmentId !== undefined) updateData.departmentId = data.departmentId;
@@ -95,19 +117,19 @@ export async function updateServiceDetails(
 // =============================================
 
 export async function toggleService(serviceId: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
 
   const [existing] = await db
     .select({ isActive: services.isActive })
     .from(services)
     .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
-
-  if (!existing) throw new Error("not found");
+  if (!existing) throw new Error("الخدمة غير موجودة");
 
   await db
     .update(services)
     .set({ isActive: !existing.isActive })
-    .where(eq(services.id, serviceId));
+    .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
 
   revalidatePath("/settings");
 }
@@ -117,7 +139,8 @@ export async function toggleService(serviceId: string) {
 // =============================================
 
 export async function deleteService(serviceId: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
 
   await db
     .delete(services)

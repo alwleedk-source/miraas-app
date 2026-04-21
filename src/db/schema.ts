@@ -8,8 +8,10 @@ import {
   jsonb,
   integer,
   pgEnum,
+  index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // ============================================
 // Enums
@@ -112,6 +114,8 @@ export const tenants = pgTable("tenants", {
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // tenantId يبقى nullable مؤقتاً — register flow ينشئ user ثم tenant
+  // بعد إكمال signup يصبح notNull دائماً. Migration 0004 يضيف CHECK constraint.
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
@@ -178,7 +182,9 @@ export const pipelineStages = pgTable("pipeline_stages", {
   isExclusive: boolean("is_exclusive").default(false).notNull(),
   isBooking: boolean("is_booking").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  tenantNameUnique: uniqueIndex("pipeline_stages_tenant_name_unique").on(t.tenantId, t.name),
+}));
 
 // ============================================
 // 4. Lead Sources (مصادر العملاء)
@@ -220,7 +226,9 @@ export const departments = pgTable("departments", {
   position: integer("position").notNull().default(0),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  tenantNameUnique: uniqueIndex("departments_tenant_name_unique").on(t.tenantId, t.name),
+}));
 
 // ============================================
 // 4d. Department Providers (ربط الموارد بالأقسام)
@@ -231,7 +239,9 @@ export const departmentProviders = pgTable("department_providers", {
   departmentId: uuid("department_id").notNull().references(() => departments.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  deptUserUnique: uniqueIndex("dept_providers_dept_user_unique").on(t.departmentId, t.userId),
+}));
 
 // ============================================
 // 4e. Provider Schedules (ساعات العمل الأسبوعية)
@@ -248,7 +258,10 @@ export const providerSchedules = pgTable("provider_schedules", {
   breakEnd: varchar("break_end", { length: 5 }), // "13:30" nullable
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // مستخدم واحد، يوم واحد، سجل واحد — يمنع تكرار الجدول لنفس اليوم
+  userDayUnique: uniqueIndex("provider_schedules_user_day_unique").on(t.userId, t.dayOfWeek),
+}));
 
 // ============================================
 // 4f. Provider Day Offs (الإجازات والاستثناءات)
@@ -308,7 +321,16 @@ export const leads = pgTable("leads", {
   bookingEndTime: timestamp("booking_end_time", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  tenantDeletedIdx: index("leads_tenant_deleted_idx").on(t.tenantId, t.isDeleted),
+  tenantAssignedIdx: index("leads_tenant_assigned_idx").on(t.tenantId, t.assignedTo),
+  tenantStageIdx: index("leads_tenant_stage_idx").on(t.tenantId, t.stageId),
+  tenantBookingIdx: index("leads_tenant_booking_idx")
+    .on(t.tenantId, t.bookingDate)
+    .where(sql`${t.bookingStatus} IS NOT NULL`),
+  tenantPhoneIdx: index("leads_tenant_phone_idx").on(t.tenantId, t.phone),
+  tenantCreatedIdx: index("leads_tenant_created_idx").on(t.tenantId, t.createdAt),
+}));
 
 // ============================================
 // 6. Follow-ups (المتابعات)
@@ -327,7 +349,15 @@ export const followUps = pgTable("follow_ups", {
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  leadIdx: index("followups_lead_idx").on(t.leadId),
+  tenantUserScheduledIdx: index("followups_tenant_user_scheduled_idx")
+    .on(t.tenantId, t.userId, t.scheduledAt)
+    .where(sql`${t.completedAt} IS NULL`),
+  tenantScheduledIdx: index("followups_tenant_scheduled_idx")
+    .on(t.tenantId, t.scheduledAt)
+    .where(sql`${t.completedAt} IS NULL`),
+}));
 
 // ============================================
 // 7. WhatsApp Config (إعدادات واتساب)
@@ -360,13 +390,19 @@ export const whatsappConfigs = pgTable("whatsapp_configs", {
 export const webhookEndpoints = pgTable("webhook_endpoints", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  secretKey: varchar("secret_key", { length: 64 }).notNull(),
+  // secretKey مهجور — يبقى لدعم البيانات القديمة حتى rotation كامل
+  secretKey: varchar("secret_key", { length: 64 }),
+  // النهج الجديد: hash + prefix (أول 12 حرفاً للبحث السريع)
+  secretHash: text("secret_hash"),
+  secretPrefix: varchar("secret_prefix", { length: 12 }),
   label: varchar("label", { length: 255 }).default("Google Sheets"),
   isActive: boolean("is_active").default(true).notNull(),
   sendWelcome: boolean("send_welcome").default(true).notNull(),
   lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  prefixIdx: index("webhook_endpoints_prefix_idx").on(t.secretPrefix),
+}));
 
 // ============================================
 // 9. Tags (التصنيفات)
@@ -378,7 +414,9 @@ export const tags = pgTable("tags", {
   name: varchar("name", { length: 100 }).notNull(),
   color: varchar("color", { length: 20 }).notNull().default("#6B7280"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  tenantNameUnique: uniqueIndex("tags_tenant_name_unique").on(t.tenantId, t.name),
+}));
 
 // ============================================
 // 10. Tag Assignments (ربط التصنيفات)
@@ -388,7 +426,9 @@ export const tagAssignments = pgTable("tag_assignments", {
   id: uuid("id").primaryKey().defaultRandom(),
   leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
   tagId: uuid("tag_id").notNull().references(() => tags.id, { onDelete: "cascade" }),
-});
+}, (t) => ({
+  leadTagUnique: uniqueIndex("tag_assignments_lead_tag_unique").on(t.leadId, t.tagId),
+}));
 
 // ============================================
 // 11. Activity Log (سجل النشاطات)
@@ -403,7 +443,33 @@ export const activityLog = pgTable("activity_log", {
   entityId: uuid("entity_id"),
   details: jsonb("details").default({}).$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  tenantCreatedIdx: index("activity_log_tenant_created_idx").on(t.tenantId, t.createdAt),
+  tenantEntityIdx: index("activity_log_tenant_entity_idx").on(t.tenantId, t.entityType, t.entityId),
+}));
+
+// ============================================
+// 13. Error Log (سجل أخطاء السيرفر — بديل Sentry)
+// ============================================
+
+export const errorLog = pgTable("error_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // tenantId اختياري — أخطاء cron/webhook قد تكون قبل حل tenant
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  level: varchar("level", { length: 10 }).notNull(), // "error" | "warn"
+  message: text("message").notNull(),
+  errorName: varchar("error_name", { length: 100 }),
+  errorStack: text("error_stack"),
+  context: jsonb("context").default({}).$type<Record<string, unknown>>(),
+  url: text("url"),
+  // "fingerprint" للتجميع: hash من message+name — يساعد في العد والفرز
+  fingerprint: varchar("fingerprint", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  tenantCreatedIdx: index("error_log_tenant_created_idx").on(t.tenantId, t.createdAt),
+  fingerprintIdx: index("error_log_fingerprint_idx").on(t.fingerprint, t.createdAt),
+}));
 
 // ============================================
 // 12. Notifications (الإشعارات)
@@ -418,7 +484,23 @@ export const notifications = pgTable("notifications", {
   message: text("message"),
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  userUnreadIdx: index("notifications_user_unread_idx")
+    .on(t.userId, t.createdAt)
+    .where(sql`${t.readAt} IS NULL`),
+}));
+
+// ============================================
+// 14. Rate Limits — Postgres-backed (صفر dependencies)
+// ============================================
+
+export const rateLimits = pgTable("rate_limits", {
+  key: varchar("key", { length: 200 }).primaryKey(),
+  count: integer("count").notNull().default(0),
+  resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+}, (t) => ({
+  resetIdx: index("rate_limits_reset_idx").on(t.resetAt),
+}));
 
 // ============================================
 // Relations

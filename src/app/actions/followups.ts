@@ -5,32 +5,53 @@ import { followUps, activityLog, leads } from "@/db/schema";
 import { eq, ne, and, lte, isNull, isNotNull, sql, count, desc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
+import { assertLeadInTenant, assertRole, ROLE } from "@/lib/tenant-guards";
+import {
+  quickScheduleFollowUpSchema,
+  updateFollowUpScheduleSchema,
+} from "@/lib/schemas";
 
 const getContext = requireTenant;
 
+// ownership helper: COORDINATOR/PROVIDER يتحكمون بـ follow-ups الخاصة بهم فقط
+async function fetchFollowUpOrThrow(
+  followUpId: string,
+  tenantId: string,
+  userId: string,
+  role: string,
+) {
+  const [fu] = await db
+    .select({
+      id: followUps.id,
+      leadId: followUps.leadId,
+      ownerId: followUps.userId,
+      notes: followUps.notes,
+      type: followUps.type,
+      scheduledAt: followUps.scheduledAt,
+    })
+    .from(followUps)
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)))
+    .limit(1);
+  if (!fu) throw new Error("التذكير غير موجود");
+  if (role === "COORDINATOR" && fu.ownerId !== userId) {
+    throw new Error("ليس لديك صلاحية على هذا التذكير");
+  }
+  return fu;
+}
+
 // تعليم متابعة كمكتملة
 export async function completeFollowUp(followUpId: string) {
-  const { userId, tenantId } = await getContext();
+  const { userId, tenantId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const existing = await fetchFollowUpOrThrow(followUpId, tenantId, userId, role);
 
-  // جلب المتابعة أولاً لمعرفة الـ leadId
-  const [existing] = await db
-    .select({ leadId: followUps.leadId, type: followUps.type })
-    .from(followUps)
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
 
-  await db
-    .update(followUps)
-    .set({ completedAt: new Date() })
-    .where(
-      and(
-        eq(followUps.id, followUpId),
-        eq(followUps.tenantId, tenantId)
-      )
-    );
-
-  // Fix #9: تسجيل في سجل النشاط
-  if (existing) {
-    await db.insert(activityLog).values({
+    await tx.insert(activityLog).values({
       tenantId,
       userId,
       action: "FOLLOW_UP_CREATED",
@@ -38,21 +59,20 @@ export async function completeFollowUp(followUpId: string) {
       entityId: followUpId,
       details: { action: "completed", leadId: existing.leadId, type: existing.type },
     });
-  }
+  });
 
   revalidatePath("/");
 }
 
 // تأجيل متابعة (تغيير scheduledAt)
 export async function snoozeFollowUp(followUpId: string, days: number) {
-  const { tenantId } = await getContext();
-
-  const [existing] = await db
-    .select({ scheduledAt: followUps.scheduledAt })
-    .from(followUps)
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
-
-  if (!existing?.scheduledAt) return;
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    throw new Error("عدد الأيام غير صالح");
+  }
+  const existing = await fetchFollowUpOrThrow(followUpId, tenantId, userId, role);
+  if (!existing.scheduledAt) return;
 
   const newDate = new Date(existing.scheduledAt);
   newDate.setDate(newDate.getDate() + days);
@@ -60,12 +80,7 @@ export async function snoozeFollowUp(followUpId: string, days: number) {
   await db
     .update(followUps)
     .set({ scheduledAt: newDate })
-    .where(
-      and(
-        eq(followUps.id, followUpId),
-        eq(followUps.tenantId, tenantId)
-      )
-    );
+    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
 
   revalidatePath("/");
 }
@@ -76,88 +91,89 @@ export async function updateFollowUpSchedule(
   scheduledAtISO: string,
   input: { notes?: string; type?: "CALL" | "WHATSAPP" | "MESSAGE" } = {},
 ) {
-  const { tenantId } = await getContext();
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
-  const newDate = new Date(scheduledAtISO);
-  if (isNaN(newDate.getTime())) {
-    throw new Error("تاريخ/وقت غير صالح");
-  }
+  const parsed = updateFollowUpScheduleSchema.parse({
+    followUpId,
+    scheduledAtISO,
+    notes: input.notes,
+    type: input.type,
+  });
 
-  const [target] = await db
-    .select({ leadId: followUps.leadId })
-    .from(followUps)
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+  const target = await fetchFollowUpOrThrow(followUpId, tenantId, userId, role);
+  const newDate = new Date(parsed.scheduledAtISO);
 
-  if (!target) throw new Error("التذكير غير موجود");
+  await db.transaction(async (tx) => {
+    // إلغاء أي تذكير آخر معلّق لنفس العميل (خاصّ بنفس user فقط — لا تلمس عمل الآخرين)
+    const otherConditions = [
+      eq(followUps.tenantId, tenantId),
+      eq(followUps.leadId, target.leadId),
+      isNull(followUps.completedAt),
+      isNotNull(followUps.scheduledAt),
+      ne(followUps.id, followUpId),
+    ];
+    if (role === "COORDINATOR") {
+      otherConditions.push(eq(followUps.userId, userId));
+    }
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(and(...otherConditions));
 
-  // إلغاء أي تذكير آخر معلّق لنفس العميل (ضمان: تذكير واحد نشط)
-  await db
-    .update(followUps)
-    .set({ completedAt: new Date() })
-    .where(
-      and(
-        eq(followUps.tenantId, tenantId),
-        eq(followUps.leadId, target.leadId),
-        isNull(followUps.completedAt),
-        isNotNull(followUps.scheduledAt),
-        ne(followUps.id, followUpId),
-      )
-    );
+    const patch: Partial<typeof followUps.$inferInsert> = {
+      scheduledAt: newDate,
+      completedAt: null,
+    };
+    if (parsed.type) patch.type = parsed.type;
+    if (parsed.notes !== undefined) patch.notes = parsed.notes;
 
-  const patch: Partial<typeof followUps.$inferInsert> = {
-    scheduledAt: newDate,
-    completedAt: null,
-  };
-  if (input.type) patch.type = input.type;
-  if (input.notes !== undefined) patch.notes = input.notes;
-
-  await db
-    .update(followUps)
-    .set(patch)
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+    await tx
+      .update(followUps)
+      .set(patch)
+      .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+  });
 
   revalidatePath("/");
   revalidatePath("/leads");
   return { scheduledAt: newDate };
 }
 
-// إلغاء تذكير + أي تذكيرات معلّقة أخرى للعميل
+// إلغاء تذكير + أي تذكيرات معلّقة أخرى للعميل (من نفس user فقط)
 export async function cancelFollowUp(followUpId: string) {
-  const { tenantId, userId } = await getContext();
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const existing = await fetchFollowUpOrThrow(followUpId, tenantId, userId, role);
 
-  const [existing] = await db
-    .select({ notes: followUps.notes, leadId: followUps.leadId })
-    .from(followUps)
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
+  await db.transaction(async (tx) => {
+    const pendingConditions = [
+      eq(followUps.tenantId, tenantId),
+      eq(followUps.leadId, existing.leadId),
+      isNull(followUps.completedAt),
+      isNotNull(followUps.scheduledAt),
+    ];
+    // COORDINATOR يُلغي فقط خاصّه — لا يمسح عمل زميل
+    if (role === "COORDINATOR") {
+      pendingConditions.push(eq(followUps.userId, userId));
+    }
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(and(...pendingConditions));
 
-  if (!existing) return;
+    await tx
+      .update(followUps)
+      .set({ notes: `(ملغى) ${existing.notes ?? ""}`.trim() })
+      .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
 
-  // إلغاء كل تذكير معلّق لهذا العميل (ليختفي البادج تماماً)
-  await db
-    .update(followUps)
-    .set({ completedAt: new Date() })
-    .where(
-      and(
-        eq(followUps.tenantId, tenantId),
-        eq(followUps.leadId, existing.leadId),
-        isNull(followUps.completedAt),
-        isNotNull(followUps.scheduledAt),
-      )
-    );
-
-  // تمييز التذكير المستهدف بأنه ملغى صراحةً في الملاحظات
-  await db
-    .update(followUps)
-    .set({ notes: `(ملغى) ${existing.notes ?? ""}`.trim() })
-    .where(and(eq(followUps.id, followUpId), eq(followUps.tenantId, tenantId)));
-
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "FOLLOW_UP_CREATED",
-    entityType: "follow_up",
-    entityId: followUpId,
-    details: { action: "cancelled", leadId: existing.leadId },
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "FOLLOW_UP_CREATED",
+      entityType: "follow_up",
+      entityId: followUpId,
+      details: { action: "cancelled", leadId: existing.leadId },
+    });
   });
 
   revalidatePath("/");
@@ -166,7 +182,12 @@ export async function cancelFollowUp(followUpId: string) {
 
 // تأجيل بالدقائق — من داخل إشعار الاستحقاق
 export async function snoozeFollowUpMinutes(followUpId: string, minutes: number) {
-  const { tenantId } = await getContext();
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    throw new Error("عدد الدقائق غير صالح (1-1440)");
+  }
+  await fetchFollowUpOrThrow(followUpId, tenantId, userId, role);
 
   const newDate = new Date();
   newDate.setMinutes(newDate.getMinutes() + minutes);
@@ -227,19 +248,13 @@ export async function getJustDueFollowUps(sinceISO: string) {
 // متابعة سريعة بنقرة واحدة
 // =============================================
 
-export async function quickScheduleFollowUp(input: {
-  leadId: string;
-  scheduledAt: string; // ISO datetime
-  notes?: string;
-  type?: "CALL" | "WHATSAPP" | "MESSAGE";
-}) {
-  const { tenantId, userId } = await getContext();
+export async function quickScheduleFollowUp(raw: unknown) {
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = quickScheduleFollowUpSchema.parse(raw);
+  await assertLeadInTenant(input.leadId, tenantId);
 
   const scheduledAt = new Date(input.scheduledAt);
-  if (isNaN(scheduledAt.getTime())) {
-    throw new Error("تاريخ/وقت غير صالح");
-  }
-
   const diffMs = scheduledAt.getTime() - Date.now();
   const diffHours = Math.round(diffMs / (1000 * 60 * 60));
   const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
@@ -252,48 +267,52 @@ export async function quickScheduleFollowUp(input: {
       ? "تذكير — العميل طلب التواصل غداً"
       : `تذكير — متابعة بعد ${diffDays} أيام`;
 
-  // إلغاء أي موعد معلّق سابق لنفس العميل (موعد واحد نشط فقط)
-  await db
-    .update(followUps)
-    .set({ completedAt: new Date() })
-    .where(
-      and(
-        eq(followUps.tenantId, tenantId),
-        eq(followUps.leadId, input.leadId),
-        isNull(followUps.completedAt),
-        isNotNull(followUps.scheduledAt),
-      )
-    );
+  return await db.transaction(async (tx) => {
+    // إلغاء أي موعد معلّق سابق — خاصّ بنفس user لـ COORDINATOR
+    const cancelConditions = [
+      eq(followUps.tenantId, tenantId),
+      eq(followUps.leadId, input.leadId),
+      isNull(followUps.completedAt),
+      isNotNull(followUps.scheduledAt),
+    ];
+    if (role === "COORDINATOR") {
+      cancelConditions.push(eq(followUps.userId, userId));
+    }
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(and(...cancelConditions));
 
-  const [followUp] = await db
-    .insert(followUps)
-    .values({
+    const [followUp] = await tx
+      .insert(followUps)
+      .values({
+        tenantId,
+        leadId: input.leadId,
+        userId,
+        type: input.type || "CALL",
+        notes: input.notes || defaultNotes,
+        scheduledAt,
+      })
+      .returning({ id: followUps.id });
+
+    await tx.insert(activityLog).values({
       tenantId,
-      leadId: input.leadId,
       userId,
-      type: input.type || "CALL",
-      notes: input.notes || defaultNotes,
-      scheduledAt,
-    })
-    .returning({ id: followUps.id });
+      action: "FOLLOW_UP_CREATED",
+      entityType: "follow_up",
+      entityId: followUp.id,
+      details: {
+        leadId: input.leadId,
+        type: input.type || "CALL",
+        quick: true,
+        scheduledFor: scheduledAt.toISOString(),
+      },
+    });
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "FOLLOW_UP_CREATED",
-    entityType: "follow_up",
-    entityId: followUp.id,
-    details: {
-      leadId: input.leadId,
-      type: input.type || "CALL",
-      quick: true,
-      scheduledFor: scheduledAt.toISOString(),
-    },
+    revalidatePath("/");
+    revalidatePath("/leads");
+    return { success: true, scheduledAt, followUpId: followUp.id };
   });
-
-  revalidatePath("/");
-  revalidatePath("/leads");
-  return { success: true, scheduledAt, followUpId: followUp.id };
 }
 
 // =============================================
@@ -301,64 +320,73 @@ export async function quickScheduleFollowUp(input: {
 // =============================================
 
 export async function quickNoResponse(leadId: string, retryAfterDays: number = 1) {
-  const { tenantId, userId } = await getContext();
+  const { tenantId, userId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  if (!Number.isInteger(retryAfterDays) || retryAfterDays < 1 || retryAfterDays > 30) {
+    throw new Error("عدد أيام الإعادة غير صالح");
+  }
+  await assertLeadInTenant(leadId, tenantId);
 
-  // 1. سجّل المحاولة الحالية كمكتملة
-  await db.insert(followUps).values({
-    tenantId,
-    leadId,
-    userId,
-    type: "CALL",
-    notes: "📵 لم يرد",
-    completedAt: new Date(),
-  });
-
-  // 2. إلغاء أي موعد معلّق سابق لنفس العميل (موعد واحد نشط فقط)
-  await db
-    .update(followUps)
-    .set({ completedAt: new Date() })
-    .where(
-      and(
-        eq(followUps.tenantId, tenantId),
-        eq(followUps.leadId, leadId),
-        isNull(followUps.completedAt),
-        isNotNull(followUps.scheduledAt),
-      )
-    );
-
-  // 3. أنشئ متابعة مجدولة جديدة للإعادة
   const retryDate = new Date();
   retryDate.setDate(retryDate.getDate() + retryAfterDays);
   retryDate.setHours(10, 0, 0, 0);
 
-  const [retry] = await db
-    .insert(followUps)
-    .values({
+  return await db.transaction(async (tx) => {
+    // 1. سجّل المحاولة الحالية كمكتملة
+    await tx.insert(followUps).values({
       tenantId,
       leadId,
       userId,
       type: "CALL",
-      notes: `📞 إعادة محاولة — لم يرد المرة السابقة`,
-      scheduledAt: retryDate,
-    })
-    .returning({ id: followUps.id });
+      notes: "📵 لم يرد",
+      completedAt: new Date(),
+    });
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "FOLLOW_UP_CREATED",
-    entityType: "follow_up",
-    entityId: retry.id,
-    details: {
-      leadId,
-      action: "no_response_auto_retry",
-      retryDate: retryDate.toISOString(),
-    },
+    // 2. إلغاء أي موعد معلّق — خاصّ نفس user لـ COORDINATOR
+    const cancelConditions = [
+      eq(followUps.tenantId, tenantId),
+      eq(followUps.leadId, leadId),
+      isNull(followUps.completedAt),
+      isNotNull(followUps.scheduledAt),
+    ];
+    if (role === "COORDINATOR") {
+      cancelConditions.push(eq(followUps.userId, userId));
+    }
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(and(...cancelConditions));
+
+    // 3. أنشئ متابعة مجدولة جديدة للإعادة
+    const [retry] = await tx
+      .insert(followUps)
+      .values({
+        tenantId,
+        leadId,
+        userId,
+        type: "CALL",
+        notes: `📞 إعادة محاولة — لم يرد المرة السابقة`,
+        scheduledAt: retryDate,
+      })
+      .returning({ id: followUps.id });
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "FOLLOW_UP_CREATED",
+      entityType: "follow_up",
+      entityId: retry.id,
+      details: {
+        leadId,
+        action: "no_response_auto_retry",
+        retryDate: retryDate.toISOString(),
+      },
+    });
+
+    revalidatePath("/");
+    revalidatePath("/leads");
+    return { success: true, retryDate };
   });
-
-  revalidatePath("/");
-  revalidatePath("/leads");
-  return { success: true, retryDate };
 }
 
 // =============================================

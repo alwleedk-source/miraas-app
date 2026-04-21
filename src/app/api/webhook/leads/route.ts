@@ -1,55 +1,82 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { sendWelcomeMessage } from "@/lib/whatsapp";
 import { validateAndNormalizePhone } from "@/lib/utils";
+import { webhookEntrySchema } from "@/lib/schemas";
+import { logger } from "@/lib/logger";
+import { verifySecret, secretPrefix } from "@/lib/secret-hash";
+import { rateLimit } from "@/lib/rate-limit";
 
-// =============================================
-// Rate Limiting
-// =============================================
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = 60;
-const RATE_WINDOW = 60_000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT) return false;
-  entry.count++;
-  return true;
-}
-
+const RATE_LIMIT = 60; // 60 request/minute per webhook
+const RATE_WINDOW_MS = 60_000;
 const MAX_ENTRIES = 100;
+const MAX_BODY_BYTES = 200_000; // 200KB — أي payload أكبر = غير مشروع
 
 /**
  * POST /api/webhook/leads
  */
 export async function POST(request: NextRequest) {
   try {
-    const ip = request.headers.get("x-forwarded-for") || "unknown";
-    if (!checkRateLimit(ip)) {
-      return NextResponse.json({ error: "تم تجاوز الحد المسموح" }, { status: 429 });
+    // 1. حد حجم الـ body
+    const contentLength = parseInt(request.headers.get("content-length") ?? "0", 10);
+    if (contentLength > MAX_BODY_BYTES) {
+      return NextResponse.json({ error: "payload too large" }, { status: 413 });
     }
 
+    // 2. validate secret — hash-based + legacy plaintext fallback
     const secret = request.headers.get("x-webhook-secret");
-    if (!secret) {
+    if (!secret || secret.length < 16) {
       return NextResponse.json({ error: "مفتاح الويب هوك مطلوب" }, { status: 401 });
     }
 
-    const [webhook] = await db
+    const prefix = secretPrefix(secret);
+    const candidates = await db
       .select()
       .from(webhookEndpoints)
-      .where(and(eq(webhookEndpoints.secretKey, secret), eq(webhookEndpoints.isActive, true)))
-      .limit(1);
+      .where(eq(webhookEndpoints.isActive, true));
+
+    // نرشّح أولاً بالـ prefix لتقليل scrypt compares
+    const prefixMatches = candidates.filter((c) => {
+      if (c.secretPrefix) return c.secretPrefix === prefix;
+      // legacy rows بدون prefix — نجرب plaintext match كـ fallback
+      return !!c.secretKey;
+    });
+
+    let webhook: (typeof candidates)[number] | undefined;
+    for (const c of prefixMatches) {
+      if (c.secretHash) {
+        if (await verifySecret(secret, c.secretHash)) {
+          webhook = c;
+          break;
+        }
+      } else if (c.secretKey && c.secretKey === secret) {
+        // legacy plaintext — نقبله مؤقتاً + نرقّيه إلى hash
+        webhook = c;
+        break;
+      }
+    }
 
     if (!webhook) {
       return NextResponse.json({ error: "مفتاح ويب هوك غير صالح" }, { status: 403 });
+    }
+
+    // 3. rate limit على الـ webhook ID — Postgres-backed (يعمل عبر replicas)
+    const rl = await rateLimit(`webhook:${webhook.id}`, RATE_LIMIT, RATE_WINDOW_MS);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "تم تجاوز الحد المسموح" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.ceil((rl.resetAt.getTime() - Date.now()) / 1000)),
+          },
+        },
+      );
     }
 
     await db
@@ -57,155 +84,210 @@ export async function POST(request: NextRequest) {
       .set({ lastReceivedAt: new Date() })
       .where(eq(webhookEndpoints.id, webhook.id));
 
+    // 4. parse body
     const body = await request.json();
-    const entries = Array.isArray(body) ? body : [body];
+    const rawEntries = Array.isArray(body) ? body : [body];
 
-    if (entries.length === 0) {
+    if (rawEntries.length === 0) {
       return NextResponse.json({ error: "لا توجد بيانات" }, { status: 400 });
     }
-    if (entries.length > MAX_ENTRIES) {
-      return NextResponse.json({ error: `الحد الأقصى ${MAX_ENTRIES} عميل` }, { status: 400 });
+    if (rawEntries.length > MAX_ENTRIES) {
+      return NextResponse.json(
+        { error: `الحد الأقصى ${MAX_ENTRIES} عميل` },
+        { status: 400 },
+      );
     }
 
-    // المرحلة الافتراضية
-    const [defaultStage] = await db
-      .select({ id: pipelineStages.id })
-      .from(pipelineStages)
-      .where(and(eq(pipelineStages.tenantId, webhook.tenantId), eq(pipelineStages.isDefault, true)))
-      .limit(1);
-
-    // كاش الحملات (Fix #1: كل عميل يأخذ حملته)
-    const sourceCache = new Map<string, string>();
-
-    async function getOrCreateSource(campaignName: string): Promise<string> {
-      const cached = sourceCache.get(campaignName);
-      if (cached) return cached;
-
-      const [existing] = await db
-        .select({ id: leadSources.id })
-        .from(leadSources)
-        .where(and(eq(leadSources.tenantId, webhook.tenantId), eq(leadSources.name, campaignName)))
-        .limit(1);
-
-      if (existing) {
-        sourceCache.set(campaignName, existing.id);
-        return existing.id;
-      }
-
-      const [newSource] = await db
-        .insert(leadSources)
-        .values({ tenantId: webhook.tenantId, name: campaignName, platform: "Google Sheets" })
-        .returning();
-
-      sourceCache.set(campaignName, newSource.id);
-      return newSource.id;
-    }
-
-    // إدخال العملاء
-    let created = 0;
-    let skippedDuplicate = 0;
-    let skippedDeleted = 0;
-    let invalidPhones = 0;
-    const createdLeads: { id: string; name: string }[] = [];
-
-    // 🧠 Smart Welcome Detection:
-    // - عميل واحد = فورم حقيقي (onFormSubmit) → ترحيب ✅
-    // - عدة عملاء = دفع جماعي (bulk sync) → بدون ترحيب ❌
-    const isSingleRealTimeLead = entries.length === 1;
-    const shouldSendWelcome = webhook.sendWelcome && isSingleRealTimeLead;
-
-    for (const entry of entries) {
-      if (!entry.name) continue;
-
-      // 📱 التحقق من الرقم — يجب أن يكون موجوداً وصالحاً
-      if (!entry.phone) continue; // ❌ لا نسحب بدون رقم
-
-      const rawPhone = entry.phone.toString().trim();
-      if (!rawPhone || rawPhone === "0" || rawPhone.length < 4) continue; // ❌ رقم غير حقيقي
-
-      const phoneResult = validateAndNormalizePhone(rawPhone);
-      let phone: string;
-
-      if (phoneResult.valid && phoneResult.phone) {
-        // ✅ رقم صالح بصيغة E.164 (مع مفتاح دولي)
-        phone = phoneResult.phone;
+    // 5. Zod validation — كل entry يجب أن يمر
+    const validated: { name: string; phone: string; email?: string | null; campaign?: string }[] = [];
+    let rejectedCount = 0;
+    for (const raw of rawEntries) {
+      const parsed = webhookEntrySchema.safeParse(raw);
+      if (parsed.success) {
+        validated.push(parsed.data);
       } else {
-        // ⚠️ رقم غير مؤكد — نحفظه منظّفاً ليعدّله المستخدم يدوياً
-        const cleaned = rawPhone
-          .replace(/[٠-٩]/g, (d: string) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
-          .replace(/[۰-۹]/g, (d: string) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
-          .replace(/[^\d+]/g, "");
-        if (!cleaned || cleaned.length < 4) continue; // ❌ رقم غير حقيقي
-        phone = cleaned;
-        invalidPhones++;
-      }
-
-      // فحص التكرار بالرقم
-      const [existing] = await db
-        .select({ id: leads.id, isDeleted: leads.isDeleted })
-        .from(leads)
-        .where(and(eq(leads.tenantId, webhook.tenantId), eq(leads.phone, phone)))
-        .limit(1);
-
-      if (existing && !existing.isDeleted) { skippedDuplicate++; continue; }
-      if (existing && existing.isDeleted) { skippedDeleted++; continue; }
-
-      // Fix #1: حملة لكل عميل
-      let sourceId: string | null = null;
-      const campaignName = entry.campaign?.toString().trim();
-      if (campaignName) {
-        sourceId = await getOrCreateSource(campaignName);
-      }
-
-      // تاريخ الانضمام — إذا أرسل الشيت تاريخاً أصلياً نستخدمه
-      const joinedAt = entry.joinedAt ? new Date(entry.joinedAt) : new Date();
-      const isValidDate = !isNaN(joinedAt.getTime());
-
-      const [lead] = await db
-        .insert(leads)
-        .values({
-          tenantId: webhook.tenantId,
-          name: entry.name,
-          phone: phone,
-          email: entry.email || null,
-          priority: "MEDIUM",
-          stageId: defaultStage?.id || null,
-          sourceId,
-          createdAt: isValidDate ? joinedAt : new Date(),
-        })
-        .returning({ id: leads.id, name: leads.name });
-
-      // تسجيل النشاط
-      await db.insert(activityLog).values({
-        tenantId: webhook.tenantId,
-        action: "WEBHOOK_RECEIVED",
-        entityType: "lead",
-        entityId: lead.id,
-        details: { source: "Google Sheets", leadName: entry.name, campaign: campaignName || null },
-      });
-
-      created++;
-      createdLeads.push({ id: lead.id, name: lead.name });
-
-      // إرسال ترحيب فقط للعملاء الجدد من فورم حقيقي
-      if (shouldSendWelcome && phone) {
-        sendWelcomeMessage(webhook.tenantId, phone, entry.name, lead.id).catch(() => {});
+        rejectedCount++;
       }
     }
 
-    // Fix #8: استجابة مفصّلة
+    if (validated.length === 0) {
+      return NextResponse.json(
+        { error: "كل الإدخالات غير صالحة", rejected: rejectedCount },
+        { status: 400 },
+      );
+    }
+
+    // 6. normalize phones + فلتر الأرقام غير الصالحة
+    const normalized = validated
+      .map((e) => {
+        const r = validateAndNormalizePhone(e.phone);
+        return {
+          name: e.name,
+          email: e.email ?? null,
+          campaign: e.campaign?.trim() || null,
+          phone: r.valid && r.phone ? r.phone : null,
+        };
+      })
+      .filter((e) => !!e.phone) as {
+      name: string;
+      email: string | null;
+      campaign: string | null;
+      phone: string;
+    }[];
+
+    const invalidPhones = validated.length - normalized.length;
+    if (normalized.length === 0) {
+      return NextResponse.json({
+        success: true,
+        created: 0,
+        invalidPhones,
+        rejected: rejectedCount,
+        message: "لا أرقام صالحة للإدخال",
+      });
+    }
+
+    // 7. جميع الاستعلامات والكتابات في transaction واحد
+    const result = await db.transaction(async (tx) => {
+      // المرحلة الافتراضية
+      const [defaultStage] = await tx
+        .select({ id: pipelineStages.id })
+        .from(pipelineStages)
+        .where(
+          and(
+            eq(pipelineStages.tenantId, webhook.tenantId),
+            eq(pipelineStages.isDefault, true),
+          ),
+        )
+        .limit(1);
+
+      // حل أسماء الحملات الفريدة إلى source IDs دفعة واحدة
+      const uniqueCampaigns = [
+        ...new Set(normalized.map((e) => e.campaign).filter((c): c is string => !!c)),
+      ];
+      const campaignToSourceId = new Map<string, string>();
+      if (uniqueCampaigns.length > 0) {
+        const existingSources = await tx
+          .select({ id: leadSources.id, name: leadSources.name })
+          .from(leadSources)
+          .where(
+            and(
+              eq(leadSources.tenantId, webhook.tenantId),
+              inArray(leadSources.name, uniqueCampaigns),
+            ),
+          );
+        for (const s of existingSources) {
+          campaignToSourceId.set(s.name, s.id);
+        }
+        const toCreate = uniqueCampaigns.filter((c) => !campaignToSourceId.has(c));
+        if (toCreate.length > 0) {
+          const created = await tx
+            .insert(leadSources)
+            .values(
+              toCreate.map((name) => ({
+                tenantId: webhook.tenantId,
+                name,
+                platform: "Google Sheets",
+              })),
+            )
+            .returning({ id: leadSources.id, name: leadSources.name });
+          for (const c of created) {
+            campaignToSourceId.set(c.name, c.id);
+          }
+        }
+      }
+
+      // فحص المكررات دفعة واحدة
+      const phones = normalized.map((e) => e.phone);
+      const existing = await tx
+        .select({ phone: leads.phone, isDeleted: leads.isDeleted })
+        .from(leads)
+        .where(and(eq(leads.tenantId, webhook.tenantId), inArray(leads.phone, phones)));
+      const activeSet = new Set(
+        existing.filter((e) => !e.isDeleted).map((e) => e.phone!),
+      );
+      const deletedSet = new Set(
+        existing.filter((e) => e.isDeleted).map((e) => e.phone!),
+      );
+
+      // تصفية: جديد فقط
+      const toInsert = normalized.filter(
+        (e) => !activeSet.has(e.phone) && !deletedSet.has(e.phone),
+      );
+
+      const createdLeads: { id: string; name: string; phone: string }[] = [];
+      if (toInsert.length > 0) {
+        const inserted = await tx
+          .insert(leads)
+          .values(
+            toInsert.map((e) => ({
+              tenantId: webhook.tenantId,
+              name: e.name,
+              phone: e.phone,
+              email: e.email,
+              priority: "MEDIUM" as const,
+              stageId: defaultStage?.id ?? null,
+              sourceId: e.campaign ? campaignToSourceId.get(e.campaign) ?? null : null,
+            })),
+          )
+          .returning({ id: leads.id, name: leads.name, phone: leads.phone });
+
+        for (const l of inserted) {
+          if (l.phone) createdLeads.push({ id: l.id, name: l.name, phone: l.phone });
+        }
+
+        // activity log مجمّع (إدخال واحد)
+        await tx.insert(activityLog).values({
+          tenantId: webhook.tenantId,
+          action: "WEBHOOK_RECEIVED",
+          entityType: "lead",
+          details: {
+            source: "webhook",
+            webhookId: webhook.id,
+            created: createdLeads.length,
+            skippedDuplicate: activeSet.size,
+            skippedDeleted: deletedSet.size,
+            invalidPhones,
+            rejected: rejectedCount,
+          },
+        });
+      }
+
+      return {
+        createdLeads,
+        skippedDuplicate: activeSet.size,
+        skippedDeleted: deletedSet.size,
+      };
+    });
+
+    // 8. ترحيب تلقائي — فقط لدفعة من عميل واحد حقيقي
+    const isSingleRealTime = rawEntries.length === 1 && result.createdLeads.length === 1;
+    const shouldSendWelcome = webhook.sendWelcome && isSingleRealTime;
+    if (shouldSendWelcome && result.createdLeads[0]) {
+      const l = result.createdLeads[0];
+      sendWelcomeMessage(webhook.tenantId, l.phone, l.name, l.id).catch((err) => {
+        logger.error("welcome message failed", err, {
+          leadId: l.id,
+          tenantId: webhook.tenantId,
+        });
+      });
+    }
+
     return NextResponse.json({
       success: true,
-      message: `تم إضافة ${created} عميل` + (invalidPhones > 0 ? ` (${invalidPhones} رقم غير صالح)` : ""),
-      created,
-      skippedDuplicate,
-      skippedDeleted,
+      message: `تم إضافة ${result.createdLeads.length} عميل`,
+      created: result.createdLeads.length,
+      skippedDuplicate: result.skippedDuplicate,
+      skippedDeleted: result.skippedDeleted,
       invalidPhones,
-      total: entries.length,
-      leads: createdLeads,
+      rejected: rejectedCount,
+      total: rawEntries.length,
+      leads: result.createdLeads.map((l) => ({ id: l.id, name: l.name })),
     });
   } catch (error) {
-    console.error("Webhook error:", error);
-    return NextResponse.json({ error: "حدث خطأ في معالجة الويب هوك" }, { status: 500 });
+    logger.error("webhook processing failed", error);
+    return NextResponse.json(
+      { error: "حدث خطأ في معالجة الويب هوك" },
+      { status: 500 },
+    );
   }
 }

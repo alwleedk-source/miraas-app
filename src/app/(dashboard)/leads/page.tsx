@@ -12,6 +12,9 @@ export default async function LeadsPage() {
   if (!tenantId) {
     redirect("/register");
   }
+  if (userRole === "PROVIDER") {
+    redirect("/provider");
+  }
 
   // جلب العملاء
   // المنسق: يرى كل العملاء ما عدا المعيّنين لغيره في مراحل حصرية

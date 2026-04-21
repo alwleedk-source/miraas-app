@@ -7,15 +7,23 @@ import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { encrypt } from "@/lib/encryption";
+import { hashSecret, secretPrefix } from "@/lib/secret-hash";
 
-const getOwnerTenant = requireTenant;
+async function requireOwnerOrAdmin() {
+  const ctx = await requireTenant();
+  if (!["OWNER", "ADMIN"].includes(ctx.role)) {
+    throw new Error("ليس لديك صلاحية لهذا الإجراء");
+  }
+  return ctx;
+}
 
 // =============================================
 // جلب إعدادات الشركة
 // =============================================
 
 export async function getTenantSettings() {
-  const { tenantId } = await getOwnerTenant();
+  // قراءة اسم الشركة مسموحة لكل المستخدمين المصادَقين (تظهر في الـ UI)
+  const { tenantId } = await requireTenant();
 
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.id, tenantId),
@@ -32,7 +40,7 @@ export async function updateTenantSettings(input: {
   name?: string;
   settings?: Record<string, string>;
 }) {
-  const { tenantId, userId } = await getOwnerTenant();
+  const { tenantId, userId } = await requireOwnerOrAdmin();
 
   await db
     .update(tenants)
@@ -60,15 +68,20 @@ export async function updateTenantSettings(input: {
 // =============================================
 
 export async function createWebhookKey(label?: string) {
-  const { tenantId, userId } = await getOwnerTenant();
+  const { tenantId, userId } = await requireOwnerOrAdmin();
 
+  // نولّد السر plaintext (يُعاد للمستخدم مرة واحدة فقط)
   const secretKey = randomBytes(32).toString("hex");
+  const secretHash = await hashSecret(secretKey);
+  const prefix = secretPrefix(secretKey);
 
   const [webhook] = await db
     .insert(webhookEndpoints)
     .values({
       tenantId,
-      secretKey,
+      // لا نحفظ plaintext — فقط hash + prefix
+      secretHash,
+      secretPrefix: prefix,
       label: label || "Google Sheets",
       isActive: true,
     })
@@ -92,7 +105,7 @@ export async function createWebhookKey(label?: string) {
 // =============================================
 
 export async function getWebhookKeys() {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   return db
     .select()
@@ -105,7 +118,7 @@ export async function getWebhookKeys() {
 // =============================================
 
 export async function toggleWebhook(webhookId: string) {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   const [webhook] = await db
     .select({ isActive: webhookEndpoints.isActive })
@@ -131,7 +144,7 @@ export async function toggleWebhook(webhookId: string) {
 // =============================================
 
 export async function toggleWebhookWelcome(webhookId: string) {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   const [webhook] = await db
     .select({ sendWelcome: webhookEndpoints.sendWelcome })
@@ -157,7 +170,7 @@ export async function toggleWebhookWelcome(webhookId: string) {
 // =============================================
 
 export async function deleteWebhook(webhookId: string) {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   await db
     .delete(webhookEndpoints)
@@ -173,7 +186,7 @@ export async function deleteWebhook(webhookId: string) {
 // =============================================
 
 export async function getWhatsappConfig() {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   return db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
@@ -191,7 +204,7 @@ export async function saveWhatsappConfig(input: {
   reminderMorning?: boolean;
   isActive?: boolean;
 }) {
-  const { tenantId, userId } = await getOwnerTenant();
+  const { tenantId, userId } = await requireOwnerOrAdmin();
 
   // Check if config exists
   const existing = await db.query.whatsappConfigs.findFirst({
@@ -246,10 +259,10 @@ export async function saveWhatsappConfig(input: {
 // =============================================
 
 export async function saveWhatsappApiKey(apiKey: string) {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
-  // تشفير المفتاح قبل الحفظ
-  const encryptedKey = encrypt(apiKey);
+  // تشفير المفتاح قبل الحفظ — AAD يربط السر بالـ tenant (يمنع swap attack)
+  const encryptedKey = encrypt(apiKey, `whatsapp:${tenantId}`);
 
   const existing = await db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
@@ -275,7 +288,7 @@ export async function saveWhatsappApiKey(apiKey: string) {
 // =============================================
 
 export async function testWhatsappConnectionAction() {
-  const { tenantId } = await getOwnerTenant();
+  const { tenantId } = await requireOwnerOrAdmin();
 
   const { testWhatsappConnection } = await import("@/lib/whatsapp");
   const result = await testWhatsappConnection(tenantId);

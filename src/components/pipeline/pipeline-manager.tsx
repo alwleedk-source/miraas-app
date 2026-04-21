@@ -46,11 +46,9 @@ const PRESET_COLORS = [
 
 export function PipelineManager({
   stages: initialStages,
-  tenantId,
   totalLeads,
 }: {
   stages: Stage[];
-  tenantId: string;
   totalLeads: number;
 }) {
   const [stages, setStages] = useState(initialStages);
@@ -70,7 +68,6 @@ export function PipelineManager({
     setError(null);
     startTransition(async () => {
       const stage = await createStage({
-        tenantId,
         name: newName.trim(),
         color: newColor,
       });
@@ -96,7 +93,6 @@ export function PipelineManager({
     startTransition(async () => {
       await updateStage({
         stageId: editingId,
-        tenantId,
         name: editName.trim(),
         color: editColor,
       });
@@ -126,7 +122,7 @@ export function PipelineManager({
 
     setError(null);
     startTransition(async () => {
-      const result = await deleteStage({ stageId, tenantId });
+      const result = await deleteStage({ stageId });
       if ("error" in result) {
         setError(result.error ?? "حدث خطأ");
         return;
@@ -139,7 +135,7 @@ export function PipelineManager({
   const handleSetDefault = (stageId: string) => {
     setError(null);
     startTransition(async () => {
-      await setDefaultStage({ stageId, tenantId });
+      await setDefaultStage({ stageId });
       setStages((prev) =>
         prev.map((s) => ({ ...s, isDefault: s.id === stageId }))
       );
@@ -150,7 +146,7 @@ export function PipelineManager({
   const handleToggleExclusive = (stageId: string) => {
     setError(null);
     startTransition(async () => {
-      await toggleExclusive({ stageId, tenantId });
+      await toggleExclusive({ stageId });
       setStages((prev) =>
         prev.map((s) => s.id === stageId ? { ...s, isExclusive: !s.isExclusive } : s)
       );
@@ -181,7 +177,6 @@ export function PipelineManager({
     setDraggedId(null);
     startTransition(async () => {
       await reorderStages({
-        tenantId,
         stageIds: stages.map((s) => s.id),
       });
     });

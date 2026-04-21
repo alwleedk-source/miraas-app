@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { leads, providerSchedules, providerDayOffs, departments } from "@/db/schema";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
+import { assertUserInTenant, assertDepartmentInTenant } from "@/lib/tenant-guards";
 
 // =============================================
 // أنواع البيانات
@@ -31,7 +32,14 @@ export async function generateAvailableSlots(
 ): Promise<{ slots: TimeSlot[]; providerName?: string }> {
   const { tenantId } = await requireTenant();
 
+  await assertUserInTenant(input.providerId, tenantId);
+  await assertDepartmentInTenant(input.departmentId, tenantId);
+  if (!Number.isInteger(input.durationMin) || input.durationMin < 5 || input.durationMin > 480) {
+    throw new Error("مدة غير صالحة");
+  }
+
   const targetDate = new Date(input.date);
+  if (isNaN(targetDate.getTime())) throw new Error("تاريخ غير صالح");
   const dayOfWeek = targetDate.getDay(); // 0=الأحد ... 6=السبت
 
   // 1. جلب جدول عمل المورد لهذا اليوم
@@ -72,11 +80,11 @@ export async function generateAvailableSlots(
     return { slots: [] }; // في إجازة
   }
 
-  // 3. جلب الفجوة الزمنية للقسم
+  // 3. جلب الفجوة الزمنية للقسم (مع فحص tenant)
   const [dept] = await db
     .select({ defaultGapMinutes: departments.defaultGapMinutes })
     .from(departments)
-    .where(eq(departments.id, input.departmentId))
+    .where(and(eq(departments.id, input.departmentId), eq(departments.tenantId, tenantId)))
     .limit(1);
 
   const gapMinutes = dept?.defaultGapMinutes ?? 15;
@@ -166,13 +174,19 @@ export async function checkBookingConflict(input: {
 }> {
   const { tenantId } = await requireTenant();
 
+  await assertUserInTenant(input.providerId, tenantId);
+  await assertDepartmentInTenant(input.departmentId, tenantId);
+  if (!Number.isInteger(input.durationMin) || input.durationMin < 5 || input.durationMin > 480) {
+    throw new Error("مدة غير صالحة");
+  }
+
   const startTime = new Date(input.date);
-  
-  // جلب الفجوة الزمنية
+  if (isNaN(startTime.getTime())) throw new Error("تاريخ غير صالح");
+
   const [dept] = await db
     .select({ defaultGapMinutes: departments.defaultGapMinutes })
     .from(departments)
-    .where(eq(departments.id, input.departmentId))
+    .where(and(eq(departments.id, input.departmentId), eq(departments.tenantId, tenantId)))
     .limit(1);
 
   const gapMinutes = dept?.defaultGapMinutes ?? 15;

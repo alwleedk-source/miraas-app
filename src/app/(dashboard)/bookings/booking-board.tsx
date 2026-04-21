@@ -7,6 +7,7 @@ import {
   BOOKING_STATUS_LABELS,
   BOOKING_STATUS_COLORS,
   BOOKING_STATUS_ICONS,
+  toWhatsappUrl,
 } from "@/lib/utils";
 import { Phone, MessageCircle, Calendar, X, Loader2, Pencil, Search, EyeOff, Eye, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,9 @@ type Booking = {
   bookingDate: Date | null;
   bookingService: string | null;
   bookingNotes: string | null;
+  bookingDepartmentId: string | null;
+  bookingResourceId: string | null;
+  bookingDurationMin: number | null;
   sourceName: string | null;
   assignedUserName: string | null;
   pendingFollowUps?: number;
@@ -45,6 +49,22 @@ type EditData = {
 type Department = { id: string; name: string; color: string; defaultGapMinutes: number };
 type Provider = { id: string; name: string };
 
+/** يُرجع "YYYY-MM-DDTHH:mm" بتوقيت الرياض — هذا ما يتوقعه datetime-local input */
+function toLocalDatetimeInput(date: Date | string): string {
+  const d = new Date(date);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
 export default function BookingBoard({
   bookings,
   services = [],
@@ -63,11 +83,29 @@ export default function BookingBoard({
   const [postponeReason, setPostponeReason] = useState("");
   const [postponeWaitlist, setPostponeWaitlist] = useState(false);
   const [editModal, setEditModal] = useState<EditData | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    leadId: string;
+    leadName: string;
+    status: string;
+  } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "tomorrow" | "next_7" | "past">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [hideCompleted, setHideCompleted] = useState(false);
 
   const COMPLETED_STATUSES = ["COMPLETED", "ATTENDED_NOT_SUITABLE", "CANCELLED", "NO_RESPONSE"];
+  const DESTRUCTIVE_STATUSES = ["CANCELLED", "ATTENDED_NOT_SUITABLE", "NO_RESPONSE"];
+
+  const runStatusChange = (leadId: string, status: string) => {
+    setActionError(null);
+    startTransition(async () => {
+      try {
+        await updateBookingStatus({ leadId, status });
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : "فشل التحديث");
+      }
+    });
+  };
 
   const handleDrop = (status: string, leadId: string) => {
     if (status === "POSTPONED") {
@@ -76,27 +114,36 @@ export default function BookingBoard({
       return;
     }
 
-    startTransition(async () => {
-      await updateBookingStatus({ leadId, status });
-    });
+    // أفعال مدمّرة — تأكيد قبل التنفيذ (drop خاطئ لا يُدمّر موعد)
+    if (DESTRUCTIVE_STATUSES.includes(status)) {
+      const lead = bookings.find((b) => b.id === leadId);
+      setConfirmModal({ leadId, leadName: lead?.name || "", status });
+      return;
+    }
+
+    runStatusChange(leadId, status);
   };
 
   const handlePostponeConfirm = () => {
     if (!postponeModal) return;
-    // إذا كان في وضع قائمة الانتظار لا نحتاج تاريخ
     if (!postponeWaitlist && !postponeDate) return;
 
+    setActionError(null);
     startTransition(async () => {
-      await updateBookingStatus({
-        leadId: postponeModal.leadId,
-        status: "POSTPONED",
-        postponeDate: postponeWaitlist ? undefined : postponeDate,
-        postponeReason,
-      });
-      setPostponeModal(null);
-      setPostponeDate("");
-      setPostponeReason("");
-      setPostponeWaitlist(false);
+      try {
+        await updateBookingStatus({
+          leadId: postponeModal.leadId,
+          status: "POSTPONED",
+          postponeDate: postponeWaitlist ? undefined : postponeDate,
+          postponeReason,
+        });
+        setPostponeModal(null);
+        setPostponeDate("");
+        setPostponeReason("");
+        setPostponeWaitlist(false);
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : "فشل التأجيل");
+      }
     });
   };
 
@@ -105,29 +152,34 @@ export default function BookingBoard({
       leadId: booking.id,
       leadName: booking.name,
       bookingDate: booking.bookingDate
-        ? new Date(booking.bookingDate).toISOString().slice(0, 16)
+        ? toLocalDatetimeInput(booking.bookingDate)
         : "",
       bookingService: booking.bookingService || "",
       bookingNotes: booking.bookingNotes || "",
-      departmentId: (booking as Record<string, unknown>).bookingDepartmentId as string || "",
-      resourceId: (booking as Record<string, unknown>).bookingResourceId as string || "",
-      duration: ((booking as Record<string, unknown>).bookingDurationMin as number) || 30,
+      departmentId: booking.bookingDepartmentId || "",
+      resourceId: booking.bookingResourceId || "",
+      duration: booking.bookingDurationMin || 30,
     });
   };
 
   const handleEditConfirm = () => {
     if (!editModal || !editModal.bookingDate) return;
+    setActionError(null);
     startTransition(async () => {
-      await updateBookingDate({
-        leadId: editModal.leadId,
-        bookingDate: editModal.bookingDate,
-        bookingService: editModal.bookingService,
-        bookingNotes: editModal.bookingNotes,
-        departmentId: editModal.departmentId || undefined,
-        resourceId: editModal.resourceId || undefined,
-        duration: editModal.duration || undefined,
-      });
-      setEditModal(null);
+      try {
+        await updateBookingDate({
+          leadId: editModal.leadId,
+          bookingDate: editModal.bookingDate,
+          bookingService: editModal.bookingService,
+          bookingNotes: editModal.bookingNotes,
+          departmentId: editModal.departmentId || undefined,
+          resourceId: editModal.resourceId || undefined,
+          duration: editModal.duration || undefined,
+        });
+        setEditModal(null);
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : "فشل التحديث");
+      }
     });
   };
 
@@ -395,7 +447,7 @@ export default function BookingBoard({
                         اتصل
                       </a>
                       <a
-                        href={`https://wa.me/${booking.phone.replace("+", "")}`}
+                        href={toWhatsappUrl(booking.phone) ?? "#"}
                         target="_blank"
                         rel="noopener"
                         className="flex items-center gap-1 text-xs text-surface-500 hover:text-success-600 p-1 rounded-lg hover:bg-success-50 transition-colors"
@@ -674,7 +726,58 @@ export default function BookingBoard({
         </div>
       )}
 
-      {isPending && (
+      {/* نافذة تأكيد destructive action (CANCELLED / NO_RESPONSE / …) */}
+      {confirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setConfirmModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 mx-4 animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-surface-900 mb-2">
+              ⚠️ تأكيد
+            </h3>
+            <p className="text-sm text-surface-600 mb-5">
+              هل أنت متأكد من نقل موعد <strong>{confirmModal.leadName}</strong>{" "}
+              إلى حالة <strong>{BOOKING_STATUS_LABELS[confirmModal.status]}</strong>؟
+            </p>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  const { leadId, status } = confirmModal;
+                  setConfirmModal(null);
+                  runStatusChange(leadId, status);
+                }}
+                disabled={isPending}
+              >
+                {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "نعم، متأكد"}
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setConfirmModal(null)}
+              >
+                إلغاء
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actionError && (
+        <div
+          className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-danger-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50 cursor-pointer"
+          onClick={() => setActionError(null)}
+        >
+          <X className="h-4 w-4" />
+          {actionError}
+        </div>
+      )}
+
+      {isPending && !actionError && (
         <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50">
           <Loader2 className="h-4 w-4 animate-spin" />
           جاري التحديث...

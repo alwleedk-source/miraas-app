@@ -6,6 +6,31 @@ import { eq, and, isNotNull, gte, lte, sql, ilike, or } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { normalizePhone } from "@/lib/utils";
+import {
+  assertLeadInTenant,
+  assertUserInTenant,
+  assertDepartmentInTenant,
+  assertRole,
+  ROLE,
+} from "@/lib/tenant-guards";
+import {
+  createBookingSchema,
+  updateBookingStatusSchema,
+  updateBookingDateSchema,
+  quickBookingSchema,
+} from "@/lib/schemas";
+
+/**
+ * يحوّل خطأ Postgres 23P01 (EXCLUDE constraint) إلى رسالة عربية واضحة.
+ * EXCLUDE يمنع حجز نفس المورد في نفس الوقت.
+ */
+function throwIfDoubleBooking(err: unknown): never {
+  const code = (err as { code?: string })?.code;
+  if (code === "23P01") {
+    throw new Error("الموعد محجوز لهذا المقدم في نفس الوقت — اختر وقتاً آخر");
+  }
+  throw err;
+}
 
 const RIYADH_TZ = "Asia/Riyadh";
 
@@ -23,59 +48,60 @@ function getRiyadhDate(offsetDays: number = 0): { start: Date; end: Date } {
 // إنشاء حجز (عند سحب عميل لعمود "حجز")
 // =============================================
 
-export async function createBooking(input: {
-  leadId: string;
-  bookingDate: string;
-  bookingService: string;
-  bookingNotes?: string;
-}) {
-  const { tenantId, userId } = await requireTenant();
+export async function createBooking(raw: unknown) {
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = createBookingSchema.parse(raw);
+  await assertLeadInTenant(input.leadId, tenantId);
 
-  const [lead] = await db
-    .update(leads)
-    .set({
-      bookingStatus: "PENDING",
-      bookingDate: new Date(input.bookingDate),
-      bookingService: input.bookingService,
-      bookingNotes: input.bookingNotes || null,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
-    .returning({ id: leads.id, name: leads.name });
+  try {
+  return await db.transaction(async (tx) => {
+    const [lead] = await tx
+      .update(leads)
+      .set({
+        bookingStatus: "PENDING",
+        bookingDate: new Date(input.bookingDate),
+        bookingService: input.bookingService,
+        bookingNotes: input.bookingNotes || null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
+      .returning({ id: leads.id, name: leads.name });
 
-  if (!lead) throw new Error("not_found");
+    if (!lead) throw new Error("not_found");
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_UPDATED",
-    entityType: "lead",
-    entityId: lead.id,
-    details: {
-      action: "booking_created",
-      bookingDate: input.bookingDate,
-      bookingService: input.bookingService,
-    },
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_UPDATED",
+      entityType: "lead",
+      entityId: lead.id,
+      details: {
+        action: "booking_created",
+        bookingDate: input.bookingDate,
+        bookingService: input.bookingService,
+      },
+    });
+
+    revalidatePath("/bookings");
+    revalidatePath("/pipeline");
+    return lead;
   });
-
-  revalidatePath("/bookings");
-  revalidatePath("/pipeline");
-  return lead;
+  } catch (err) {
+    throwIfDoubleBooking(err);
+  }
 }
 
 // =============================================
 // تحديث حالة الحجز
 // =============================================
 
-export async function updateBookingStatus(input: {
-  leadId: string;
-  status: string;
-  postponeDate?: string;
-  postponeReason?: string;
-}) {
-  const { tenantId, userId } = await requireTenant();
+export async function updateBookingStatus(raw: unknown) {
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = updateBookingStatusSchema.parse(raw);
+  await assertLeadInTenant(input.leadId, tenantId);
 
-  // Fix #4: جلب الملاحظات الحالية قبل التحديث
   const [currentLead] = await db
     .select({ bookingNotes: leads.bookingNotes })
     .from(leads)
@@ -141,6 +167,9 @@ const baseBookingCols = {
   bookingDate: leads.bookingDate,
   bookingService: leads.bookingService,
   bookingNotes: leads.bookingNotes,
+  bookingDepartmentId: leads.bookingDepartmentId,
+  bookingResourceId: leads.bookingResourceId,
+  bookingDurationMin: leads.bookingDurationMin,
 };
 
 export async function getBookings() {
@@ -287,16 +316,13 @@ export async function getBookingsSummary() {
 // تعديل تاريخ الحجز
 // =============================================
 
-export async function updateBookingDate(input: {
-  leadId: string;
-  bookingDate: string;
-  bookingService?: string;
-  bookingNotes?: string;
-  departmentId?: string;
-  resourceId?: string;
-  duration?: number;
-}) {
-  const { tenantId, userId } = await requireTenant();
+export async function updateBookingDate(raw: unknown) {
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = updateBookingDateSchema.parse(raw);
+  await assertLeadInTenant(input.leadId, tenantId);
+  if (input.departmentId) await assertDepartmentInTenant(input.departmentId, tenantId);
+  if (input.resourceId) await assertUserInTenant(input.resourceId, tenantId);
 
   const updateData: Record<string, unknown> = {
     bookingDate: new Date(input.bookingDate),
@@ -314,23 +340,29 @@ export async function updateBookingDate(input: {
     updateData.bookingEndTime = endTime;
   }
 
-  await db
-    .update(leads)
-    .set(updateData)
-    .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(leads)
+        .set(updateData)
+        .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_UPDATED",
-    entityType: "lead",
-    entityId: input.leadId,
-    details: {
-      action: "booking_date_updated",
-      newDate: input.bookingDate,
-      ...(input.bookingService && { newService: input.bookingService }),
-    },
-  });
+      await tx.insert(activityLog).values({
+        tenantId,
+        userId,
+        action: "LEAD_UPDATED",
+        entityType: "lead",
+        entityId: input.leadId,
+        details: {
+          action: "booking_date_updated",
+          newDate: input.bookingDate,
+          ...(input.bookingService && { newService: input.bookingService }),
+        },
+      });
+    });
+  } catch (err) {
+    throwIfDoubleBooking(err);
+  }
 
   revalidatePath("/bookings");
 }
@@ -340,9 +372,27 @@ export async function updateBookingDate(input: {
 // =============================================
 
 export async function markBookingReminded(leadId: string) {
-  const { tenantId, userId } = await requireTenant();
+  const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
 
-  // إنشاء متابعة مكتملة من نوع واتساب
+  // idempotency — لا تكرار خلال ساعتين
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const [recent] = await db
+    .select({ id: followUps.id })
+    .from(followUps)
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, leadId),
+        eq(followUps.type, "WHATSAPP"),
+        sql`${followUps.notes} LIKE '%تذكير%'`,
+        gte(followUps.completedAt, twoHoursAgo),
+      ),
+    )
+    .limit(1);
+  if (recent) return { success: true, alreadyMarked: true };
+
   const [followUp] = await db
     .insert(followUps)
     .values({
@@ -412,18 +462,13 @@ export async function searchLeadByPhone(phone: string) {
 // حجز سريع: إنشاء/استرداد عميل + إنشاء حجز
 // =============================================
 
-export async function quickCreateBooking(input: {
-  existingLeadId?: string;
-  name?: string;
-  phone: string;
-  bookingDate: string;
-  bookingService: string;
-  bookingNotes?: string;
-  bookingDepartmentId?: string;
-  bookingResourceId?: string;
-  bookingDurationMin?: number;
-}) {
+export async function quickCreateBooking(raw: unknown) {
   const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = quickBookingSchema.parse(raw);
+  if (input.existingLeadId) await assertLeadInTenant(input.existingLeadId, tenantId);
+  if (input.bookingDepartmentId) await assertDepartmentInTenant(input.bookingDepartmentId, tenantId);
+  if (input.bookingResourceId) await assertUserInTenant(input.bookingResourceId, tenantId);
 
   let leadId = input.existingLeadId;
 
@@ -518,40 +563,47 @@ export async function quickCreateBooking(input: {
   }
   const bookingEndTime = new Date(bookingStart.getTime() + (durationMin + gapMinutes) * 60000);
 
-  // إنشاء الحجز
-  const [lead] = await db
-    .update(leads)
-    .set({
-      bookingStatus: "PENDING",
-      bookingDate: bookingStart,
-      bookingService: input.bookingService,
-      bookingNotes: input.bookingNotes || null,
-      bookingDepartmentId: input.bookingDepartmentId || null,
-      bookingResourceId: input.bookingResourceId || null,
-      bookingDurationMin: durationMin,
-      bookingEndTime,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
-    .returning({ id: leads.id, name: leads.name });
+  try {
+    const lead = await db.transaction(async (tx) => {
+      const [l] = await tx
+        .update(leads)
+        .set({
+          bookingStatus: "PENDING",
+          bookingDate: bookingStart,
+          bookingService: input.bookingService,
+          bookingNotes: input.bookingNotes || null,
+          bookingDepartmentId: input.bookingDepartmentId || null,
+          bookingResourceId: input.bookingResourceId || null,
+          bookingDurationMin: durationMin,
+          bookingEndTime,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
+        .returning({ id: leads.id, name: leads.name });
 
-  if (!lead) throw new Error("not_found");
+      if (!l) throw new Error("not_found");
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_UPDATED",
-    entityType: "lead",
-    entityId: lead.id,
-    details: {
-      action: "quick_booking_created",
-      bookingDate: input.bookingDate,
-      bookingService: input.bookingService,
-    },
-  });
+      await tx.insert(activityLog).values({
+        tenantId,
+        userId,
+        action: "LEAD_UPDATED",
+        entityType: "lead",
+        entityId: l.id,
+        details: {
+          action: "quick_booking_created",
+          bookingDate: input.bookingDate,
+          bookingService: input.bookingService,
+        },
+      });
 
-  revalidatePath("/bookings");
-  revalidatePath("/leads");
-  revalidatePath("/pipeline");
-  return lead;
+      return l;
+    });
+
+    revalidatePath("/bookings");
+    revalidatePath("/leads");
+    revalidatePath("/pipeline");
+    return lead;
+  } catch (err) {
+    throwIfDoubleBooking(err);
+  }
 }

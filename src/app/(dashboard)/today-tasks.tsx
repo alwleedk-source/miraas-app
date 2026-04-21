@@ -23,7 +23,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { completeFollowUp, snoozeFollowUp, getLeadRecentNotes } from "@/app/actions/followups";
-import { cn } from "@/lib/utils";
+import { cn, toWhatsappUrl } from "@/lib/utils";
 
 interface Task {
   id: string;
@@ -135,10 +135,10 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
     const IconComp = config.icon;
     const scheduledDate = new Date(task.scheduledAt);
     const timeStr = scheduledDate.getHours() !== 0
-      ? scheduledDate.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })
+      ? scheduledDate.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" })
       : null;
     const dateStr = isOverdue
-      ? scheduledDate.toLocaleDateString("ar-SA", { day: "numeric", month: "short" })
+      ? scheduledDate.toLocaleDateString("ar-SA", { day: "numeric", month: "short", timeZone: "Asia/Riyadh" })
       : null;
     const isExpanded = expandedNotes === task.leadId;
     const leadNotes = notesCache[task.leadId];
@@ -205,7 +205,7 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
                     اتصال
                   </a>
                   <a
-                    href={`https://wa.me/${task.leadPhone.replace("+", "")}`}
+                    href={toWhatsappUrl(task.leadPhone) ?? "#"}
                     target="_blank"
                     rel="noopener"
                     className="flex items-center gap-1 text-xs text-success-600 hover:text-success-800 bg-success-50 hover:bg-success-100 px-2 py-1 rounded-lg transition-colors"

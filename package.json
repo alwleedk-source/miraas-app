@@ -7,7 +7,11 @@
     "build": "next build && npm run db:migrate",
     "start": "next start",
     "lint": "eslint",
-    "db:migrate": "npx tsx scripts/migrate.ts"
+    "db:migrate": "npx tsx scripts/migrate.ts",
+    "db:audit": "npx tsx scripts/pre-migration-audit.ts",
+    "security:probe": "npx tsx scripts/security-probe.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
@@ -34,6 +38,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
+    "resend": "^6.12.2",
     "tailwind-merge": "^3.5.0",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"
@@ -49,6 +54,7 @@
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.5"
   }
 }

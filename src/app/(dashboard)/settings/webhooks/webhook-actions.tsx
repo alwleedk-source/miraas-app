@@ -23,7 +23,8 @@ import { createWebhookKey, deleteWebhook, toggleWebhook, toggleWebhookWelcome } 
 
 interface Webhook {
   id: string;
-  secretKey: string;
+  // secretKey يكون null للـ webhooks الجديدة (hash-only)، موجود للبيانات القديمة فقط
+  secretKey: string | null;
   label: string | null;
   isActive: boolean;
   sendWelcome: boolean;
@@ -100,7 +101,11 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
       {/* قائمة المفاتيح */}
       {webhooks.map((wh) => {
         const campaignName = wh.label || "حملتي الإعلانية";
-        const script = generateScript(appUrl, wh.secretKey, campaignName);
+        // للـ webhooks الجديدة (hash-only) السر لا يُخزَّن plaintext
+        // يظهر فقط مرة واحدة عند الإنشاء في newlyCreated state
+        const displaySecret = wh.secretKey ?? "••• السر مخفي لأمانك (احفظه عند الإنشاء) •••";
+        const canCopy = !!wh.secretKey;
+        const script = generateScript(appUrl, wh.secretKey ?? "", campaignName);
         const isExpanded = expandedCode === wh.id;
 
         return (
@@ -147,14 +152,15 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
               {/* Secret Key */}
               <div className="flex items-center gap-2">
                 <div className="flex-1 p-2.5 bg-surface-50 rounded-lg border border-surface-200 font-mono text-xs text-surface-600 overflow-x-auto" dir="ltr">
-                  {wh.secretKey}
+                  {displaySecret}
                 </div>
                 <Button
                   variant="outline"
                   size="icon"
-                  onClick={() => handleCopy(wh.secretKey, `key-${wh.id}`)}
+                  onClick={() => canCopy && handleCopy(wh.secretKey!, `key-${wh.id}`)}
                   className="shrink-0"
-                  title="نسخ المفتاح"
+                  disabled={!canCopy}
+                  title={canCopy ? "نسخ المفتاح" : "السر مخفي — أعد التوليد إذا احتجته"}
                 >
                   {copied === `key-${wh.id}` ? (
                     <Check className="h-4 w-4 text-success-500" />

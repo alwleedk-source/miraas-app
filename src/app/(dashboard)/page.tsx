@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { getDashboardStats } from "@/app/actions/leads";
 import { requireTenant } from "@/lib/auth-server";
+import { toWhatsappUrl } from "@/lib/utils";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { activityLog, users, followUps, leads, leadSources } from "@/db/schema";
@@ -425,7 +426,7 @@ export default async function DashboardPage() {
                           📞 اتصال
                         </a>
                         <a
-                          href={`https://wa.me/${b.phone.replace("+", "")}`}
+                          href={toWhatsappUrl(b.phone) ?? "#"}
                           target="_blank"
                           rel="noopener"
                           className="flex items-center gap-1 text-xs text-success-600 hover:text-success-800 bg-success-50 hover:bg-success-100 px-2 py-1 rounded-lg transition-colors"

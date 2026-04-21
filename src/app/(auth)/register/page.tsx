@@ -58,9 +58,9 @@ export default function RegisterPage() {
         return;
       }
 
-      // 2. إنشاء الشركة (Tenant) وربطها بالمستخدم
+      // 2. إنشاء الشركة — userId يأخذه server من الـ session (لا يُمرَّر)
       if (result.data?.user?.id) {
-        await createTenantForUser(result.data.user.id, formData.companyName);
+        await createTenantForUser(formData.companyName);
       }
 
       // Full page redirect to ensure session cookies are properly sent

@@ -18,31 +18,38 @@ import {
   Menu,
   X,
   Stethoscope,
+  AlertTriangle,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
 import NotificationBell from "@/app/(dashboard)/notification-bell";
+
+type AllowedRoles = "OWNER" | "ADMIN" | "COORDINATOR";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ReactNode;
   badge?: number;
+  // الأدوار التي ترى هذا العنصر — undefined = الجميع (non-PROVIDER)
+  roles?: AllowedRoles[];
 }
 
-// القائمة الرئيسية للمدير/المنسق
+// القائمة الرئيسية — كل عنصر يعرّف من يراه
 const mainNav: NavItem[] = [
   { label: "نظرة عامة", href: "/", icon: <LayoutDashboard className="h-5 w-5" /> },
   { label: "العملاء", href: "/leads", icon: <Users className="h-5 w-5" /> },
-  { label: "الأنابيب", href: "/pipeline", icon: <GitBranch className="h-5 w-5" /> },
   { label: "الحجوزات", href: "/bookings", icon: <CalendarDays className="h-5 w-5" /> },
-  { label: "الفريق", href: "/team", icon: <UserCog className="h-5 w-5" /> },
-  { label: "التحليلات", href: "/analytics", icon: <BarChart3 className="h-5 w-5" /> },
+  { label: "الأنابيب", href: "/pipeline", icon: <GitBranch className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "الفريق", href: "/team", icon: <UserCog className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "التحليلات", href: "/analytics", icon: <BarChart3 className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
 ];
 
+// كل عناصر الإعدادات محصورة في OWNER/ADMIN
 const settingsNav: NavItem[] = [
-  { label: "الإعدادات", href: "/settings", icon: <Settings className="h-5 w-5" /> },
-  { label: "واتساب", href: "/settings/whatsapp", icon: <MessageSquare className="h-5 w-5" /> },
-  { label: "الويب هوك", href: "/settings/webhooks", icon: <Webhook className="h-5 w-5" /> },
+  { label: "الإعدادات", href: "/settings", icon: <Settings className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "واتساب", href: "/settings/whatsapp", icon: <MessageSquare className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "الويب هوك", href: "/settings/webhooks", icon: <Webhook className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "سجل الأخطاء", href: "/settings/errors", icon: <AlertTriangle className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
 ];
 
 // القائمة المخصصة لمقدم الخدمة
@@ -57,6 +64,12 @@ export function Sidebar() {
 
   const userRole = (session?.user as Record<string, unknown>)?.role as string || "";
   const isProvider = userRole === "PROVIDER";
+
+  // فلترة عناصر القائمة حسب الدور
+  const visibleFor = (items: NavItem[]) =>
+    items.filter((item) => !item.roles || item.roles.includes(userRole as AllowedRoles));
+  const visibleMain = visibleFor(mainNav);
+  const visibleSettings = visibleFor(settingsNav);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -123,18 +136,21 @@ export function Sidebar() {
             <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
               الرئيسية
             </p>
-            {mainNav.map((item) => (
+            {visibleMain.map((item) => (
               <NavLink key={item.href} item={item} />
             ))}
 
-            <div className="my-4 border-t border-surface-100" />
-
-            <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
-              الأدوات
-            </p>
-            {settingsNav.map((item) => (
-              <NavLink key={item.href} item={item} />
-            ))}
+            {visibleSettings.length > 0 && (
+              <>
+                <div className="my-4 border-t border-surface-100" />
+                <p className="text-xs font-semibold text-surface-400 px-3 mb-2">
+                  الأدوات
+                </p>
+                {visibleSettings.map((item) => (
+                  <NavLink key={item.href} item={item} />
+                ))}
+              </>
+            )}
           </>
         )}
       </nav>

@@ -2,27 +2,25 @@
 
 import { db } from "@/db";
 import { leads, followUps, activityLog, pipelineStages, notifications, leadSources, users } from "@/db/schema";
-import { eq, and, desc, asc, ilike, or, count, sql } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, count, sql, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { normalizePhone } from "@/lib/utils";
-
-// =============================================
-// Types
-// =============================================
-
-type CreateLeadInput = {
-  name: string;
-  phone?: string;
-  email?: string;
-  priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-  sourceId?: string;
-  sourceName?: string; // Fix #6: اسم المصدر/الحملة
-  stageId?: string;
-  assignedTo?: string;
-};
-
-type UpdateLeadInput = Partial<CreateLeadInput> & { id: string };
+import {
+  assertLeadInTenant,
+  assertUserInTenant,
+  assertStageInTenant,
+  assertSourceInTenant,
+  assertRole,
+  ROLE,
+} from "@/lib/tenant-guards";
+import {
+  createLeadSchema,
+  updateLeadSchema,
+  bulkImportSchema,
+  bulkUpdateLeadsSchema,
+  bulkDeleteLeadsSchema,
+} from "@/lib/schemas";
 
 const getTenantId = requireTenant;
 
@@ -30,10 +28,16 @@ const getTenantId = requireTenant;
 // إنشاء عميل جديد
 // =============================================
 
-export async function createLead(input: CreateLeadInput) {
+export async function createLead(raw: unknown) {
   const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = createLeadSchema.parse(raw);
 
-  // إذا لم يُحدد مرحلة، استخدم المرحلة الافتراضية
+  // تحقق من FK cross-tenant
+  if (input.stageId) await assertStageInTenant(input.stageId, tenantId);
+  if (input.sourceId) await assertSourceInTenant(input.sourceId, tenantId);
+  if (input.assignedTo) await assertUserInTenant(input.assignedTo, tenantId);
+
   let stageId = input.stageId;
   if (!stageId) {
     const [defaultStage] = await db
@@ -42,17 +46,15 @@ export async function createLead(input: CreateLeadInput) {
       .where(
         and(
           eq(pipelineStages.tenantId, tenantId),
-          eq(pipelineStages.isDefault, true)
-        )
+          eq(pipelineStages.isDefault, true),
+        ),
       )
       .limit(1);
     stageId = defaultStage?.id;
   }
 
-  // Fix #10: المنسق يُعيّن نفسه تلقائياً
   const assignedTo = input.assignedTo || (role === "COORDINATOR" ? userId : null);
 
-  // Fix #6: إنشاء/إيجاد المصدر بالاسم
   let resolvedSourceId = input.sourceId || null;
   if (!resolvedSourceId && input.sourceName?.trim()) {
     const srcName = input.sourceName.trim();
@@ -73,82 +75,91 @@ export async function createLead(input: CreateLeadInput) {
     }
   }
 
-  const [lead] = await db
-    .insert(leads)
-    .values({
+  return await db.transaction(async (tx) => {
+    const [lead] = await tx
+      .insert(leads)
+      .values({
+        tenantId,
+        name: input.name,
+        phone: input.phone ? normalizePhone(input.phone) : undefined,
+        email: input.email ?? undefined,
+        priority: input.priority,
+        sourceId: resolvedSourceId,
+        stageId: stageId || null,
+        assignedTo,
+      })
+      .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
+
+    await tx.insert(activityLog).values({
       tenantId,
-      name: input.name,
-      phone: input.phone ? normalizePhone(input.phone) : undefined,
-      email: input.email,
-      priority: input.priority || "MEDIUM",
-      sourceId: resolvedSourceId,
-      stageId: stageId || null,
-      assignedTo,
-    })
-    .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
+      userId,
+      action: "LEAD_CREATED",
+      entityType: "lead",
+      entityId: lead.id,
+      details: { leadName: input.name },
+    });
 
-  // تسجيل النشاط
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_CREATED",
-    entityType: "lead",
-    entityId: lead.id,
-    details: { leadName: input.name },
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return lead;
   });
-
-  revalidatePath("/leads");
-  revalidatePath("/");
-  return lead;
 }
 
 // =============================================
 // تحديث عميل
 // =============================================
 
-export async function updateLead(input: UpdateLeadInput) {
-  const { tenantId, userId } = await getTenantId();
+export async function updateLead(raw: unknown) {
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  const input = updateLeadSchema.parse(raw);
 
-  const [updated] = await db
-    .update(leads)
-    .set({
-      ...(input.name && { name: input.name }),
-      ...(input.phone !== undefined && { phone: input.phone ? normalizePhone(input.phone) : null }),
-      ...(input.email !== undefined && { email: input.email }),
-      ...(input.priority && { priority: input.priority }),
-      ...(input.sourceId !== undefined && { sourceId: input.sourceId || null }),
-      ...(input.stageId !== undefined && { stageId: input.stageId || null }),
-      ...(input.assignedTo !== undefined && { assignedTo: input.assignedTo || null }),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(leads.id, input.id), eq(leads.tenantId, tenantId)))
-    .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
+  await assertLeadInTenant(input.id, tenantId);
+  if (input.stageId) await assertStageInTenant(input.stageId, tenantId);
+  if (input.sourceId) await assertSourceInTenant(input.sourceId, tenantId);
+  if (input.assignedTo) await assertUserInTenant(input.assignedTo, tenantId);
 
-  if (!updated) throw new Error("العميل غير موجود");
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(leads)
+      .set({
+        ...(input.name && { name: input.name }),
+        ...(input.phone !== undefined && { phone: input.phone ? normalizePhone(input.phone) : null }),
+        ...(input.email !== undefined && { email: input.email }),
+        ...(input.priority && { priority: input.priority }),
+        ...(input.sourceId !== undefined && { sourceId: input.sourceId || null }),
+        ...(input.stageId !== undefined && { stageId: input.stageId || null }),
+        ...(input.assignedTo !== undefined && { assignedTo: input.assignedTo || null }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(leads.id, input.id), eq(leads.tenantId, tenantId)))
+      .returning({ id: leads.id, name: leads.name, phone: leads.phone, priority: leads.priority });
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_UPDATED",
-    entityType: "lead",
-    entityId: input.id,
-    details: { changes: input },
-  });
+    if (!updated) throw new Error("العميل غير موجود");
 
-  // إشعار المنسق عند تعيينه
-  if (input.assignedTo && input.assignedTo !== userId) {
-    await db.insert(notifications).values({
+    await tx.insert(activityLog).values({
       tenantId,
-      userId: input.assignedTo,
-      type: "LEAD_ASSIGNED",
-      title: `تم تعيينك على عميل جديد: ${updated.name}`,
-      message: `قام المدير بتعيينك لمتابعة العميل "${updated.name}"`,
+      userId,
+      action: "LEAD_UPDATED",
+      entityType: "lead",
+      entityId: input.id,
+      details: { changedFields: Object.keys(input).filter((k) => k !== "id") },
     });
-  }
 
-  revalidatePath("/leads");
-  revalidatePath("/");
-  return updated;
+    if (input.assignedTo && input.assignedTo !== userId) {
+      await tx.insert(notifications).values({
+        tenantId,
+        userId: input.assignedTo,
+        type: "LEAD_ASSIGNED",
+        title: `تم تعيينك على عميل جديد: ${updated.name}`,
+        message: `قام المدير بتعيينك لمتابعة العميل "${updated.name}"`,
+      });
+    }
+
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return updated;
+  });
 }
 
 // =============================================
@@ -156,29 +167,34 @@ export async function updateLead(input: UpdateLeadInput) {
 // =============================================
 
 export async function changeLeadStage(leadId: string, stageId: string) {
-  const { tenantId, userId } = await getTenantId();
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
+  await assertStageInTenant(stageId, tenantId);
 
-  const [updated] = await db
-    .update(leads)
-    .set({ stageId, updatedAt: new Date() })
-    .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
-    .returning({ id: leads.id, name: leads.name });
+  return await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(leads)
+      .set({ stageId, updatedAt: new Date() })
+      .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
+      .returning({ id: leads.id, name: leads.name });
 
-  if (!updated) throw new Error("العميل غير موجود");
+    if (!updated) throw new Error("العميل غير موجود");
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_STAGE_CHANGED",
-    entityType: "lead",
-    entityId: leadId,
-    details: { newStageId: stageId },
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_STAGE_CHANGED",
+      entityType: "lead",
+      entityId: leadId,
+      details: { newStageId: stageId },
+    });
+
+    revalidatePath("/leads");
+    revalidatePath("/pipeline");
+    revalidatePath("/");
+    return updated;
   });
-
-  revalidatePath("/leads");
-  revalidatePath("/pipeline");
-  revalidatePath("/");
-  return updated;
 }
 
 // =============================================
@@ -187,30 +203,41 @@ export async function changeLeadStage(leadId: string, stageId: string) {
 
 export async function deleteLead(leadId: string) {
   const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  await assertLeadInTenant(leadId, tenantId);
 
-  if (role === "COORDINATOR") {
-    throw new Error("ليس لديك صلاحية الحذف");
-  }
+  await db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({ name: leads.name })
+      .from(leads)
+      .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
+      .limit(1);
 
-  // جلب اسم العميل قبل الحذف للتسجيل
-  const [target] = await db
-    .select({ name: leads.name })
-    .from(leads)
-    .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
-    .limit(1);
+    await tx
+      .update(leads)
+      .set({ isDeleted: true, bookingStatus: null, updatedAt: new Date() })
+      .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)));
 
-  await db
-    .update(leads)
-    .set({ isDeleted: true, updatedAt: new Date() })
-    .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)));
+    // ألغِ أي follow-ups نشطة لمنع cron تذكير على lead محذوف
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(
+        and(
+          eq(followUps.leadId, leadId),
+          eq(followUps.tenantId, tenantId),
+          sql`${followUps.completedAt} IS NULL`,
+        ),
+      );
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_DELETED",
-    entityType: "lead",
-    entityId: leadId,
-    details: { leadName: target?.name || "غير معروف" },
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_DELETED",
+      entityType: "lead",
+      entityId: leadId,
+      details: { leadName: target?.name || "غير معروف" },
+    });
   });
 
   revalidatePath("/leads");
@@ -230,9 +257,11 @@ export async function getLeads(options?: {
   page?: number;
   limit?: number;
 }) {
-  const { tenantId } = await getTenantId();
+  const { tenantId, userId: currentUserId, role } = await getTenantId();
+  if (role === "PROVIDER") throw new Error("ليس لديك صلاحية");
+
   const page = options?.page || 1;
-  const limit = options?.limit || 50;
+  const limit = Math.min(options?.limit || 50, 200);
   const offset = (page - 1) * limit;
 
   const conditions = [
@@ -250,7 +279,20 @@ export async function getLeads(options?: {
     conditions.push(eq(leads.assignedTo, options.assignedTo));
   }
 
-  // فلتر الحصرية: لا تعرض عملاء مراحل حصرية مُعيّنين لمنسق آخر
+  // ✅ فلتر أمني على مستوى الخادم — لا يُعتمد على client:
+  // COORDINATOR يرى فقط عملاءه + عملاء المراحل غير الحصرية
+  if (role === "COORDINATOR") {
+    const orExpr = or(
+      eq(leads.assignedTo, currentUserId),
+      sql`${leads.stageId} NOT IN (
+        SELECT id FROM pipeline_stages
+        WHERE tenant_id = ${tenantId} AND is_exclusive = true
+      )`,
+    );
+    if (orExpr) conditions.push(orExpr);
+  }
+
+  // فلتر إضافي اختياري من client (UX فقط، ليس أمنياً)
   if (options?.excludeExclusiveForUser) {
     const userId = options.excludeExclusiveForUser;
     conditions.push(
@@ -261,7 +303,7 @@ export async function getLeads(options?: {
           SELECT id FROM pipeline_stages
           WHERE tenant_id = ${tenantId} AND is_exclusive = true
         )
-      )`
+      )`,
     );
   }
 
@@ -414,32 +456,36 @@ export async function createFollowUp(input: {
   notes?: string;
   scheduledAt?: Date;
 }) {
-  const { tenantId, userId } = await getTenantId();
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(input.leadId, tenantId);
 
-  const [followUp] = await db
-    .insert(followUps)
-    .values({
+  return await db.transaction(async (tx) => {
+    const [followUp] = await tx
+      .insert(followUps)
+      .values({
+        tenantId,
+        leadId: input.leadId,
+        userId,
+        type: input.type,
+        notes: input.notes?.slice(0, 2000),
+        scheduledAt: input.scheduledAt,
+      })
+      .returning();
+
+    await tx.insert(activityLog).values({
       tenantId,
-      leadId: input.leadId,
       userId,
-      type: input.type,
-      notes: input.notes,
-      scheduledAt: input.scheduledAt,
-    })
-    .returning();
+      action: "FOLLOW_UP_CREATED",
+      entityType: "follow_up",
+      entityId: followUp.id,
+      details: { leadId: input.leadId, type: input.type },
+    });
 
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "FOLLOW_UP_CREATED",
-    entityType: "follow_up",
-    entityId: followUp.id,
-    details: { leadId: input.leadId, type: input.type },
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return followUp;
   });
-
-  revalidatePath("/leads");
-  revalidatePath("/");
-  return followUp;
 }
 
 // =============================================
@@ -557,104 +603,206 @@ export async function checkDuplicatePhones(phones: string[]) {
 // استيراد عملاء بالجملة (من ملف Sheet)
 // =============================================
 
-export async function bulkImportLeads(input: {
-  campaignName: string;
-  leads: { name: string; phone: string }[];
-}) {
-  const { tenantId, userId } = await getTenantId();
+export async function bulkImportLeads(raw: unknown) {
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  const input = bulkImportSchema.parse(raw);
 
-  // 1. إنشاء أو إيجاد المصدر (الحملة)
-  let sourceId: string | null = null;
-  if (input.campaignName.trim()) {
-    const [existingSource] = await db
-      .select({ id: leadSources.id })
-      .from(leadSources)
-      .where(
-        and(
-          eq(leadSources.tenantId, tenantId),
-          eq(leadSources.name, input.campaignName.trim())
+  return await db.transaction(async (tx) => {
+    // 1. إنشاء/إيجاد المصدر
+    let sourceId: string | null = null;
+    if (input.campaignName.trim()) {
+      const [existingSource] = await tx
+        .select({ id: leadSources.id })
+        .from(leadSources)
+        .where(
+          and(
+            eq(leadSources.tenantId, tenantId),
+            eq(leadSources.name, input.campaignName.trim()),
+          ),
         )
-      )
-      .limit(1);
+        .limit(1);
 
-    if (existingSource) {
-      sourceId = existingSource.id;
-    } else {
-      const [newSource] = await db
-        .insert(leadSources)
-        .values({
-          tenantId,
-          name: input.campaignName.trim(),
-          platform: "Sheet Import",
-        })
-        .returning();
-      sourceId = newSource.id;
-    }
-  }
-
-  // 2. المرحلة الافتراضية
-  const [defaultStage] = await db
-    .select({ id: pipelineStages.id })
-    .from(pipelineStages)
-    .where(
-      and(
-        eq(pipelineStages.tenantId, tenantId),
-        eq(pipelineStages.isDefault, true)
-      )
-    )
-    .limit(1);
-
-  // 3. إدخال العملاء مع تخطي المكررات
-  let created = 0;
-  let skipped = 0;
-
-  for (const entry of input.leads) {
-    const phone = normalizePhone(entry.phone);
-
-    // فحص التكرار
-    if (phone) {
-      const [existing] = await db
-          .select({ id: leads.id })
-          .from(leads)
-          .where(and(
-            eq(leads.tenantId, tenantId),
-            eq(leads.phone, phone)
-          ))
-          .limit(1);
-
-      if (existing) {
-        skipped++;
-        continue;
+      if (existingSource) {
+        sourceId = existingSource.id;
+      } else {
+        const [newSource] = await tx
+          .insert(leadSources)
+          .values({
+            tenantId,
+            name: input.campaignName.trim(),
+            platform: "Sheet Import",
+          })
+          .returning();
+        sourceId = newSource.id;
       }
     }
 
-    await db.insert(leads).values({
+    // 2. المرحلة الافتراضية
+    const [defaultStage] = await tx
+      .select({ id: pipelineStages.id })
+      .from(pipelineStages)
+      .where(
+        and(
+          eq(pipelineStages.tenantId, tenantId),
+          eq(pipelineStages.isDefault, true),
+        ),
+      )
+      .limit(1);
+
+    // 3. normalize + batch dup check
+    const normalized = input.leads
+      .map((e) => ({ name: e.name, phone: normalizePhone(e.phone) }))
+      .filter((e) => !!e.phone);
+    const phones = normalized.map((e) => e.phone);
+
+    const existing =
+      phones.length > 0
+        ? await tx
+            .select({ phone: leads.phone })
+            .from(leads)
+            .where(
+              and(eq(leads.tenantId, tenantId), inArray(leads.phone, phones)),
+            )
+        : [];
+    const existingSet = new Set(existing.map((e) => e.phone));
+    const toInsert = normalized.filter((e) => !existingSet.has(e.phone));
+
+    if (toInsert.length > 0) {
+      await tx.insert(leads).values(
+        toInsert.map((e) => ({
+          tenantId,
+          name: e.name,
+          phone: e.phone,
+          priority: "MEDIUM" as const,
+          stageId: defaultStage?.id || null,
+          sourceId,
+        })),
+      );
+    }
+
+    const created = toInsert.length;
+    const skipped = input.leads.length - created;
+
+    await tx.insert(activityLog).values({
       tenantId,
-      name: entry.name,
-      phone: phone || null,
-      priority: "MEDIUM",
-      stageId: defaultStage?.id || null,
-      sourceId,
+      userId,
+      action: "LEAD_CREATED",
+      entityType: "lead",
+      details: {
+        bulkImport: true,
+        campaign: input.campaignName,
+        created,
+        skipped,
+      },
     });
 
-    created++;
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return { created, skipped };
+  });
+}
+
+// =============================================
+// عمليات جماعية على السيرفر — يمنع Promise.all DoS في العميل
+// =============================================
+
+/**
+ * تحديث جماعي (تعيين / نقل مرحلة) — UPDATE واحد في DB بدل N
+ */
+export async function bulkUpdateLeads(raw: unknown) {
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  const input = bulkUpdateLeadsSchema.parse(raw);
+
+  // تحقق أن كل الـ ids للـ tenant (يمنع cross-tenant update)
+  const owned = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(and(inArray(leads.id, input.ids), eq(leads.tenantId, tenantId)));
+  if (owned.length !== input.ids.length) {
+    throw new Error("بعض العملاء غير موجودين أو ليسوا ضمن صلاحياتك");
   }
 
-  // 4. تسجيل النشاط
-  await db.insert(activityLog).values({
-    tenantId,
-    userId,
-    action: "LEAD_CREATED",
-    entityType: "lead",
-    details: {
-      bulkImport: true,
-      campaign: input.campaignName,
-      created,
-      skipped,
-    },
+  if (input.patch.assignedTo) {
+    await assertUserInTenant(input.patch.assignedTo, tenantId);
+  }
+  if (input.patch.stageId) {
+    await assertStageInTenant(input.patch.stageId, tenantId);
+  }
+
+  const setObj: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.patch.assignedTo !== undefined) setObj.assignedTo = input.patch.assignedTo;
+  if (input.patch.stageId !== undefined) setObj.stageId = input.patch.stageId;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(leads)
+      .set(setObj)
+      .where(and(inArray(leads.id, input.ids), eq(leads.tenantId, tenantId)));
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_UPDATED",
+      entityType: "lead",
+      details: {
+        bulk: true,
+        count: input.ids.length,
+        changedFields: Object.keys(input.patch),
+      },
+    });
   });
 
   revalidatePath("/leads");
   revalidatePath("/");
-  return { created, skipped };
+  return { updated: input.ids.length };
+}
+
+/**
+ * حذف جماعي (soft) — UPDATE واحد
+ */
+export async function bulkDeleteLeads(raw: unknown) {
+  const { tenantId, userId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  const input = bulkDeleteLeadsSchema.parse(raw);
+
+  const owned = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(and(inArray(leads.id, input.ids), eq(leads.tenantId, tenantId)));
+  if (owned.length !== input.ids.length) {
+    throw new Error("بعض العملاء غير موجودين أو ليسوا ضمن صلاحياتك");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(leads)
+      .set({ isDeleted: true, bookingStatus: null, updatedAt: new Date() })
+      .where(and(inArray(leads.id, input.ids), eq(leads.tenantId, tenantId)));
+
+    // ألغِ follow-ups المرتبطة لمنع cron تذكير على leads محذوفين
+    await tx
+      .update(followUps)
+      .set({ completedAt: new Date() })
+      .where(
+        and(
+          inArray(followUps.leadId, input.ids),
+          eq(followUps.tenantId, tenantId),
+          sql`${followUps.completedAt} IS NULL`,
+        ),
+      );
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_DELETED",
+      entityType: "lead",
+      details: { bulk: true, count: input.ids.length },
+    });
+  });
+
+  revalidatePath("/leads");
+  revalidatePath("/");
+  return { deleted: input.ids.length };
 }

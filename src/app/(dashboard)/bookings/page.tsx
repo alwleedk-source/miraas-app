@@ -12,8 +12,9 @@ import { services, departments, users } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
+  if (role === "PROVIDER") redirect("/provider");
 
   let bookings: Awaited<ReturnType<typeof getBookings>> = [];
   let summary: Awaited<ReturnType<typeof getBookingsSummary>> = {

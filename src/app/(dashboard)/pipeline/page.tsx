@@ -6,8 +6,11 @@ import { eq, and, asc, count } from "drizzle-orm";
 import { PipelineManager } from "@/components/pipeline/pipeline-manager";
 
 export default async function PipelinePage() {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
+  if (role === "PROVIDER") redirect("/provider");
+  // Pipeline settings — OWNER/ADMIN فقط
+  if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) redirect("/");
 
   // جلب المراحل مع عدد العملاء لكل مرحلة
   const stages = await db
@@ -44,7 +47,6 @@ export default async function PipelinePage() {
   return (
     <PipelineManager
       stages={stagesWithCounts}
-      tenantId={tenantId}
       totalLeads={totalLeads}
     />
   );

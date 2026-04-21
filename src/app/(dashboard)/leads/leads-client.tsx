@@ -37,7 +37,7 @@ import {
   Bell,
   MessageCircle,
 } from "lucide-react";
-import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS } from "@/lib/utils";
+import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS, toWhatsappUrl } from "@/lib/utils";
 import {
   createLead,
   updateLead,
@@ -45,6 +45,8 @@ import {
   changeLeadStage,
   createFollowUp,
   getFollowUps,
+  bulkUpdateLeads,
+  bulkDeleteLeads,
 } from "@/app/actions/leads";
 import { createBooking } from "@/app/actions/bookings";
 import { assignTag, removeTag, getLeadTags } from "@/app/actions/tags";
@@ -105,7 +107,7 @@ interface Props {
   total: number;
   teamMembers?: TeamMember[];
   tags?: TagData[];
-  currentUserRole?: string;
+  currentUserRole: string;
   availableServices?: { id: string; name: string }[];
 }
 
@@ -124,7 +126,7 @@ const FOLLOW_UP_TYPES: { value: FollowUpType; label: string }[] = [
 // Component
 // =============================================
 
-export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole = "OWNER", availableServices = [] }: Props) {
+export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [] }: Props) {
   const [leads, setLeads] = useState(initialLeads);
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [searchQuery, setSearchQuery] = useState("");
@@ -282,15 +284,14 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     startTransition(async () => {
       try {
         const stage = stages.find((s) => s.id === stageId);
-        await Promise.all(Array.from(selectedIds).map((id) =>
-          changeLeadStage(id, stageId)
-        ));
+        const ids = Array.from(selectedIds);
+        await bulkUpdateLeads({ ids, patch: { stageId } });
         setLeads((prev) =>
-          prev.map((l) => (selectedIds.has(l.id) ? { ...l, stage: stage || null } : l))
+          prev.map((l) => (selectedIds.has(l.id) ? { ...l, stage: stage || null } : l)),
         );
         setSelectedIds(new Set());
-      } catch {
-        setError("فشل في تغيير المرحلة");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "فشل في تغيير المرحلة");
       }
     });
   };
@@ -300,19 +301,18 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     startTransition(async () => {
       try {
         const member = teamMembers.find((m) => m.id === memberId);
-        await Promise.all(Array.from(selectedIds).map((id) =>
-          updateLead({ id, assignedTo: memberId || undefined })
-        ));
+        const ids = Array.from(selectedIds);
+        await bulkUpdateLeads({ ids, patch: { assignedTo: memberId || null } });
         setLeads((prev) =>
           prev.map((l) =>
             selectedIds.has(l.id)
               ? { ...l, assignedUser: member ? { id: member.id, name: member.name, image: null } : null }
-              : l
-          )
+              : l,
+          ),
         );
         setSelectedIds(new Set());
-      } catch {
-        setError("فشل في التعيين");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "فشل في التعيين");
       }
     });
   };
@@ -322,7 +322,8 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     setError(null);
     startTransition(async () => {
       try {
-        await Promise.all(Array.from(selectedIds).map((id) => deleteLead(id)));
+        const ids = Array.from(selectedIds);
+        await bulkDeleteLeads({ ids });
         setLeads((prev) => prev.filter((l) => !selectedIds.has(l.id)));
         setSelectedIds(new Set());
       } catch (err) {
@@ -1188,7 +1189,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                               <Phone className="h-3.5 w-3.5" />
                             </a>
                             <a
-                              href={`https://wa.me/${lead.phone}`}
+                              href={toWhatsappUrl(lead.phone) ?? "#"}
                               target="_blank"
                               rel="noreferrer"
                               className="p-1 rounded hover:bg-success-50 text-surface-400 hover:text-success-600 transition-colors"
@@ -1667,7 +1668,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                         <Phone className="h-4 w-4 text-surface-500" />
                         <span className="text-sm" dir="ltr">{selectedLead.phone}</span>
                         <a
-                          href={`https://wa.me/${selectedLead.phone.replace(/[^0-9]/g, "")}`}
+                          href={toWhatsappUrl(selectedLead.phone) ?? "#"}
                           target="_blank"
                           className="ms-auto text-xs text-success-600 hover:text-success-700 font-medium"
                         >

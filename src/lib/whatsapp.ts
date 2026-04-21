@@ -12,6 +12,7 @@ import { db } from "@/db";
 import { whatsappConfigs, leads, activityLog } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
+import { validateAndNormalizePhone } from "@/lib/utils";
 
 // =============================================
 // Types
@@ -38,20 +39,19 @@ interface WhatsAppConfig {
 // تنسيق الرقم لـ WhatsApp (international format)
 // =============================================
 
+/**
+ * يُحوّل رقم إلى الصيغة التي يتوقعها WhatsApp Cloud API (بدون +)
+ * يستخدم libphonenumber-js عبر validateAndNormalizePhone — يدعم كل دول العالم
+ * @throws إذا الرقم غير صالح
+ */
 function formatPhoneForWhatsApp(phone: string): string {
-  let cleaned = phone.replace(/\D/g, "");
-
-  // إزالة الصفر الأول (محلي) وإضافة 966 (السعودية) كافتراضي
-  if (cleaned.startsWith("0")) {
-    cleaned = "966" + cleaned.slice(1);
+  const result = validateAndNormalizePhone(phone);
+  if (result.valid && result.phone) {
+    // WhatsApp يريد "966551234567" لا "+966551234567"
+    return result.phone.replace("+", "");
   }
-
-  // إذا لم يبدأ بكود دولة
-  if (cleaned.length <= 10) {
-    cleaned = "966" + cleaned;
-  }
-
-  return cleaned;
+  // fallback للأرقام غير المعروفة — نظّف بلا تخمين دولة
+  return phone.replace(/\D/g, "");
 }
 
 // =============================================
@@ -168,7 +168,7 @@ export async function sendWelcomeMessage(
   // 2. فك تشفير Access Token
   let accessToken: string;
   try {
-    accessToken = decrypt(config.apiKeyEncrypted);
+    accessToken = decrypt(config.apiKeyEncrypted, `whatsapp:${config.tenantId}`);
   } catch {
     return { success: false, error: "فشل في فك تشفير مفتاح API" };
   }
@@ -236,7 +236,7 @@ export async function testWhatsappConnection(
 
   let accessToken: string;
   try {
-    accessToken = decrypt(config.apiKeyEncrypted);
+    accessToken = decrypt(config.apiKeyEncrypted, `whatsapp:${config.tenantId}`);
   } catch {
     return { success: false, error: "فشل في فك تشفير مفتاح API" };
   }

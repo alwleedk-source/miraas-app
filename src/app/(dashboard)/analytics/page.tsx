@@ -34,6 +34,9 @@ export default async function AnalyticsPage({
   const range = params.range || "";
   const { tenantId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
+  if (role === "PROVIDER") redirect("/provider");
+  // تحليلات — OWNER/ADMIN فقط (بيانات أعمال حساسة)
+  if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) redirect("/");
 
   // حساب فلتر التاريخ
   let dateFilter: ReturnType<typeof sql> | null = null;

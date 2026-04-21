@@ -1,6 +1,9 @@
 import { headers } from "next/headers";
 import { auth, type Session } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 // =============================================
 // Session helpers
@@ -57,7 +60,26 @@ export function getSessionUser(session: Session) {
  */
 export async function requireTenant() {
   const session = await requireAuth();
-  const { tenantId, id: userId, role } = getSessionUser(session);
-  if (!tenantId) throw new Error("unauthorized");
-  return { tenantId, userId, role, session };
+  const { tenantId, id: userId } = getSessionUser(session);
+  if (!tenantId) redirect("/register");
+
+  // Fresh check من DB — يُبطل جلسات المُعطَّلين ويعكس role changes فوراً
+  const [u] = await db
+    .select({ isActive: users.isActive, role: users.role, tenantId: users.tenantId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!u || !u.isActive) {
+    try {
+      await auth.api.signOut({ headers: await headers() });
+    } catch {
+      // ignore
+    }
+    redirect("/login");
+  }
+
+  // استخدم القيم الطازجة من DB لا من الـ cookie cache
+  const freshTenantId = u.tenantId ?? tenantId;
+  return { tenantId: freshTenantId, userId, role: u.role, session };
 }

@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
+import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from "@/lib/email";
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -15,7 +16,17 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 8,
+    minPasswordLength: 10,
+    // email verification يُفعَّل فقط إذا RESEND_API_KEY موجود
+    requireEmailVerification: isEmailConfigured,
+    sendResetPassword: async ({ user, url }) => {
+      await sendPasswordResetEmail(user.email, url);
+    },
+  },
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendVerificationEmail(user.email, url);
+    },
   },
   advanced: {
     database: {
@@ -36,12 +47,12 @@ export const auth = betterAuth({
         type: "string",
         required: false,
         defaultValue: "COORDINATOR",
-        input: true,
+        input: false,
       },
       tenantId: {
         type: "string",
         required: false,
-        input: true,
+        input: false,
       },
       isActive: {
         type: "boolean",

@@ -49,19 +49,6 @@ export async function markAllAsRead() {
   revalidatePath("/");
 }
 
-// إنشاء إشعار (يُستخدم داخلياً من Server Actions أخرى)
-export async function createNotification(input: {
-  tenantId: string;
-  userId: string;
-  type: "NEW_LEAD" | "LEAD_ASSIGNED" | "FOLLOW_UP_REMINDER" | "SYSTEM";
-  title: string;
-  message?: string;
-}) {
-  await db.insert(notifications).values({
-    tenantId: input.tenantId,
-    userId: input.userId,
-    type: input.type,
-    title: input.title,
-    message: input.message,
-  });
-}
+// ملاحظة: createNotification المحذوف — كان Server Action مكشوف على الإنترنت
+// يقبل tenantId/userId من client = phishing vector. إذا احتجت إنشاء إشعار،
+// استدع db.insert(notifications) مباشرة من داخل action آخر محمي.

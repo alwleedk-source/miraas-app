@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, Phone, MessageCircle, ExternalLink } from "lucide-react";
+import { toWhatsappUrl } from "@/lib/utils";
 
 interface UpcomingTask {
   id: string;
@@ -99,7 +100,7 @@ export default function UpcomingFollowUps({ tasks }: { tasks: UpcomingTask[] }) 
                         <Phone className="h-3.5 w-3.5" />
                       </a>
                       <a
-                        href={`https://wa.me/${task.leadPhone.replace("+", "")}`}
+                        href={toWhatsappUrl(task.leadPhone) ?? "#"}
                         target="_blank"
                         rel="noopener"
                         className="p-1 rounded hover:bg-success-50 text-surface-400 hover:text-success-600 transition-colors"
