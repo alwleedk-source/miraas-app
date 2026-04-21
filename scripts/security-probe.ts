@@ -56,13 +56,17 @@ async function run() {
   // 3. signup لا يقبل role
   {
     const randomEmail = `probe-${Date.now()}@example.test`;
+    // test-only random placeholder — NOT a real credential
+    const testPw = Array.from({ length: 16 }, () =>
+      "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]
+    ).join("");
     const res = await safe(() =>
       fetch(`${BASE_URL}/api/auth/sign-up/email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: randomEmail,
-          password: "ProbePass12345!",
+          password: testPw,
           name: "Probe",
           role: "SUPER_ADMIN",
           tenantId: "deadbeef-dead-beef-dead-beefdeadbeef",

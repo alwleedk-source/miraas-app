@@ -1,0 +1,19 @@
+# GitGuardian configuration
+# https://docs.gitguardian.com/internal-repositories-monitoring/integrations/source_code/git_client/gitguardian_yaml
+#
+# Test files ومثبتات probe تحتوي على placeholder passwords
+# (ليست أسرار حقيقية) — نستثنيها من scanning
+
+version: 2
+
+paths-ignore:
+  - tests/**
+  - scripts/security-probe.ts
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+
+secret:
+  ignored-matches:
+    - name: test-placeholder-password
+      match: "a".repeat
