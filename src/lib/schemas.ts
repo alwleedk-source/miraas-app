@@ -144,6 +144,36 @@ export const updateMemberRoleSchema = z.object({
 });
 
 // =============================================
+// Archive
+// =============================================
+
+export const archiveLeadSchema = z.object({
+  leadId: z.string().uuid(),
+  reason: z.enum([
+    "PRICE",
+    "NO_RESPONSE",
+    "COMPETITOR",
+    "BAD_TIMING",
+    "NOT_INTERESTED",
+    "WRONG_NUMBER",
+    "DO_NOT_CONTACT",
+    "OTHER",
+  ]),
+  note: z.string().max(2000).optional(),
+  reactivateAt: z
+    .string()
+    .refine((s) => !isNaN(new Date(s).getTime()), "تاريخ غير صالح")
+    .refine((s) => {
+      const d = new Date(s);
+      const now = Date.now();
+      const max = now + 1000 * 60 * 60 * 24 * 365 * 2; // أقصى سنتين
+      return d.getTime() > now && d.getTime() < max;
+    }, "تاريخ خارج النطاق")
+    .optional(),
+  isDoNotContact: z.boolean().optional(),
+});
+
+// =============================================
 // Webhook
 // =============================================
 

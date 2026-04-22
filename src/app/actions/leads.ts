@@ -267,6 +267,8 @@ export async function getLeads(options?: {
   const conditions = [
     eq(leads.tenantId, tenantId),
     eq(leads.isDeleted, false),
+    // استثنِ المؤرشفين من القائمة الرئيسية — يظهرون فقط في /leads/archive
+    sql`${leads.archivedAt} IS NULL`,
   ];
 
   if (options?.stageId) {
@@ -845,6 +847,8 @@ export async function getAgingLeads(minDays: number = 3): Promise<AgingLead[]> {
     eq(leads.tenantId, tenantId),
     eq(leads.isDeleted, false),
     sql`${leads.bookingStatus} IS NULL`,
+    // المؤرشفون يخرجون من قائمة المُهمَلين — هم قرار قصدي
+    sql`${leads.archivedAt} IS NULL`,
   ];
   if (role === "COORDINATOR") {
     conditions.push(eq(leads.assignedTo, userId));
@@ -919,6 +923,7 @@ export async function getAgingLeadsCount(minDays: number = 3): Promise<{
     eq(leads.tenantId, tenantId),
     eq(leads.isDeleted, false),
     sql`${leads.bookingStatus} IS NULL`,
+    sql`${leads.archivedAt} IS NULL`,
     sql`COALESCE(
       (SELECT MAX(created_at) FROM follow_ups WHERE follow_ups.lead_id = ${leads.id}),
       ${leads.createdAt}

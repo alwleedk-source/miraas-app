@@ -321,10 +321,30 @@ export const leads = pgTable("leads", {
   bookingResourceId: uuid("booking_resource_id").references(() => users.id, { onDelete: "set null" }),
   bookingDurationMin: integer("booking_duration_min"),
   bookingEndTime: timestamp("booking_end_time", { withTimezone: true }),
+  // أرشفة قصدية مع سبب — مختلفة عن isDeleted (حذف "إخفاء")
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archiveReason: varchar("archive_reason", { length: 50 }),
+  archiveNote: text("archive_note"),
+  // "ذكّرني بهذا العميل بعد X" — اختياري
+  reactivateAt: timestamp("reactivate_at", { withTimezone: true }),
+  // طلب العميل عدم التواصل — يمنع reactivation + يستثنى من webhook
+  canRecontact: boolean("can_recontact").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   tenantDeletedIdx: index("leads_tenant_deleted_idx").on(t.tenantId, t.isDeleted),
+  tenantArchivedIdx: index("leads_tenant_archived_idx")
+    .on(t.tenantId, t.archivedAt)
+    .where(sql`${t.archivedAt} IS NOT NULL`),
+  tenantReasonIdx: index("leads_tenant_reason_idx")
+    .on(t.tenantId, t.archiveReason, t.archivedAt)
+    .where(sql`${t.archivedAt} IS NOT NULL`),
+  reactivateIdx: index("leads_reactivate_idx")
+    .on(t.reactivateAt)
+    .where(sql`${t.reactivateAt} IS NOT NULL AND ${t.archivedAt} IS NOT NULL`),
+  dncIdx: index("leads_dnc_idx")
+    .on(t.tenantId, t.canRecontact)
+    .where(sql`${t.canRecontact} = false`),
   tenantAssignedIdx: index("leads_tenant_assigned_idx").on(t.tenantId, t.assignedTo),
   tenantStageIdx: index("leads_tenant_stage_idx").on(t.tenantId, t.stageId),
   tenantBookingIdx: index("leads_tenant_booking_idx")

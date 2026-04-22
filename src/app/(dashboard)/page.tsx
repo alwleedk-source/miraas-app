@@ -18,6 +18,7 @@ import TodayTasks from "./today-tasks";
 import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
 import AgingLeadsBanner from "./aging-leads-banner";
+import ReactivationBanner from "./reactivation-banner";
 
 export default async function DashboardPage() {
   const { tenantId, role: userRole, session, userId } = await requireTenant();
@@ -301,7 +302,8 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {/* تنبيه العملاء المُهمَلين — يظهر فقط إذا فيه ما يحتاج متابعة */}
+      {/* تنبيهات ذكية — يظهر فقط ما يحتاج اهتمام */}
+      <ReactivationBanner />
       <AgingLeadsBanner />
 
       {/* بطاقات الإحصائيات */}
