@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, X, Calendar } from "lucide-react";
 import { toWhatsappUrl } from "@/lib/utils";
+import { CopyToReceptionist } from "@/components/handoff/copy-to-receptionist";
 
 type BookingSummaryItem = {
   id: string;
@@ -29,11 +30,13 @@ export default function TodayBookingsPanel({
   tomorrow,
   overdue,
   remindedLeadIds: initialRemindedIds,
+  receptionistPhone,
 }: {
   today: BookingSummaryItem[];
   tomorrow: BookingSummaryItem[];
   overdue: BookingSummaryItem[];
   remindedLeadIds: string[];
+  receptionistPhone?: string | null;
 }) {
   const [remindedIds, setRemindedIds] = useState<Set<string>>(
     new Set(initialRemindedIds)
@@ -213,6 +216,22 @@ export default function TodayBookingsPanel({
             {b.phone}
           </p>
         )}
+
+        {/* زر "نسخ للرسبشن" — يظهر دائماً (يقصد المنسقة تنقل البيانات) */}
+        <div className="pt-1.5 mt-1.5 border-t border-surface-100">
+          <CopyToReceptionist
+            booking={{
+              leadName: b.name,
+              phone: b.phone,
+              service: b.bookingService,
+              bookingDate: b.bookingDate,
+              notes: b.bookingNotes,
+              campaignName: b.sourceName,
+            }}
+            receptionistPhone={receptionistPhone}
+            variant="compact"
+          />
+        </div>
 
         {/* ===== أزرار الإجراءات السريعة — المواعيد المتأخرة فقط ===== */}
         {variant === "overdue" && (

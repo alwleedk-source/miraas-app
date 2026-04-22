@@ -42,11 +42,33 @@ export async function updateTenantSettings(input: {
 }) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
+  // input validation
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim();
+    if (!trimmed || trimmed.length > 255) {
+      throw new Error("اسم الشركة غير صالح");
+    }
+  }
+
+  // اقرأ settings الحالية ودمج (لا تستبدل) لمنع فقدان حقول أخرى
+  let mergedSettings: Record<string, unknown> | undefined;
+  if (input.settings) {
+    const [current] = await db
+      .select({ settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    mergedSettings = {
+      ...((current?.settings as Record<string, unknown>) ?? {}),
+      ...input.settings,
+    };
+  }
+
   await db
     .update(tenants)
     .set({
-      ...(input.name && { name: input.name }),
-      ...(input.settings && { settings: input.settings }),
+      ...(input.name && { name: input.name.trim() }),
+      ...(mergedSettings && { settings: mergedSettings }),
       updatedAt: new Date(),
     })
     .where(eq(tenants.id, tenantId));
@@ -57,7 +79,7 @@ export async function updateTenantSettings(input: {
     action: "SETTINGS_UPDATED",
     entityType: "tenant",
     entityId: tenantId,
-    details: input,
+    details: { changedFields: Object.keys(input) },
   });
 
   revalidatePath("/settings");

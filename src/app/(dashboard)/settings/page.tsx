@@ -91,7 +91,11 @@ export default async function SettingsPage() {
       </div>
 
       {/* معلومات الشركة */}
-      <SettingsForm tenantName={tenant?.name || ""} />
+      <SettingsForm
+        tenantName={tenant?.name || ""}
+        receptionistPhone={(tenant?.settings as { receptionistPhone?: string } | null)?.receptionistPhone || ""}
+        receptionistName={(tenant?.settings as { receptionistName?: string } | null)?.receptionistName || ""}
+      />
 
       {/* التخصيص */}
       <Card>

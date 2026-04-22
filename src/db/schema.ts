@@ -103,6 +103,8 @@ export const tenants = pgTable("tenants", {
     timezone?: string;
     language?: string;
     currency?: string;
+    receptionistPhone?: string;
+    receptionistName?: string;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

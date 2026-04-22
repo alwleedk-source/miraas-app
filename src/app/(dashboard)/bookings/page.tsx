@@ -8,13 +8,27 @@ import InternalMessagesBar from "./internal-messages-bar";
 import { CalendarDays, Clock, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/db";
-import { services, departments, users } from "@/db/schema";
+import { services, departments, users, tenants } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 
 export default async function BookingsPage() {
   const { tenantId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
   if (role === "PROVIDER") redirect("/provider");
+
+  // اقرأ رقم الرسبشن من tenant settings (تمكين زر "أرسل للرسبشن عبر واتساب")
+  let receptionistPhone: string | null = null;
+  try {
+    const [t] = await db
+      .select({ settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    receptionistPhone =
+      ((t?.settings as { receptionistPhone?: string } | null)?.receptionistPhone) ?? null;
+  } catch {
+    // ignore
+  }
 
   let bookings: Awaited<ReturnType<typeof getBookings>> = [];
   let summary: Awaited<ReturnType<typeof getBookingsSummary>> = {
@@ -169,6 +183,7 @@ export default async function BookingsPage() {
         tomorrow={summary.tomorrow}
         overdue={summary.overdue}
         remindedLeadIds={summary.remindedLeadIds}
+        receptionistPhone={receptionistPhone}
       />
 
       {/* Kanban الحجوزات أو Empty State */}
