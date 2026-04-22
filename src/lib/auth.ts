@@ -4,7 +4,15 @@ import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from "@/lib/email";
 
+// baseURL يُحدَّد من BETTER_AUTH_URL أو NEXT_PUBLIC_APP_URL — أيهما متاح
+const APP_URL =
+  process.env.BETTER_AUTH_URL ??
+  process.env.NEXT_PUBLIC_APP_URL ??
+  "http://localhost:3000";
+
 export const auth = betterAuth({
+  baseURL: APP_URL,
+  trustedOrigins: [APP_URL].filter(Boolean),
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
