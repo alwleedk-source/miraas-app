@@ -442,7 +442,8 @@ export async function getLeads(options?: {
 // =============================================
 
 export async function getLeadById(leadId: string) {
-  const { tenantId } = await getTenantId();
+  const { tenantId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   // جلب العميل الأساسي
   const [lead] = await db
@@ -544,7 +545,9 @@ export async function createFollowUp(input: {
 // =============================================
 
 export async function getFollowUps(leadId: string) {
-  const { tenantId } = await getTenantId();
+  const { tenantId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
 
   const data = await db.query.followUps.findMany({
     where: and(
@@ -565,7 +568,8 @@ export async function getFollowUps(leadId: string) {
 // =============================================
 
 export async function getDashboardStats() {
-  const { tenantId } = await getTenantId();
+  const { tenantId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   // dashboard يستثني المؤرشفين ليطابق ما يراه المستخدم في /leads
   const notArchived = sql`${leads.archivedAt} IS NULL`;
@@ -632,7 +636,8 @@ export async function getDashboardStats() {
 // =============================================
 
 export async function checkDuplicatePhones(phones: string[]) {
-  const { tenantId } = await getTenantId();
+  const { tenantId, role } = await getTenantId();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   if (phones.length === 0) return [];
 

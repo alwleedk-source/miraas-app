@@ -243,6 +243,7 @@ const baseBookingCols = {
 
 export async function getBookings() {
   const { tenantId, userId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   const conditions = [
     eq(leads.tenantId, tenantId),
@@ -282,7 +283,8 @@ export async function getBookings() {
 // =============================================
 
 export async function getBookingsSummary() {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
   const { end: tomorrowEnd } = getRiyadhDate(1);
@@ -537,7 +539,8 @@ export async function markBookingReminded(leadId: string) {
 // =============================================
 
 export async function searchLeadByPhone(phone: string) {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
   if (!phone || phone.trim().length < 4) return null;
 
   const normalized = normalizePhone(phone.trim());

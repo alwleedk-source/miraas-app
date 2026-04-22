@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { leads, providerSchedules, providerDayOffs, departments } from "@/db/schema";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
-import { assertUserInTenant, assertDepartmentInTenant } from "@/lib/tenant-guards";
+import { assertUserInTenant, assertDepartmentInTenant, assertRole, ROLE } from "@/lib/tenant-guards";
 
 const RIYADH_TZ = "Asia/Riyadh";
 
@@ -70,7 +70,8 @@ type GenerateSlotsInput = {
 export async function generateAvailableSlots(
   input: GenerateSlotsInput
 ): Promise<{ slots: TimeSlot[]; providerName?: string }> {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   await assertUserInTenant(input.providerId, tenantId);
   await assertDepartmentInTenant(input.departmentId, tenantId);
@@ -213,7 +214,8 @@ export async function checkBookingConflict(input: {
   hasConflict: boolean;
   conflictingBookings: { name: string; time: string }[];
 }> {
-  const { tenantId } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
 
   await assertUserInTenant(input.providerId, tenantId);
   await assertDepartmentInTenant(input.departmentId, tenantId);
