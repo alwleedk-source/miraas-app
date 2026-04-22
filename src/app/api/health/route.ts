@@ -7,43 +7,52 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/health — للـ load balancer وعمليات رصد uptime
+ * GET /api/health
  *
- * يتحقّق من:
- *   - اتصال DB يعمل (SELECT 1)
- *   - الـ env vars صحيحة
+ * يُرجع 200 دائماً إذا كان الـ app يستجيب — هذا ما يحتاجه Coolify
+ * (liveness probe). تفاصيل DB/env في الـ body — لا نُسقط الـ app إذا
+ * DB متعثر مؤقتاً، فقط نُبلّغ.
  *
- * يرجّع 200 إذا كل شيء OK، 503 إذا أي شيء مكسور.
- * لا يكشف تفاصيل حساسة في production (فقط ok/degraded).
+ * إذا أردت probe تحقق DB حقيقي، استخدم /api/health?strict=1 → يُرجع 503
+ * عندما أي subsystem فاشل.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const strict = url.searchParams.get("strict") === "1";
   const isProd = process.env.NODE_ENV === "production";
+
   const checks: Record<string, "ok" | "fail"> = {};
   const errors: string[] = [];
 
-  // 1. DB ping
+  // 1. DB ping (مع timeout قصير حتى لا يحبس probe)
   try {
-    await db.execute(sql`SELECT 1`);
+    await Promise.race([
+      db.execute(sql`SELECT 1`),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("db timeout 3s")), 3000)),
+    ]);
     checks.database = "ok";
   } catch (e) {
     checks.database = "fail";
-    errors.push(e instanceof Error ? e.message : "db error");
+    errors.push("db: " + (e instanceof Error ? e.message : String(e)).slice(0, 200));
   }
 
   // 2. env validation
   const envResult = validateEnv();
   checks.env = envResult.ok ? "ok" : "fail";
-  if (!envResult.ok) errors.push(...envResult.errors);
+  if (!envResult.ok) errors.push(...envResult.errors.map((m) => "env: " + m));
 
   const allOk = Object.values(checks).every((v) => v === "ok");
-  const body = allOk
-    ? { status: "ok", timestamp: new Date().toISOString() }
-    : {
-        status: "degraded",
-        checks,
-        // لا تكشف errors في production — فقط في dev
-        ...(isProd ? {} : { errors }),
-      };
 
-  return NextResponse.json(body, { status: allOk ? 200 : 503 });
+  const body = {
+    status: allOk ? "ok" : "degraded",
+    timestamp: new Date().toISOString(),
+    checks,
+    ...(isProd && allOk ? {} : { errors }),
+  };
+
+  // strict mode: 503 عند أي failure (للمراقبة الدقيقة)
+  // default: 200 دائماً (لـ Coolify liveness)
+  const httpStatus = strict && !allOk ? 503 : 200;
+
+  return NextResponse.json(body, { status: httpStatus });
 }

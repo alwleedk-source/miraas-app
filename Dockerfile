@@ -76,8 +76,9 @@ USER nextjs
 
 EXPOSE 3000
 
-# Coolify / orchestrator can use this for health probes
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1
+# Liveness probe — يُرجع 200 إذا الـ app يستجيب (حتى لو DB متعثر مؤقتاً)
+# نستخدم Node بدل wget لتجنب الاعتماد على BusyBox tools
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["sh", "./start.sh"]
