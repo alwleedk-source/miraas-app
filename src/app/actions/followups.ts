@@ -331,6 +331,26 @@ export async function quickNoResponse(leadId: string, retryAfterDays: number = 1
   retryDate.setDate(retryDate.getDate() + retryAfterDays);
   retryDate.setHours(10, 0, 0, 0);
 
+  // idempotency: لو مرّت أقل من 30 ثانية على آخر "لم يرد"، تجاهل (الضغط المكرر)
+  const thirtySecondsAgo = new Date(Date.now() - 30_000);
+  const [recent] = await db
+    .select({ id: followUps.id })
+    .from(followUps)
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, leadId),
+        eq(followUps.userId, userId),
+        eq(followUps.type, "CALL"),
+        sql`${followUps.notes} LIKE '%لم يرد%'`,
+        sql`${followUps.completedAt} >= ${thirtySecondsAgo.toISOString()}`,
+      ),
+    )
+    .limit(1);
+  if (recent) {
+    return { success: true, retryDate, alreadyMarked: true };
+  }
+
   return await db.transaction(async (tx) => {
     // 1. سجّل المحاولة الحالية كمكتملة
     await tx.insert(followUps).values({
@@ -421,15 +441,27 @@ export async function getOverdueFollowUpsCount() {
 
 // =============================================
 // جلب عدد محاولات التواصل السابقة مع عميل
+// محاولة = CALL أو WHATSAPP مكتمل وغير مُلغى (يمثّل اتصالاً فعلياً)
 // =============================================
 
 export async function getLeadFollowUpCount(leadId: string) {
-  const { tenantId } = await getContext();
+  const { tenantId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
 
   const [result] = await db
     .select({ total: count() })
     .from(followUps)
-    .where(and(eq(followUps.tenantId, tenantId), eq(followUps.leadId, leadId)));
+    .where(
+      and(
+        eq(followUps.tenantId, tenantId),
+        eq(followUps.leadId, leadId),
+        // محاولة فعلية فقط (لا ملاحظات ولا مُلغاة)
+        sql`${followUps.type} IN ('CALL', 'WHATSAPP', 'MESSAGE')`,
+        isNotNull(followUps.completedAt),
+        sql`${followUps.notes} NOT LIKE '(ملغى)%' OR ${followUps.notes} IS NULL`,
+      ),
+    );
 
   return result?.total || 0;
 }
@@ -439,7 +471,9 @@ export async function getLeadFollowUpCount(leadId: string) {
 // =============================================
 
 export async function getLeadRecentNotes(leadId: string) {
-  const { tenantId } = await getContext();
+  const { tenantId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
 
   const notes = await db
     .select({
@@ -462,7 +496,9 @@ export async function getLeadRecentNotes(leadId: string) {
 // =============================================
 
 export async function getLeadPendingFollowUp(leadId: string) {
-  const { tenantId } = await getContext();
+  const { tenantId, role } = await getContext();
+  assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
+  await assertLeadInTenant(leadId, tenantId);
 
   const [pending] = await db
     .select({
