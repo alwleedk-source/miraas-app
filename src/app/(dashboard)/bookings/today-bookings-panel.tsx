@@ -6,9 +6,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Loader2, X, Calendar } from "lucide-react";
+import { CheckCircle2, Loader2, X, Calendar, Copy, Check, Send } from "lucide-react";
 import { toWhatsappUrl } from "@/lib/utils";
 import { CopyToReceptionist } from "@/components/handoff/copy-to-receptionist";
+import {
+  formatDayScheduleForReceptionist,
+  buildReceptionistWhatsAppUrl,
+  copyToClipboard,
+} from "@/lib/handoff";
 
 type BookingSummaryItem = {
   id: string;
@@ -279,6 +284,28 @@ export default function TodayBookingsPanel({
   const todayRemindedCount = today.filter((b) => remindedIds.has(b.id)).length;
   const activeOverdue = overdue.filter((b) => !resolvedIds.has(b.id));
 
+  // زر "نسخ كل جدول اليوم" — يجمع كل المواعيد في رسالة واحدة
+  const todayScheduleText = formatDayScheduleForReceptionist(
+    today.map((b) => ({
+      leadName: b.name,
+      phone: b.phone,
+      service: b.bookingService,
+      bookingDate: b.bookingDate,
+      notes: b.bookingNotes,
+    })),
+    { dayLabel: "اليوم" }
+  );
+  const tomorrowScheduleText = formatDayScheduleForReceptionist(
+    tomorrow.map((b) => ({
+      leadName: b.name,
+      phone: b.phone,
+      service: b.bookingService,
+      bookingDate: b.bookingDate,
+      notes: b.bookingNotes,
+    })),
+    { dayLabel: "الغد" }
+  );
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -313,9 +340,17 @@ export default function TodayBookingsPanel({
             {today.length === 0 ? (
               <p className="text-sm text-surface-400">لا توجد مواعيد اليوم</p>
             ) : (
-              <div className="space-y-2">
-                {today.map((b) => renderBookingCard(b, "today"))}
-              </div>
+              <>
+                <CopyDayBar
+                  text={todayScheduleText}
+                  receptionistPhone={receptionistPhone}
+                  count={today.length}
+                  label="نسخ جدول اليوم كاملاً"
+                />
+                <div className="space-y-2 mt-2">
+                  {today.map((b) => renderBookingCard(b, "today"))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -332,9 +367,17 @@ export default function TodayBookingsPanel({
             {tomorrow.length === 0 ? (
               <p className="text-sm text-surface-400">لا توجد مواعيد الغد</p>
             ) : (
-              <div className="space-y-2">
-                {tomorrow.map((b) => renderBookingCard(b, "tomorrow"))}
-              </div>
+              <>
+                <CopyDayBar
+                  text={tomorrowScheduleText}
+                  receptionistPhone={receptionistPhone}
+                  count={tomorrow.length}
+                  label="نسخ جدول الغد كاملاً"
+                />
+                <div className="space-y-2 mt-2">
+                  {tomorrow.map((b) => renderBookingCard(b, "tomorrow"))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -433,5 +476,68 @@ export default function TodayBookingsPanel({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * شريط "نسخ جدول كامل" — يظهر فوق قائمة المواعيد عندما يكون فيها ≥1 موعد.
+ * يدعم نسخ للـ clipboard + إرسال WhatsApp مباشر للرسبشن (إن كان رقمها محفوظ).
+ */
+function CopyDayBar({
+  text,
+  receptionistPhone,
+  count,
+  label,
+}: {
+  text: string;
+  receptionistPhone?: string | null;
+  count: number;
+  label: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const waUrl = receptionistPhone
+    ? buildReceptionistWhatsAppUrl(receptionistPhone, text)
+    : null;
+
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 mb-1 pb-2 border-b border-surface-100">
+      <button
+        onClick={handleCopy}
+        className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] rounded-md bg-surface-100 hover:bg-surface-200 text-surface-700 transition-colors font-medium"
+        title={`${label} (${count} موعد)`}
+      >
+        {copied ? (
+          <>
+            <Check className="h-3 w-3 text-success-600" />
+            نُسخ الجدول
+          </>
+        ) : (
+          <>
+            <Copy className="h-3 w-3" />
+            نسخ كل الجدول
+          </>
+        )}
+      </button>
+      {waUrl && (
+        <a
+          href={waUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 px-2 py-1.5 text-[11px] rounded-md bg-[#25D366] hover:bg-[#1da851] text-white font-medium transition-colors"
+          title="إرسال للرسبشن عبر واتساب"
+        >
+          <Send className="h-3 w-3" />
+          للرسبشن
+        </a>
+      )}
+    </div>
   );
 }

@@ -83,6 +83,67 @@ export function formatBookingForReceptionist(b: BookingHandoff): string {
 }
 
 /**
+ * يبني نص جدول اليوم كاملاً للرسبشن — مرتّبة بالوقت.
+ *
+ * مثال:
+ *   ☀️ جدول اليوم — مِراس
+ *   ─────────────────
+ *   🕐 9:00 ص — أحمد محمد
+ *      📱 0551234567
+ *      🏷️ تنظيف أسنان
+ *
+ *   🕐 11:30 ص — فاطمة علي
+ *      📱 0507654321
+ *      🏷️ كشف عام
+ *      💬 يفضّل بعد العصر
+ *   ─────────────────
+ *   📊 الإجمالي: 2 موعد
+ */
+export function formatDayScheduleForReceptionist(
+  bookings: BookingHandoff[],
+  options?: { dayLabel?: string }
+): string {
+  if (bookings.length === 0) return "📅 لا توجد مواعيد";
+
+  const dayLabel = options?.dayLabel ?? "اليوم";
+  const lines: string[] = [];
+
+  lines.push(`☀️ جدول ${dayLabel} — مِراس`);
+  lines.push("─────────────────");
+
+  // ترتيب حسب الوقت
+  const sorted = [...bookings].sort((a, b) => {
+    const ta = a.bookingDate ? new Date(a.bookingDate).getTime() : 0;
+    const tb = b.bookingDate ? new Date(b.bookingDate).getTime() : 0;
+    return ta - tb;
+  });
+
+  for (const b of sorted) {
+    const time = b.bookingDate
+      ? new Date(b.bookingDate).toLocaleTimeString("ar-SA", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Asia/Riyadh",
+        })
+      : "--:--";
+
+    lines.push(`🕐 ${time} — ${b.leadName}`);
+    if (b.phone) lines.push(`   📱 ${b.phone}`);
+    if (b.service) lines.push(`   🏷️ ${b.service}`);
+    if (b.notes && b.notes.trim()) lines.push(`   💬 ${b.notes.trim()}`);
+    lines.push(""); // فاصل بين المواعيد
+  }
+
+  // إزالة آخر سطر فارغ
+  while (lines[lines.length - 1] === "") lines.pop();
+
+  lines.push("─────────────────");
+  lines.push(`📊 الإجمالي: ${bookings.length} موعد`);
+
+  return lines.join("\n");
+}
+
+/**
  * يبني wa.me URL مع النص prefilled لإرساله للرسبشن.
  * @param receptionistPhone — رقم الرسبشن المحفوظ في tenant settings
  * @param text — النص المُولَّد من formatBookingForReceptionist
