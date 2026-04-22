@@ -2,9 +2,10 @@
 
 import { db } from "@/db";
 import { leads, leadSources, users, pipelineStages } from "@/db/schema";
-import { eq, and, or, ilike, sql } from "drizzle-orm";
+import { eq, and, or, ilike, sql, isNotNull } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
+import { ARCHIVE_REASONS } from "@/lib/archive-reasons";
 
 const PRIORITY_LABELS: Record<string, string> = {
   LOW: "منخفضة",
@@ -161,6 +162,114 @@ export async function exportLeadsCSV(options?: {
 
   return {
     filename: `meras-leads-${today}${suffix}.csv`,
+    csv,
+    count: rows.length,
+  };
+}
+
+/**
+ * تصدير العملاء المؤرشفين كـ CSV — مع أعمدة خاصة بالأرشيف.
+ *
+ * - OWNER/ADMIN فقط
+ * - يدعم فلترة بالسبب أو البحث
+ * - أعمدة إضافية: سبب الأرشفة، ملاحظة، تاريخ الأرشفة، تاريخ إعادة التفعيل،
+ *   هل DNC (Do Not Contact)
+ */
+export async function exportArchivedLeadsCSV(options?: {
+  reason?: string;
+  search?: string;
+}): Promise<{ filename: string; csv: string; count: number }> {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  const conditions = [
+    eq(leads.tenantId, tenantId),
+    eq(leads.isDeleted, false),
+    isNotNull(leads.archivedAt),
+  ];
+
+  if (options?.reason) {
+    conditions.push(eq(leads.archiveReason, options.reason));
+  }
+
+  const whereClause = options?.search
+    ? and(
+        and(...conditions),
+        or(
+          ilike(leads.name, `%${options.search}%`),
+          ilike(leads.phone, `%${options.search}%`),
+        ),
+      )
+    : and(...conditions);
+
+  const rows = await db
+    .select({
+      name: leads.name,
+      phone: leads.phone,
+      email: leads.email,
+      archivedAt: leads.archivedAt,
+      archiveReason: leads.archiveReason,
+      archiveNote: leads.archiveNote,
+      reactivateAt: leads.reactivateAt,
+      canRecontact: leads.canRecontact,
+      stageName: pipelineStages.name,
+      assignedUserName: users.name,
+      sourceName: leadSources.name,
+      createdAt: leads.createdAt,
+    })
+    .from(leads)
+    .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
+    .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .where(whereClause)
+    .orderBy(leads.archivedAt)
+    .limit(10_000);
+
+  const headers = [
+    "الاسم",
+    "الهاتف",
+    "الإيميل",
+    "سبب الأرشفة",
+    "ملاحظة",
+    "تاريخ الأرشفة",
+    "موعد إعادة التفعيل",
+    "DNC (لا تواصل)",
+    "المرحلة قبل الأرشفة",
+    "المنسق",
+    "المصدر",
+    "تاريخ الإضافة",
+  ];
+
+  const lines: string[] = [headers.map(csvCell).join(",")];
+
+  for (const r of rows) {
+    const reasonInfo = r.archiveReason
+      ? ARCHIVE_REASONS[r.archiveReason as keyof typeof ARCHIVE_REASONS]
+      : null;
+    lines.push(
+      [
+        csvCell(r.name),
+        csvCell(r.phone),
+        csvCell(r.email),
+        csvCell(reasonInfo?.label ?? r.archiveReason),
+        csvCell(r.archiveNote),
+        csvCell(formatDateRiyadh(r.archivedAt)),
+        csvCell(formatDateRiyadh(r.reactivateAt)),
+        csvCell(r.canRecontact ? "" : "نعم"),
+        csvCell(r.stageName),
+        csvCell(r.assignedUserName),
+        csvCell(r.sourceName),
+        csvCell(formatDateRiyadh(r.createdAt)),
+      ].join(","),
+    );
+  }
+
+  const csv = "﻿" + lines.join("\n");
+  const today = new Date().toISOString().slice(0, 10);
+  const reasonSuffix = options?.reason ? `-${options.reason.toLowerCase()}` : "";
+
+  return {
+    filename: `meras-archive-${today}${reasonSuffix}.csv`,
     csv,
     count: rows.length,
   };

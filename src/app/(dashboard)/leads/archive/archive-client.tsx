@@ -4,13 +4,14 @@ import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search, RefreshCw, ArrowLeft, ArrowRight, Loader2, Ban,
-  X, Clock, MessageCircle, Phone,
+  X, Clock, MessageCircle, Phone, Download,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ARCHIVE_REASONS } from "@/lib/archive-reasons";
 import { unarchiveLead, bulkReactivateLeads } from "@/app/actions/archive";
+import { exportArchivedLeadsCSV } from "@/app/actions/export-leads";
 import { toTelUrl, toWhatsappUrl } from "@/lib/utils";
 import { useNow } from "@/lib/hooks";
 
@@ -111,6 +112,29 @@ export default function ArchiveClient({
     });
   };
 
+  const handleExport = async () => {
+    try {
+      const result = await exportArchivedLeadsCSV({
+        reason: currentReason,
+        search: currentSearch,
+      });
+      const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setBulkResult(`📥 تم تصدير ${result.count} عميل مؤرشف`);
+      setTimeout(() => setBulkResult(null), 3000);
+    } catch (e) {
+      setBulkResult(`❌ ${e instanceof Error ? e.message : "فشل التصدير"}`);
+      setTimeout(() => setBulkResult(null), 5000);
+    }
+  };
+
   const handleBulkReactivate = () => {
     if (selected.size === 0) return;
     if (!confirm(`أعد تفعيل ${selected.size} عميل؟ سيعودون للـ pipeline.`)) return;
@@ -143,8 +167,8 @@ export default function ArchiveClient({
       {/* Search + bulk bar */}
       <Card>
         <CardContent className="p-3 space-y-2">
-          <form onSubmit={updateSearch} className="flex gap-2">
-            <div className="relative flex-1">
+          <form onSubmit={updateSearch} className="flex gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-surface-400" />
               <Input
                 value={search}
@@ -155,6 +179,16 @@ export default function ArchiveClient({
             </div>
             <Button type="submit" variant="outline" size="sm">
               بحث
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              title="تصدير المعروض كـ CSV"
+            >
+              <Download className="h-4 w-4 me-1" />
+              تصدير
             </Button>
             {(currentSearch || currentReason || dueOnly) && (
               <Button
