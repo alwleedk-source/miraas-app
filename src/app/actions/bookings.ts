@@ -55,6 +55,9 @@ export async function createBooking(raw: unknown) {
   assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);
   const input = createBookingSchema.parse(raw);
   await assertLeadInTenant(input.leadId, tenantId);
+  if (input.bookingDepartmentId) {
+    await assertDepartmentInTenant(input.bookingDepartmentId, tenantId);
+  }
 
   try {
   return await db.transaction(async (tx) => {
@@ -65,6 +68,7 @@ export async function createBooking(raw: unknown) {
         bookingDate: new Date(input.bookingDate),
         bookingService: input.bookingService,
         bookingNotes: input.bookingNotes || null,
+        bookingDepartmentId: input.bookingDepartmentId || null,
         updatedAt: new Date(),
       })
       .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
@@ -207,6 +211,8 @@ export async function getBookings() {
       ...baseBookingCols,
       sourceName: leadSources.name,
       assignedUserName: users.name,
+      departmentName: departments.name,
+      departmentColor: departments.color,
       pendingFollowUps: sql<number>`(
         SELECT COUNT(*) FROM follow_ups
         WHERE follow_ups.lead_id = ${leads.id}
@@ -217,6 +223,7 @@ export async function getBookings() {
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
     .where(and(...conditions))
     .orderBy(leads.bookingDate);
 }
@@ -231,12 +238,18 @@ export async function getBookingsSummary() {
   const { start: todayStart, end: todayEnd } = getRiyadhDate(0);
   const { end: tomorrowEnd } = getRiyadhDate(1);
 
-  const selectCols = { ...baseBookingCols, sourceName: leadSources.name };
+  const selectCols = {
+    ...baseBookingCols,
+    sourceName: leadSources.name,
+    departmentName: departments.name,
+    departmentColor: departments.color,
+  };
 
   const todayBookings = await db
     .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -252,6 +265,7 @@ export async function getBookingsSummary() {
     .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),
@@ -267,6 +281,7 @@ export async function getBookingsSummary() {
     .select(selectCols)
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
     .where(
       and(
         eq(leads.tenantId, tenantId),

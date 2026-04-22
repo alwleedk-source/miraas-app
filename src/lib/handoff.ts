@@ -16,6 +16,7 @@ export type BookingHandoff = {
   notes: string | null;
   coordinatorName?: string | null;
   campaignName?: string | null;
+  departmentName?: string | null;
 };
 
 /**
@@ -44,6 +45,10 @@ export function formatBookingForReceptionist(b: BookingHandoff): string {
 
   if (b.phone) {
     lines.push(`📱 ${b.phone}`);
+  }
+
+  if (b.departmentName) {
+    lines.push(`🏥 القسم: ${b.departmentName}`);
   }
 
   if (b.service) {
@@ -129,6 +134,7 @@ export function formatDayScheduleForReceptionist(
 
     lines.push(`🕐 ${time} — ${b.leadName}`);
     if (b.phone) lines.push(`   📱 ${b.phone}`);
+    if (b.departmentName) lines.push(`   🏥 ${b.departmentName}`);
     if (b.service) lines.push(`   🏷️ ${b.service}`);
     if (b.notes && b.notes.trim()) lines.push(`   💬 ${b.notes.trim()}`);
     lines.push(""); // فاصل بين المواعيد

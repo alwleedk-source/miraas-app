@@ -23,6 +23,8 @@ type BookingSummaryItem = {
   bookingService: string | null;
   bookingNotes: string | null;
   sourceName: string | null;
+  departmentName?: string | null;
+  departmentColor?: string | null;
 };
 
 type RescheduleData = {
@@ -206,6 +208,22 @@ export default function TodayBookingsPanel({
             : ""}{" "}
           — {b.bookingService}
         </p>
+        {b.departmentName && (
+          <span
+            className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md mt-1 border"
+            style={{
+              borderColor: `${b.departmentColor}40`,
+              backgroundColor: `${b.departmentColor}14`,
+              color: b.departmentColor ?? undefined,
+            }}
+          >
+            <span
+              className="inline-block w-1 h-1 rounded-full"
+              style={{ backgroundColor: b.departmentColor ?? undefined }}
+            />
+            {b.departmentName}
+          </span>
+        )}
         {b.sourceName && (
           <p className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5 inline-block">
             📢 {b.sourceName}
@@ -232,6 +250,7 @@ export default function TodayBookingsPanel({
               bookingDate: b.bookingDate,
               notes: b.bookingNotes,
               campaignName: b.sourceName,
+              departmentName: b.departmentName,
             }}
             receptionistPhone={receptionistPhone}
             variant="compact"
@@ -292,6 +311,7 @@ export default function TodayBookingsPanel({
       service: b.bookingService,
       bookingDate: b.bookingDate,
       notes: b.bookingNotes,
+      departmentName: b.departmentName,
     })),
     { dayLabel: "اليوم" }
   );
@@ -302,6 +322,7 @@ export default function TodayBookingsPanel({
       service: b.bookingService,
       bookingDate: b.bookingDate,
       notes: b.bookingNotes,
+      departmentName: b.departmentName,
     })),
     { dayLabel: "الغد" }
   );

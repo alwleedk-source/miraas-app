@@ -112,7 +112,8 @@ interface Props {
   teamMembers?: TeamMember[];
   tags?: TagData[];
   currentUserRole: string;
-  availableServices?: { id: string; name: string }[];
+  availableServices?: { id: string; name: string; departmentId?: string | null }[];
+  availableDepartments?: { id: string; name: string; color: string }[];
 }
 
 type FollowUpType = "CALL" | "MESSAGE" | "MEETING" | "EMAIL" | "WHATSAPP" | "NOTE";
@@ -130,7 +131,7 @@ const FOLLOW_UP_TYPES: { value: FollowUpType; label: string }[] = [
 // Component
 // =============================================
 
-export default function LeadsClient({ initialLeads, stages, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [] }: Props) {
+export default function LeadsClient({ initialLeads, stages, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [], availableDepartments = [] }: Props) {
   const now = useNow();
   const [leads, setLeads] = useState(initialLeads);
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
@@ -193,6 +194,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
   const [bookingDate, setBookingDate] = useState("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [bookingNotes, setBookingNotes] = useState("");
+  const [bookingDepartmentId, setBookingDepartmentId] = useState("");
 
   // أزرار المتابعة السريعة
   const [quickActionLeadId, setQuickActionLeadId] = useState<string | null>(null);
@@ -479,6 +481,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
           bookingDate,
           bookingService: selectedServices.join("، "),
           bookingNotes: bookingNotes || undefined,
+          bookingDepartmentId: bookingDepartmentId || undefined,
         });
         const stage = stages.find((s) => s.id === bookingModal.stageId);
         setLeads((prev) =>
@@ -488,6 +491,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
         setBookingDate("");
         setSelectedServices([]);
         setBookingNotes("");
+        setBookingDepartmentId("");
       } catch {
         setError("فشل في إنشاء الحجز");
       }
@@ -2257,39 +2261,103 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label>الخدمات *</Label>
-                {availableServices.length > 0 ? (
+              {/* القسم — يُرشّح قائمة الخدمات */}
+              {availableDepartments.length > 0 && (
+                <div className="space-y-2">
+                  <Label>القسم</Label>
                   <div className="flex flex-wrap gap-2">
-                    {availableServices.map((svc) => {
-                      const isSelected = selectedServices.includes(svc.name);
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBookingDepartmentId("");
+                        // مسح الخدمات المختارة لتجنّب عدم تطابقها مع القسم الجديد
+                        setSelectedServices([]);
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
+                        !bookingDepartmentId
+                          ? "border-surface-400 bg-surface-100 text-surface-700"
+                          : "border-surface-200 bg-white text-surface-500 hover:border-surface-300"
+                      }`}
+                    >
+                      الكل
+                    </button>
+                    {availableDepartments.map((dept) => {
+                      const isSelected = bookingDepartmentId === dept.id;
                       return (
                         <button
-                          key={svc.id}
+                          key={dept.id}
                           type="button"
                           onClick={() => {
-                            setSelectedServices((prev) =>
-                              isSelected
-                                ? prev.filter((s) => s !== svc.name)
-                                : [...prev, svc.name]
-                            );
+                            setBookingDepartmentId(dept.id);
+                            setSelectedServices([]);
                           }}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
-                            isSelected
-                              ? "border-primary-500 bg-primary-50 text-primary-700"
-                              : "border-surface-200 bg-white text-surface-600 hover:border-surface-300"
-                          }`}
+                          className="px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all"
+                          style={{
+                            borderColor: isSelected ? dept.color : undefined,
+                            backgroundColor: isSelected ? `${dept.color}18` : undefined,
+                            color: isSelected ? dept.color : undefined,
+                          }}
                         >
-                          {isSelected && "✓ "}{svc.name}
+                          {isSelected && "✓ "}
+                          <span
+                            className="inline-block w-2 h-2 rounded-full me-1 align-middle"
+                            style={{ backgroundColor: dept.color }}
+                          />
+                          {dept.name}
                         </button>
                       );
                     })}
                   </div>
-                ) : (
-                  <div className="text-xs text-surface-400 p-3 rounded-lg bg-surface-50 border border-dashed border-surface-200">
-                    لم تُضف خدمات بعد. <a href="/settings" className="text-primary-600 underline">أضفها من الإعدادات</a>
-                  </div>
-                )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>الخدمات *</Label>
+                {(() => {
+                  const filteredServices = bookingDepartmentId
+                    ? availableServices.filter(
+                        (s) => !s.departmentId || s.departmentId === bookingDepartmentId,
+                      )
+                    : availableServices;
+                  if (filteredServices.length === 0) {
+                    return (
+                      <div className="text-xs text-surface-400 p-3 rounded-lg bg-surface-50 border border-dashed border-surface-200">
+                        {availableServices.length === 0 ? (
+                          <>لم تُضف خدمات بعد. <a href="/settings" className="text-primary-600 underline">أضفها من الإعدادات</a></>
+                        ) : (
+                          "لا خدمات في هذا القسم — اختر قسماً آخر أو «الكل»"
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      {filteredServices.map((svc) => {
+                        const isSelected = selectedServices.includes(svc.name);
+                        return (
+                          <button
+                            key={svc.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedServices((prev) =>
+                                isSelected
+                                  ? prev.filter((s) => s !== svc.name)
+                                  : [...prev, svc.name]
+                              );
+                            }}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
+                              isSelected
+                                ? "border-primary-500 bg-primary-50 text-primary-700"
+                                : "border-surface-200 bg-white text-surface-600 hover:border-surface-300"
+                            }`}
+                          >
+                            {isSelected && "✓ "}{svc.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="space-y-2">

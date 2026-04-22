@@ -12,7 +12,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { toWhatsappUrl } from "@/lib/utils";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { activityLog, users, followUps, leads, leadSources } from "@/db/schema";
+import { activityLog, users, followUps, leads, leadSources, departments } from "@/db/schema";
 import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import TodayTasks from "./today-tasks";
 import UpcomingFollowUps from "./upcoming-followups";
@@ -234,6 +234,8 @@ export default async function DashboardPage() {
     bookingNotes: string | null;
     bookingStatus: string | null;
     sourceName: string | null;
+    departmentName: string | null;
+    departmentColor: string | null;
   }[] = [];
   try {
     const startOfDay = new Date();
@@ -251,9 +253,12 @@ export default async function DashboardPage() {
         bookingNotes: leads.bookingNotes,
         bookingStatus: leads.bookingStatus,
         sourceName: leadSources.name,
+        departmentName: departments.name,
+        departmentColor: departments.color,
       })
       .from(leads)
       .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+      .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
       .where(
         and(
           eq(leads.tenantId, tenantId),
@@ -488,6 +493,22 @@ export default async function DashboardPage() {
                       {b.sourceName && (
                         <span className="text-[10px] text-primary-600 bg-primary-50 rounded px-1.5 py-0.5">
                           📢 {b.sourceName}
+                        </span>
+                      )}
+                      {b.departmentName && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border"
+                          style={{
+                            borderColor: `${b.departmentColor}40`,
+                            backgroundColor: `${b.departmentColor}14`,
+                            color: b.departmentColor ?? undefined,
+                          }}
+                        >
+                          <span
+                            className="inline-block w-1 h-1 rounded-full"
+                            style={{ backgroundColor: b.departmentColor ?? undefined }}
+                          />
+                          {b.departmentName}
                         </span>
                       )}
                     </div>

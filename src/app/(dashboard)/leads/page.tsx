@@ -2,7 +2,7 @@ import { getLeads } from "@/app/actions/leads";
 import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { pipelineStages, users, tags, services } from "@/db/schema";
+import { pipelineStages, users, tags, services, departments } from "@/db/schema";
 import { eq, asc, and, isNull } from "drizzle-orm";
 import LeadsClient from "./leads-client";
 
@@ -84,14 +84,26 @@ export default async function LeadsPage() {
     // ignore
   }
 
-  // جلب الخدمات النشطة
-  let servicesData: { id: string; name: string }[] = [];
+  // جلب الخدمات النشطة (مع departmentId للفلترة)
+  let servicesData: { id: string; name: string; departmentId: string | null }[] = [];
   try {
     servicesData = await db
-      .select({ id: services.id, name: services.name })
+      .select({ id: services.id, name: services.name, departmentId: services.departmentId })
       .from(services)
       .where(and(eq(services.tenantId, tenantId), eq(services.isActive, true)))
       .orderBy(asc(services.name));
+  } catch {
+    // ignore
+  }
+
+  // جلب الأقسام النشطة
+  let departmentsData: { id: string; name: string; color: string }[] = [];
+  try {
+    departmentsData = await db
+      .select({ id: departments.id, name: departments.name, color: departments.color })
+      .from(departments)
+      .where(and(eq(departments.tenantId, tenantId), eq(departments.isActive, true)))
+      .orderBy(asc(departments.name));
   } catch {
     // ignore
   }
@@ -105,6 +117,7 @@ export default async function LeadsPage() {
       tags={tagsData}
       currentUserRole={userRole}
       availableServices={servicesData}
+      availableDepartments={departmentsData}
     />
   );
 }

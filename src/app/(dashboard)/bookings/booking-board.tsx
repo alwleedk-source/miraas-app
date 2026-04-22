@@ -30,6 +30,8 @@ type Booking = {
   bookingDurationMin: number | null;
   sourceName: string | null;
   assignedUserName: string | null;
+  departmentName?: string | null;
+  departmentColor?: string | null;
   pendingFollowUps?: number;
 };
 
@@ -397,6 +399,24 @@ export default function BookingBoard({
                       <Bell className="h-3 w-3" />
                       {booking.pendingFollowUps} متابعة مجدولة
                     </p>
+                  )}
+
+                  {/* شارة القسم — لون + اسم لتعرف الرسبشن التوجيه بسرعة */}
+                  {booking.departmentName && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md mb-1 border"
+                      style={{
+                        borderColor: `${booking.departmentColor}40`,
+                        backgroundColor: `${booking.departmentColor}14`,
+                        color: booking.departmentColor ?? undefined,
+                      }}
+                    >
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: booking.departmentColor ?? undefined }}
+                      />
+                      {booking.departmentName}
+                    </span>
                   )}
 
                   {booking.bookingService && (

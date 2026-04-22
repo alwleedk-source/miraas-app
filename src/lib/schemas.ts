@@ -69,6 +69,7 @@ export const createBookingSchema = z.object({
   bookingDate: reasonableDate,
   bookingService: z.string().trim().min(1).max(500),
   bookingNotes: z.string().max(2000).optional(),
+  bookingDepartmentId: z.string().uuid().optional().nullable(),
 });
 
 export const updateBookingStatusSchema = z.object({
