@@ -183,9 +183,14 @@ export const pipelineStages = pgTable("pipeline_stages", {
   isDefault: boolean("is_default").default(false).notNull(),
   isExclusive: boolean("is_exclusive").default(false).notNull(),
   isBooking: boolean("is_booking").default(false).notNull(),
+  // Soft archive — المرحلة لا تُحذف نهائياً، تُنقل إلى أرشيف
+  // قابل للاسترجاع بنقرة. يحمي من الخطأ بدون تقييد المالك.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   tenantNameUnique: uniqueIndex("pipeline_stages_tenant_name_unique").on(t.tenantId, t.name),
+  tenantArchivedIdx: index("pipeline_stages_tenant_archived_idx")
+    .on(t.tenantId, t.archivedAt),
 }));
 
 // ============================================

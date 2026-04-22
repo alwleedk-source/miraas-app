@@ -3,7 +3,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { pipelineStages, users, tags, services } from "@/db/schema";
-import { eq, asc, and } from "drizzle-orm";
+import { eq, asc, and, isNull } from "drizzle-orm";
 import LeadsClient from "./leads-client";
 
 export default async function LeadsPage() {
@@ -39,7 +39,7 @@ export default async function LeadsPage() {
         color: pipelineStages.color,
       })
       .from(pipelineStages)
-      .where(eq(pipelineStages.tenantId, tenantId))
+      .where(and(eq(pipelineStages.tenantId, tenantId), isNull(pipelineStages.archivedAt)))
       .orderBy(asc(pipelineStages.position));
 
     // محاولة جلب isBooking بشكل آمن (العمود قد لا يكون موجوداً بعد)
@@ -50,7 +50,7 @@ export default async function LeadsPage() {
           isBooking: pipelineStages.isBooking,
         })
         .from(pipelineStages)
-        .where(eq(pipelineStages.tenantId, tenantId));
+        .where(and(eq(pipelineStages.tenantId, tenantId), isNull(pipelineStages.archivedAt)));
 
       const bookingMap = new Map(stagesWithBooking.map((s) => [s.id, s.isBooking]));
       stagesData = stagesData.map((s) => ({ ...s, isBooking: bookingMap.get(s.id) || false }));

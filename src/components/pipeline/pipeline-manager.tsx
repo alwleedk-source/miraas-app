@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import {
   GripVertical,
   Pencil,
-  Trash2,
+  Archive,
+  ArchiveRestore,
   Plus,
   Check,
   X,
@@ -18,11 +19,14 @@ import {
   Inbox,
   Lock,
   LockOpen,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
   createStage,
   updateStage,
-  deleteStage,
+  archiveStage,
+  unarchiveStage,
   reorderStages,
   setDefaultStage,
   toggleExclusive,
@@ -38,6 +42,13 @@ interface Stage {
   count: number;
 }
 
+interface ArchivedStage {
+  id: string;
+  name: string;
+  color: string;
+  archivedAt: Date | null;
+}
+
 const PRESET_COLORS = [
   "#3B82F6", "#F59E0B", "#EF4444", "#8B5CF6",
   "#22C55E", "#6B7280", "#EC4899", "#14B8A6",
@@ -47,11 +58,14 @@ const PRESET_COLORS = [
 export function PipelineManager({
   stages: initialStages,
   totalLeads,
+  archivedStages: initialArchivedStages = [],
 }: {
   stages: Stage[];
   totalLeads: number;
+  archivedStages?: ArchivedStage[];
 }) {
   const [stages, setStages] = useState(initialStages);
+  const [archivedStages, setArchivedStages] = useState(initialArchivedStages);
   const [isPending, startTransition] = useTransition();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -61,6 +75,7 @@ export function PipelineManager({
   const [newColor, setNewColor] = useState(PRESET_COLORS[0]);
   const [error, setError] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
 
   // إضافة مرحلة
   const handleAdd = () => {
@@ -105,29 +120,66 @@ export function PipelineManager({
     });
   };
 
-  // حذف مرحلة
-  const handleDelete = (stageId: string) => {
+  // أرشفة مرحلة (Soft Archive — لا حذف نهائي، قابل للاسترجاع)
+  const handleArchive = (stageId: string) => {
     const stage = stages.find((s) => s.id === stageId);
     if (!stage) return;
 
     if (stage.count > 0) {
-      setError(`لا يمكن حذف "${stage.name}" — تحتوي على ${stage.count} عميل`);
+      setError(`لا يمكن أرشفة "${stage.name}" — تحتوي على ${stage.count} عميل. انقلهم أولاً.`);
       return;
     }
 
     if (stage.isDefault) {
-      setError(`لا يمكن حذف المرحلة الافتراضية "${stage.name}"`);
+      setError(`المرحلة الافتراضية "${stage.name}" محمية. عيّن مرحلة أخرى افتراضية أولاً.`);
+      return;
+    }
+
+    if (!confirm(`أرشفة "${stage.name}"؟\n\nستختفي من Kanban لكن تبقى قابلة للاسترجاع من قسم الأرشيف.`)) {
       return;
     }
 
     setError(null);
     startTransition(async () => {
-      const result = await deleteStage({ stageId });
+      const result = await archiveStage({ stageId });
       if ("error" in result) {
         setError(result.error ?? "حدث خطأ");
         return;
       }
+      // انقلها للأرشيف بصرياً
+      setArchivedStages((prev) => [
+        { id: stage.id, name: stage.name, color: stage.color, archivedAt: new Date() },
+        ...prev,
+      ]);
       setStages((prev) => prev.filter((s) => s.id !== stageId));
+    });
+  };
+
+  // إعادة تفعيل مرحلة من الأرشيف
+  const handleUnarchive = (stageId: string) => {
+    const archived = archivedStages.find((s) => s.id === stageId);
+    if (!archived) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await unarchiveStage({ stageId });
+      if ("error" in result) {
+        setError(result.error ?? "حدث خطأ");
+        return;
+      }
+      // أعدها للقائمة النشطة
+      setArchivedStages((prev) => prev.filter((s) => s.id !== stageId));
+      setStages((prev) => [
+        ...prev,
+        {
+          id: archived.id,
+          name: archived.name,
+          color: archived.color,
+          position: prev.length,
+          isDefault: false,
+          isExclusive: false,
+          count: 0,
+        },
+      ]);
     });
   };
 
@@ -409,10 +461,11 @@ export function PipelineManager({
                         </button>
                         {!stage.isDefault && (
                           <button
-                            onClick={() => handleDelete(stage.id)}
-                            className="p-1.5 rounded-md hover:bg-danger-50 text-surface-400 hover:text-danger-500 transition-colors"
+                            onClick={() => handleArchive(stage.id)}
+                            className="p-1.5 rounded-md hover:bg-warning-50 text-surface-400 hover:text-warning-600 transition-colors"
+                            title="أرشف (قابل للاسترجاع)"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Archive className="h-4 w-4" />
                           </button>
                         )}
                       </div>
@@ -470,6 +523,69 @@ export function PipelineManager({
               ))}
             </div>
           </CardContent>
+        </Card>
+      )}
+
+      {/* قسم المراحل المؤرشفة — قابل للطيّ، يظهر فقط لو فيه مؤرشفات */}
+      {archivedStages.length > 0 && (
+        <Card className="border-dashed">
+          <CardHeader className="pb-3">
+            <button
+              onClick={() => setShowArchive((v) => !v)}
+              className="w-full text-start flex items-center justify-between"
+            >
+              <CardTitle className="text-sm flex items-center gap-2 text-surface-600">
+                <Archive className="h-4 w-4 text-surface-400" />
+                المراحل المؤرشفة
+                <span className="text-xs bg-surface-100 text-surface-500 px-1.5 py-0.5 rounded-full">
+                  {archivedStages.length}
+                </span>
+              </CardTitle>
+              {showArchive ? (
+                <ChevronUp className="h-4 w-4 text-surface-400" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-surface-400" />
+              )}
+            </button>
+          </CardHeader>
+          {showArchive && (
+            <CardContent className="space-y-2">
+              <p className="text-xs text-surface-500 mb-3">
+                مراحل مُخفية من Kanban — البيانات محفوظة، يمكن إعادة تفعيلها بنقرة.
+              </p>
+              {archivedStages.map((stage) => (
+                <div
+                  key={stage.id}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-surface-50 border border-surface-100"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-3 h-3 rounded-full opacity-60"
+                      style={{ backgroundColor: stage.color }}
+                    />
+                    <span className="text-sm text-surface-700">{stage.name}</span>
+                    {stage.archivedAt && (
+                      <span className="text-[10px] text-surface-400">
+                        مؤرشفة منذ{" "}
+                        {new Date(stage.archivedAt).toLocaleDateString("ar-SA", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleUnarchive(stage.id)}
+                    disabled={isPending}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-800 hover:bg-primary-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    <ArchiveRestore className="h-3.5 w-3.5" />
+                    استرجع
+                  </button>
+                </div>
+              ))}
+            </CardContent>
+          )}
         </Card>
       )}
     </div>

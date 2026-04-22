@@ -29,13 +29,20 @@ export async function assertUserInTenant(userId: string, tenantId: string) {
   if (!u.isActive) throw new Error("المستخدم معطَّل");
 }
 
-export async function assertStageInTenant(stageId: string, tenantId: string) {
+export async function assertStageInTenant(
+  stageId: string,
+  tenantId: string,
+  options: { allowArchived?: boolean } = {},
+) {
   const [s] = await db
-    .select({ id: pipelineStages.id })
+    .select({ id: pipelineStages.id, archivedAt: pipelineStages.archivedAt })
     .from(pipelineStages)
     .where(and(eq(pipelineStages.id, stageId), eq(pipelineStages.tenantId, tenantId)))
     .limit(1);
   if (!s) throw new Error("المرحلة غير موجودة");
+  if (s.archivedAt && !options.allowArchived) {
+    throw new Error("لا يمكن استخدام مرحلة مؤرشفة — استرجعها أولاً");
+  }
 }
 
 export async function assertSourceInTenant(sourceId: string, tenantId: string) {

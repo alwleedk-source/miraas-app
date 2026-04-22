@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { pipelineStages, leads } from "@/db/schema";
-import { eq, and, asc, count, sql } from "drizzle-orm";
+import { eq, and, asc, count, sql, isNull, isNotNull, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE, assertStageInTenant } from "@/lib/tenant-guards";
@@ -21,7 +21,12 @@ export async function createStage(input: { name: string; color: string }) {
   const existing = await db
     .select({ maxPos: sql<number>`COALESCE(MAX(${pipelineStages.position}), -1)` })
     .from(pipelineStages)
-    .where(eq(pipelineStages.tenantId, tenantId));
+    .where(
+      and(
+        eq(pipelineStages.tenantId, tenantId),
+        isNull(pipelineStages.archivedAt),
+      ),
+    );
 
   const nextPosition = (existing[0]?.maxPos ?? -1) + 1;
 
@@ -67,9 +72,19 @@ export async function updateStage(input: {
 }
 
 /**
- * حذف مرحلة (مع التحقق من عدم وجود عملاء)
+ * أرشفة مرحلة (Soft Archive — لا حذف نهائي).
+ *
+ * فلسفة:
+ *   - المراحل لا تُحذف أبداً — تُؤرشف فقط
+ *   - الأرشفة قابلة للإسترجاع بنقرة (unarchiveStage)
+ *   - يحمي المالك من تخريب workflow بالخطأ
+ *   - المراحل المؤرشفة تختفي من Kanban + selectors لكن البيانات تبقى
+ *
+ * شروط الأرشفة:
+ *   - لا توجد leads نشطة فيها (يجب نقلهم أولاً)
+ *   - ليست المرحلة الافتراضية (تبقى دائماً)
  */
-export async function deleteStage(input: { stageId: string }) {
+export async function archiveStage(input: { stageId: string }) {
   const { tenantId, role } = await requireTenant();
   assertRole(role, ROLE.OWNER_ADMIN);
   await assertStageInTenant(input.stageId, tenantId);
@@ -87,7 +102,7 @@ export async function deleteStage(input: { stageId: string }) {
 
   if (leadsCount > 0) {
     return {
-      error: `لا يمكن حذف هذه المرحلة لأنها تحتوي على ${leadsCount} عميل. انقل العملاء أولاً.`,
+      error: `لا يمكن أرشفة هذه المرحلة لأنها تحتوي على ${leadsCount} عميل. انقل العملاء أولاً (سحب على Kanban).`,
     };
   }
 
@@ -96,18 +111,30 @@ export async function deleteStage(input: { stageId: string }) {
   });
 
   if (!stage) return { error: "المرحلة غير موجودة" };
-  if (stage.isDefault) return { error: "لا يمكن حذف المرحلة الافتراضية" };
+  if (stage.archivedAt) return { error: "المرحلة مؤرشفة بالفعل" };
+  if (stage.isDefault) {
+    return {
+      error: "لا يمكن أرشفة المرحلة الافتراضية. عيّن مرحلة أخرى افتراضية أولاً.",
+    };
+  }
 
   await db.transaction(async (tx) => {
+    // soft archive — لا حذف
     await tx
-      .delete(pipelineStages)
+      .update(pipelineStages)
+      .set({ archivedAt: new Date() })
       .where(and(eq(pipelineStages.id, input.stageId), eq(pipelineStages.tenantId, tenantId)));
 
-    // أعد ترتيب positions داخل نفس transaction
+    // أعد ترتيب positions للمراحل النشطة فقط
     const remaining = await tx
       .select({ id: pipelineStages.id })
       .from(pipelineStages)
-      .where(eq(pipelineStages.tenantId, tenantId))
+      .where(
+        and(
+          eq(pipelineStages.tenantId, tenantId),
+          isNull(pipelineStages.archivedAt),
+        ),
+      )
       .orderBy(asc(pipelineStages.position));
 
     for (let i = 0; i < remaining.length; i++) {
@@ -119,7 +146,69 @@ export async function deleteStage(input: { stageId: string }) {
   });
 
   revalidatePath("/pipeline");
+  revalidatePath("/leads");
   return { success: true };
+}
+
+/**
+ * إعادة تفعيل مرحلة مؤرشفة — تعود للـ Kanban بنفس بياناتها.
+ * توضع في النهاية بعد آخر مرحلة نشطة.
+ */
+export async function unarchiveStage(input: { stageId: string }) {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+  // نسمح بالمرحلة المؤرشفة لأن هذه عملية الاسترجاع
+  await assertStageInTenant(input.stageId, tenantId, { allowArchived: true });
+
+  const stage = await db.query.pipelineStages.findFirst({
+    where: and(eq(pipelineStages.id, input.stageId), eq(pipelineStages.tenantId, tenantId)),
+  });
+  if (!stage) return { error: "المرحلة غير موجودة" };
+  if (!stage.archivedAt) return { error: "المرحلة نشطة بالفعل" };
+
+  // ضعها في النهاية
+  const [{ maxPos }] = await db
+    .select({ maxPos: sql<number>`COALESCE(MAX(${pipelineStages.position}), -1)` })
+    .from(pipelineStages)
+    .where(
+      and(
+        eq(pipelineStages.tenantId, tenantId),
+        isNull(pipelineStages.archivedAt),
+      ),
+    );
+
+  await db
+    .update(pipelineStages)
+    .set({ archivedAt: null, position: (maxPos ?? -1) + 1 })
+    .where(and(eq(pipelineStages.id, input.stageId), eq(pipelineStages.tenantId, tenantId)));
+
+  revalidatePath("/pipeline");
+  revalidatePath("/leads");
+  return { success: true };
+}
+
+/**
+ * جلب المراحل المؤرشفة — لعرضها في "قسم الأرشيف"
+ */
+export async function getArchivedStages() {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  return db
+    .select({
+      id: pipelineStages.id,
+      name: pipelineStages.name,
+      color: pipelineStages.color,
+      archivedAt: pipelineStages.archivedAt,
+    })
+    .from(pipelineStages)
+    .where(
+      and(
+        eq(pipelineStages.tenantId, tenantId),
+        isNotNull(pipelineStages.archivedAt),
+      ),
+    )
+    .orderBy(desc(pipelineStages.archivedAt));
 }
 
 /**
