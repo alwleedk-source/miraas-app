@@ -51,6 +51,8 @@ export default function WhatsAppSettingsPage() {
   const [accessToken, setAccessToken] = useState("");
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [hasStoredKey, setHasStoredKey] = useState(false); // مفتاح محفوظ مسبقاً
+  const [testPhone, setTestPhone] = useState(""); // رقم هاتف لاستقبال رسالة الاختبار
 
   // بيانات القالب
   const [templateName, setTemplateName] = useState("");
@@ -72,7 +74,10 @@ export default function WhatsAppSettingsPage() {
         if (config) {
           setPhoneNumberId(config.phoneNumber || "");
           setIsConnected(config.isActive || false);
-          if (config.apiKeyEncrypted) setAccessToken("••••••••••");
+          if (config.apiKeyEncrypted) {
+            setAccessToken("••••••••••");
+            setHasStoredKey(true);
+          }
           setTemplateName(config.templateName || "");
           setTemplateLang(config.templateLanguage || "ar");
           setTemplateParams((config.templateParams as string[]) || ["name"]);
@@ -90,15 +95,22 @@ export default function WhatsAppSettingsPage() {
       setError("أدخل Phone Number ID من Meta Business Manager");
       return;
     }
+    // تحقق: لو لا مفتاح محفوظ سابقاً، يجب إدخال واحد جديد
+    const hasNewKey = !!accessToken && !accessToken.startsWith("••");
+    if (!hasStoredKey && !hasNewKey) {
+      setError("أدخل Access Token من Meta — لا يمكن التفعيل بدونه");
+      return;
+    }
     startTransition(async () => {
       try {
-        if (accessToken && !accessToken.startsWith("••")) {
+        if (hasNewKey) {
           await saveWhatsappApiKey(accessToken);
+          setHasStoredKey(true);
         }
         await saveWhatsappConfig({
           provider: "meta",
           phoneNumber: phoneNumberId,
-          isActive: true,
+          isActive: true, // آمن: نضمن وجود مفتاح بسبب التحقق أعلاه
         });
         setSaved(true);
         setIsConnected(true);
@@ -132,18 +144,22 @@ export default function WhatsAppSettingsPage() {
   };
 
   const handleTest = () => {
+    if (!testPhone.trim()) {
+      setTestResult("❌ أدخل رقم هاتف لاستقبال رسالة الاختبار");
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     startTransition(async () => {
       try {
-        const result = await testWhatsappConnectionAction();
+        const result = await testWhatsappConnectionAction(testPhone);
         if (result.success) {
-          setTestResult("✅ تم الربط بنجاح! تحقق من رسائل واتساب.");
+          setTestResult(`✅ أُرسلت! تحقّق من واتساب على ${testPhone}`);
         } else {
-          setTestResult(`❌ ${result.error || "فشل الربط"}`);
+          setTestResult(`❌ ${result.error || "فشل الإرسال"}`);
         }
       } catch {
-        setTestResult("❌ فشل في الاتصال");
+        setTestResult("❌ فشل في الاتصال بالخادم");
       } finally {
         setTesting(false);
       }
@@ -288,25 +304,42 @@ export default function WhatsAppSettingsPage() {
             </p>
           </div>
 
-          <div className="flex gap-3">
-            <Button onClick={handleSaveConfig} disabled={isPending}>
-              {isPending && !testing ? (
-                <><Loader2 className="h-4 w-4 animate-spin me-1" /> جاري الحفظ...</>
-              ) : saved ? (
-                <><Check className="h-4 w-4 me-1" /> تم الحفظ</>
-              ) : (
-                "حفظ بيانات الربط"
-              )}
-            </Button>
-            <Button variant="outline" onClick={handleTest} disabled={testing || !accessToken || !templateName}>
-              {testing ? (
-                <Loader2 className="h-4 w-4 animate-spin me-1" />
-              ) : (
-                <Send className="h-4 w-4 me-1" />
-              )}
-              اختبار الإرسال
-            </Button>
-          </div>
+          <Button onClick={handleSaveConfig} disabled={isPending}>
+            {isPending && !testing ? (
+              <><Loader2 className="h-4 w-4 animate-spin me-1" /> جاري الحفظ...</>
+            ) : saved ? (
+              <><Check className="h-4 w-4 me-1" /> تم الحفظ</>
+            ) : (
+              "حفظ بيانات الربط"
+            )}
+          </Button>
+
+          {/* اختبار الإرسال — يحتاج رقم هاتف حقيقي (Phone Number ID ليس رقم هاتف!) */}
+          {hasStoredKey && templateName && (
+            <div className="pt-3 mt-3 border-t border-surface-100 space-y-2">
+              <Label htmlFor="testPhone" className="flex items-center gap-1.5">
+                <Send className="h-3.5 w-3.5 text-surface-400" />
+                اختبار الإرسال (يُرسل قالب الترحيب لرقم تحدّده)
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="testPhone"
+                  value={testPhone}
+                  onChange={(e) => setTestPhone(e.target.value)}
+                  placeholder="مثال: 0551234567 أو +966551234567"
+                  dir="ltr"
+                  className="text-left font-mono flex-1"
+                  maxLength={20}
+                />
+                <Button variant="outline" onClick={handleTest} disabled={testing || !testPhone.trim()}>
+                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Send className="h-4 w-4 me-1" /> أرسل</>}
+                </Button>
+              </div>
+              <p className="text-[11px] text-surface-400">
+                ضع رقمك الشخصي لتستقبل القالب وتتحقّق من نجاح الربط
+              </p>
+            </div>
+          )}
 
           {testResult && (
             <div className={`p-3 rounded-lg text-sm ${
@@ -502,7 +535,7 @@ export default function WhatsAppSettingsPage() {
                   </a>
                   {" "}→ أنشئ Template جديد من نوع <strong>Utility</strong>
                 </li>
-                <li>سمّه <code className="bg-primary-100 px-1 rounded">booking_reminder</code> وانتظر <strong>1-5 دقائق</strong> حتى توافق عليه Meta تلقائياً</li>
+                <li>سمّه <code className="bg-primary-100 px-1 rounded">booking_reminder</code> — الموافقة عادةً <strong>دقائق إلى ساعات</strong> (راجع &quot;دليل القبول السريع&quot; أدناه)</li>
                 <li>بعد الموافقة → اكتب اسم القالب في الحقل أدناه واختر استراتيجيتك</li>
               </ol>
             </div>
@@ -522,7 +555,7 @@ export default function WhatsAppSettingsPage() {
 
             {/* تحذير */}
             <div className="p-2.5 rounded-lg bg-warning-50 border border-warning-200 text-xs text-warning-700">
-              <p>⚠️ <strong>مهم:</strong> لن تُرسل التذكيرات إلا بعد إنشاء القالب في Meta والموافقة عليه. كتابة اسم قالب غير موجود لن يسبب مشاكل — فقط لن يُرسل شيء.</p>
+              <p>⚠️ <strong>مهم:</strong> لن تُرسل التذكيرات إلا بعد إنشاء القالب في Meta والموافقة عليه. اسم قالب خاطئ → كل محاولة تُسجَّل في <a href="/settings/errors" className="underline font-medium">سجل الأخطاء</a>.</p>
             </div>
 
             {/* استراتيجية التذكير — toggles */}
@@ -873,15 +906,15 @@ export default function WhatsAppSettingsPage() {
                 </li>
                 <li className="flex items-center gap-1.5">
                   <Check className="h-3 w-3 text-success-500 shrink-0" />
-                  <span>رسوم الرسائل تُدفع مباشرة لـ <strong>Meta</strong> حسب الدولة والفئة</span>
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <Check className="h-3 w-3 text-success-500 shrink-0" />
                   <span>الربط عبر <strong>Meta Cloud API</strong> مجاني — بدون وسيط أو اشتراك إضافي</span>
                 </li>
-                <li className="flex items-center gap-1.5">
-                  <Check className="h-3 w-3 text-success-500 shrink-0" />
-                  <span>أول <strong>1,000 محادثة/شهر</strong> مجانية من Meta (Service conversations)</span>
+                <li className="flex items-start gap-1.5">
+                  <CircleAlert className="h-3 w-3 text-warning-500 shrink-0 mt-0.5" />
+                  <span>قوالب الترحيب والتذكير = <strong>Utility messages</strong> — لها تسعير لكل دولة (السعودية ~٢٫٥ هللة/رسالة). تُدفع لـ Meta مباشرة.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <Check className="h-3 w-3 text-success-500 shrink-0 mt-0.5" />
+                  <span>المحادثات التي يبدأها العميل (Service) أرخص — أول <strong>1,000 شهرياً مجانية</strong> من Meta لكنها لا تشمل قوالبك</span>
                 </li>
               </ul>
               <a

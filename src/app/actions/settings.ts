@@ -309,11 +309,15 @@ export async function saveWhatsappApiKey(apiKey: string) {
 // اختبار ربط واتساب (حقيقي)
 // =============================================
 
-export async function testWhatsappConnectionAction() {
+export async function testWhatsappConnectionAction(testPhone: string) {
   const { tenantId } = await requireOwnerOrAdmin();
 
+  if (!testPhone || testPhone.trim().length < 4) {
+    return { success: false, error: "أدخل رقم هاتف للاختبار" };
+  }
+
   const { testWhatsappConnection } = await import("@/lib/whatsapp");
-  const result = await testWhatsappConnection(tenantId);
+  const result = await testWhatsappConnection(tenantId, testPhone.trim());
 
   return result;
 }

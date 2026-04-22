@@ -216,11 +216,18 @@ export async function sendWelcomeMessage(
 }
 
 // =============================================
-// اختبار الربط (يرسل Template اختباري)
+// اختبار الربط (يرسل Template اختباري لرقم محدد)
 // =============================================
 
+/**
+ * يرسل Template اختباري لرقم يحدّده المالك.
+ *
+ * ⚠️ مهم: لا يمكن الإرسال إلى Phone Number ID — هو معرّف، ليس رقم هاتف.
+ * المالك يدخل رقمه الشخصي (أو رقم تجريبي) لاستقبال الـ test.
+ */
 export async function testWhatsappConnection(
-  tenantId: string
+  tenantId: string,
+  testPhone: string,
 ): Promise<SendResult> {
   const config = await db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
@@ -234,6 +241,15 @@ export async function testWhatsappConnection(
     return { success: false, error: "أدخل اسم القالب المعتمد أولاً" };
   }
 
+  // تحقق من رقم الاختبار — يجب أن يكون رقم هاتف صالح
+  const phoneCheck = validateAndNormalizePhone(testPhone);
+  if (!phoneCheck.valid || !phoneCheck.phone) {
+    return {
+      success: false,
+      error: `رقم الاختبار غير صالح: ${phoneCheck.error || "تأكد من الصيغة"}`,
+    };
+  }
+
   let accessToken: string;
   try {
     accessToken = decrypt(config.apiKeyEncrypted, `whatsapp:${config.tenantId}`);
@@ -241,7 +257,7 @@ export async function testWhatsappConnection(
     return { success: false, error: "فشل في فك تشفير مفتاح API" };
   }
 
-  const toPhone = formatPhoneForWhatsApp(config.phoneNumber);
+  const toPhone = phoneCheck.phone.replace("+", "");
   const templateLang = config.templateLanguage || "ar";
   const paramFields = config.templateParams || ["name"];
   const params = buildTemplateParams(paramFields, { name: "اختبار" });

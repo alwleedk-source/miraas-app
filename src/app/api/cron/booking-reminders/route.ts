@@ -5,6 +5,7 @@ import { eq, and, gte, lte, isNotNull, sql } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
 import { timingSafeEqual } from "crypto";
 import { logger } from "@/lib/logger";
+import { validateAndNormalizePhone } from "@/lib/utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,7 +63,26 @@ async function sendReminder(args: {
   const { booking, config, accessToken, type } = args;
   if (!booking.phone || !config.phoneNumber || !config.reminderTemplateName) return "failed";
 
-  const toPhone = booking.phone.replace(/\D/g, "");
+  // تنسيق الرقم بـ libphonenumber — يضيف country code للأرقام المحلية ويرفض غير الصالحة
+  const phoneCheck = validateAndNormalizePhone(booking.phone);
+  if (!phoneCheck.valid || !phoneCheck.phone) {
+    // رقم غير صالح — سجّل فشلاً واضحاً ولا تحاول إرساله
+    await db.insert(activityLog).values({
+      tenantId: config.tenantId,
+      action: "WHATSAPP_FAILED",
+      entityType: "lead",
+      entityId: booking.id,
+      details: {
+        type: `booking_reminder_${type}`,
+        leadName: booking.name,
+        error: `رقم غير صالح للواتساب: ${booking.phone}`,
+        reason: "invalid_phone",
+      },
+    });
+    return "failed";
+  }
+  // WhatsApp Cloud API يتوقع الصيغة الدولية بدون "+"
+  const toPhone = phoneCheck.phone.replace("+", "");
   const bookingTime = booking.bookingDate
     ? new Date(booking.bookingDate).toLocaleString("ar-SA", {
         timeZone: RIYADH_TZ,
