@@ -21,6 +21,8 @@ import {
   bulkUpdateLeadsSchema,
   bulkDeleteLeadsSchema,
 } from "@/lib/schemas";
+import { backupPush } from "@/lib/backup-push";
+import { buildBackupPayload } from "@/lib/backup-payload";
 
 const getTenantId = requireTenant;
 
@@ -101,6 +103,12 @@ export async function createLead(raw: unknown) {
 
     revalidatePath("/leads");
     revalidatePath("/");
+
+    // 🔄 backup push — fire-and-forget لـ Google Sheet
+    void buildBackupPayload(lead.id, tenantId, "lead.created").then((p) => {
+      if (p) void backupPush(tenantId, p);
+    });
+
     return lead;
   });
 }
@@ -158,6 +166,13 @@ export async function updateLead(raw: unknown) {
 
     revalidatePath("/leads");
     revalidatePath("/");
+
+    // 🔄 backup push
+    const event = input.assignedTo ? "lead.assigned" : "lead.updated";
+    void buildBackupPayload(input.id, tenantId, event).then((p) => {
+      if (p) void backupPush(tenantId, p);
+    });
+
     return updated;
   });
 }
@@ -193,6 +208,12 @@ export async function changeLeadStage(leadId: string, stageId: string) {
     revalidatePath("/leads");
     revalidatePath("/pipeline");
     revalidatePath("/");
+
+    // 🔄 backup push
+    void buildBackupPayload(leadId, tenantId, "lead.stage_changed").then((p) => {
+      if (p) void backupPush(tenantId, p);
+    });
+
     return updated;
   });
 }

@@ -19,6 +19,8 @@ import {
   updateBookingDateSchema,
   quickBookingSchema,
 } from "@/lib/schemas";
+import { backupPush } from "@/lib/backup-push";
+import { buildBackupPayload } from "@/lib/backup-payload";
 
 /**
  * يحوّل خطأ Postgres 23P01 (EXCLUDE constraint) إلى رسالة عربية واضحة.
@@ -85,6 +87,12 @@ export async function createBooking(raw: unknown) {
 
     revalidatePath("/bookings");
     revalidatePath("/pipeline");
+
+    // 🔄 backup push
+    void buildBackupPayload(input.leadId, tenantId, "lead.booked").then((p) => {
+      if (p) void backupPush(tenantId, p);
+    });
+
     return lead;
   });
   } catch (err) {
@@ -152,6 +160,14 @@ export async function updateBookingStatus(raw: unknown) {
   });
 
   revalidatePath("/bookings");
+
+  // 🔄 backup push
+  void buildBackupPayload(input.leadId, tenantId, "lead.booking_status_changed", {
+    newValue: input.status,
+  }).then((p) => {
+    if (p) void backupPush(tenantId, p);
+  });
+
   return lead;
 }
 

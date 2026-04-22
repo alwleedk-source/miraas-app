@@ -105,6 +105,13 @@ export const tenants = pgTable("tenants", {
     currency?: string;
     receptionistPhone?: string;
     receptionistName?: string;
+    // Backup إلى Google Sheet — العميل يضع URL لـ Apps Script Web App
+    // وكل تغيير في Meras يُدفع تلقائياً للـ Sheet (بياناتك في حسابك أنت)
+    backupSheetUrl?: string;
+    backupSheetSecret?: string;
+    backupSheetEnabled?: boolean;
+    backupLastSyncAt?: string; // ISO date
+    backupLastError?: string;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

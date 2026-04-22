@@ -7,6 +7,8 @@ import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { assertLeadInTenant, assertRole, ROLE } from "@/lib/tenant-guards";
 import { archiveLeadSchema } from "@/lib/schemas";
+import { backupPush } from "@/lib/backup-push";
+import { buildBackupPayload } from "@/lib/backup-payload";
 
 /**
  * أرشف عميل مع سبب — لا يُحذف، يُحفظ في "archived list" للعودة لاحقاً
@@ -68,6 +70,14 @@ export async function archiveLead(raw: unknown) {
   revalidatePath("/leads/aging");
   revalidatePath("/leads/archive");
   revalidatePath("/");
+
+  // 🔄 backup push
+  void buildBackupPayload(input.leadId, tenantId, "lead.archived", {
+    note: input.note,
+  }).then((p) => {
+    if (p) void backupPush(tenantId, p);
+  });
+
   return { success: true };
 }
 
@@ -124,6 +134,12 @@ export async function unarchiveLead(leadId: string, note?: string) {
 
   revalidatePath("/leads");
   revalidatePath("/leads/archive");
+
+  // 🔄 backup push
+  void buildBackupPayload(leadId, tenantId, "lead.unarchived", { note }).then((p) => {
+    if (p) void backupPush(tenantId, p);
+  });
+
   return { success: true };
 }
 

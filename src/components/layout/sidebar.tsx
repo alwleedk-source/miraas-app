@@ -20,6 +20,7 @@ import {
   Stethoscope,
   AlertTriangle,
   Archive,
+  Database,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
 import NotificationBell from "@/app/(dashboard)/notification-bell";
@@ -52,6 +53,7 @@ const settingsNav: NavItem[] = [
   { label: "واتساب", href: "/settings/whatsapp", icon: <MessageSquare className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "الويب هوك", href: "/settings/webhooks", icon: <Webhook className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "أرشيف العملاء", href: "/leads/archive", icon: <Archive className="h-5 w-5" /> },
+  { label: "نسخة احتياطية", href: "/settings/backup", icon: <Database className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "سجل الأخطاء", href: "/settings/errors", icon: <AlertTriangle className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
 ];
 
