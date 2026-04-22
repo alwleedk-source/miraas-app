@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Bell, Phone, MessageCircle, Check, Clock, X } from "lucide-react";
+import {
+  Bell, Phone, MessageCircle, Check, Clock, X,
+  FileText, ChevronDown, ChevronUp, Loader2,
+} from "lucide-react";
 import {
   getJustDueFollowUps,
   completeFollowUp,
   snoozeFollowUpMinutes,
+  getLeadRecentNotes,
 } from "@/app/actions/followups";
-import { cn } from "@/lib/utils";
+import { cn, toWhatsappUrl, toTelUrl } from "@/lib/utils";
 
 interface DueItem {
   id: string;
@@ -17,6 +21,36 @@ interface DueItem {
   type: string;
   notes: string | null;
   scheduledAt: Date;
+}
+
+type NoteEntry = {
+  id: string;
+  type: string;
+  notes: string | null;
+  createdAt: Date;
+  scheduledAt: Date | null;
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  CALL: "📞 مكالمة",
+  WHATSAPP: "💬 واتساب",
+  EMAIL: "📧 بريد",
+  MESSAGE: "✉️ رسالة",
+  MEETING: "🤝 اجتماع",
+  NOTE: "📝 ملاحظة",
+};
+
+function timeAgo(date: Date | string): string {
+  const d = new Date(date);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "الآن";
+  if (mins < 60) return `منذ ${mins} د`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `منذ ${hrs} س`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "أمس";
+  return `منذ ${days} يوم`;
 }
 
 const POLL_INTERVAL_MS = 30_000;
@@ -48,10 +82,32 @@ function playChime() {
 export default function DueFollowUpsWatcher() {
   const [toasts, setToasts] = useState<DueItem[]>([]);
   const [isPending, startTransition] = useTransition();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [notesCache, setNotesCache] = useState<Record<string, NoteEntry[]>>({});
+  const [loadingNotes, setLoadingNotes] = useState<string | null>(null);
   const sinceRef = useRef<string>(new Date().toISOString());
   const seenIdsRef = useRef<Set<string>>(new Set());
   const originalTitleRef = useRef<string>("");
   const blinkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleToggleHistory = async (item: DueItem) => {
+    if (expandedId === item.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(item.id);
+    if (!notesCache[item.leadId]) {
+      setLoadingNotes(item.leadId);
+      try {
+        const notes = await getLeadRecentNotes(item.leadId);
+        setNotesCache((prev) => ({ ...prev, [item.leadId]: notes }));
+      } catch {
+        setNotesCache((prev) => ({ ...prev, [item.leadId]: [] }));
+      } finally {
+        setLoadingNotes(null);
+      }
+    }
+  };
 
   useEffect(() => {
     originalTitleRef.current = document.title;
@@ -193,13 +249,13 @@ export default function DueFollowUpsWatcher() {
                 {t.leadPhone && (
                   <>
                     <a
-                      href={`tel:${t.leadPhone}`}
+                      href={toTelUrl(t.leadPhone) ?? "#"}
                       className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md bg-success-500 hover:bg-success-600 text-white font-medium transition-colors"
                     >
                       <Phone className="h-3 w-3" /> اتصال
                     </a>
                     <a
-                      href={`https://wa.me/${t.leadPhone.replace(/^\+/, "")}`}
+                      href={toWhatsappUrl(t.leadPhone) ?? "#"}
                       target="_blank"
                       rel="noopener"
                       className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md bg-[#25D366] hover:bg-[#1da851] text-white font-medium transition-colors"
@@ -208,6 +264,24 @@ export default function DueFollowUpsWatcher() {
                     </a>
                   </>
                 )}
+                <button
+                  onClick={() => handleToggleHistory(t)}
+                  className={cn(
+                    "flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-colors",
+                    expandedId === t.id
+                      ? "bg-primary-100 text-primary-700"
+                      : "bg-surface-100 hover:bg-surface-200 text-surface-700",
+                  )}
+                  title="عرض رحلة الإقناع"
+                >
+                  <FileText className="h-3 w-3" />
+                  السجل
+                  {expandedId === t.id ? (
+                    <ChevronUp className="h-3 w-3" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3" />
+                  )}
+                </button>
                 <button
                   onClick={() => handleDone(t)}
                   disabled={isPending}
@@ -234,6 +308,55 @@ export default function DueFollowUpsWatcher() {
                   </button>
                 </div>
               </div>
+
+              {/* سجل الإقناع — ينفتح بضغط زر "السجل" */}
+              {expandedId === t.id && (
+                <div className="mt-2 pt-2 border-t border-surface-100 animate-fade-in">
+                  {loadingNotes === t.leadId ? (
+                    <div className="flex items-center justify-center py-3 text-surface-400 text-xs">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin me-1.5" />
+                      جارٍ تحميل السجل...
+                    </div>
+                  ) : notesCache[t.leadId] && notesCache[t.leadId].length > 0 ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-surface-400 uppercase tracking-wide">
+                        📋 آخر {notesCache[t.leadId].length} تفاعلات
+                      </p>
+                      {notesCache[t.leadId].map((note, idx) => (
+                        <div
+                          key={note.id}
+                          className={cn(
+                            "flex gap-1.5 p-1.5 rounded-md text-[11px]",
+                            idx === 0
+                              ? "bg-primary-50 border border-primary-100"
+                              : "bg-surface-50 border border-surface-100",
+                          )}
+                        >
+                          <span className="shrink-0 text-[10px]">
+                            {TYPE_LABELS[note.type] || "📌"}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            {note.notes ? (
+                              <p className="text-surface-700 whitespace-pre-wrap leading-snug">
+                                {note.notes}
+                              </p>
+                            ) : (
+                              <p className="text-surface-400 italic">بدون ملاحظة</p>
+                            )}
+                            <span className="text-[9px] text-surface-400 mt-0.5 block">
+                              {timeAgo(note.createdAt)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-surface-400 text-center py-2">
+                      عميل جديد — لا تفاعلات سابقة
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         );
