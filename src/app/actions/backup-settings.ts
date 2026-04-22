@@ -27,13 +27,23 @@ export async function saveBackupSettings(input: {
   const { tenantId, role } = await requireTenant();
   assertRole(role, ROLE.OWNER_ADMIN);
 
-  // إذا enabled، URL و secret لازمان
+  // إذا enabled، URL لازم. السر لازم فقط لو لم يكن محفوظاً سابقاً
   if (input.enabled) {
     if (!input.url || !input.url.startsWith("https://")) {
       throw new Error("URL غير صالح — يجب أن يبدأ بـ https://");
     }
+    // تحقّق من وجود سر محفوظ مسبقاً لو لم يُرسَل واحد جديد
     if (!input.secret || input.secret.length < 8) {
-      throw new Error("السر يجب أن يكون 8 حروف على الأقل");
+      const [existing] = await db
+        .select({ settings: tenants.settings })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+      const hasStoredSecret = !!(existing?.settings as { backupSheetSecret?: string })?.backupSheetSecret;
+      if (!hasStoredSecret) {
+        throw new Error("السر مطلوب — ولّد سراً جديداً (8 حروف على الأقل)");
+      }
+      // سر محفوظ موجود — اتركه كما هو
     }
   }
 
@@ -43,7 +53,10 @@ export async function saveBackupSettings(input: {
     backupSheetEnabled: parsed.enabled,
   };
   if (parsed.url !== undefined) update.backupSheetUrl = parsed.url;
-  if (parsed.secret !== undefined) update.backupSheetSecret = parsed.secret;
+  // السر لا يُحدَّث إلا لو مُرسَل (يحافظ على القديم)
+  if (parsed.secret !== undefined && parsed.secret.length >= 8) {
+    update.backupSheetSecret = parsed.secret;
+  }
   // مسح آخر خطأ عند الحفظ
   update.backupLastError = null;
 
@@ -60,10 +73,12 @@ export async function saveBackupSettings(input: {
 }
 
 /**
- * يولّد سر عشوائي قوي للـ backup
+ * يولّد سر عشوائي قوي للـ backup — OWNER/ADMIN فقط
+ * (PROVIDER/COORDINATOR لا داعي لتوليدهم سرّاً للـ tenant)
  */
 export async function generateBackupSecret(): Promise<string> {
-  await requireTenant();
+  const { role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
   return randomBytes(24).toString("base64url");
 }
 
@@ -102,7 +117,8 @@ export async function getBackupStatus() {
     enabled: !!s.backupSheetEnabled,
     url: s.backupSheetUrl ?? "",
     hasSecret: !!s.backupSheetSecret,
-    secret: s.backupSheetSecret ?? "",
+    // ❌ لا نُرجع السر للـ client — leak محتمل عبر DevTools/Network tab
+    // الـ UI يعرض "••••" مع زر "غيّر السر" لو احتاج المستخدم
     lastSyncAt: s.backupLastSyncAt ?? null,
     lastError: s.backupLastError ?? null,
   };

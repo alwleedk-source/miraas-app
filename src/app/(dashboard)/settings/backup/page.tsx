@@ -175,7 +175,7 @@ function Faq({ q, a }: { q: string; a: string }) {
   );
 }
 
-const APPS_SCRIPT_TEMPLATE = `// ━━━ Meras Backup Receiver ━━━
+const APPS_SCRIPT_TEMPLATE = `// ━━━ Meras Backup Receiver v2 ━━━
 // يستقبل تحديثات من Meras ويسجّلها في الـ Sheet
 // ضع السر نفسه الذي ستضعه في Meras
 
@@ -183,7 +183,7 @@ const SECRET = "PASTE_YOUR_SECRET_HERE"; // ← غيّر هذا
 const HEADERS = [
   "ID", "الاسم", "الجوال", "البريد", "الأولوية",
   "المصدر", "المرحلة", "المنسقة",
-  "حالة الحجز", "تاريخ الحجز", "الخدمة", "ملاحظة الحجز",
+  "حالة الحجز", "تاريخ الحجز", "الخدمة", "ملاحظة الحجز", "القسم",
   "تاريخ الأرشفة", "سبب الأرشفة",
   "أُنشئ", "آخر تحديث", "آخر حدث"
 ];
@@ -211,6 +211,7 @@ function doPost(e) {
       lead.id, lead.name, lead.phone, lead.email, lead.priority,
       lead.sourceName, lead.stageName, lead.assignedToName,
       lead.bookingStatus, lead.bookingDate, lead.bookingService, lead.bookingNotes,
+      lead.bookingDepartmentName,
       lead.archivedAt, lead.archiveReason,
       lead.createdAt, lead.updatedAt, body.event
     ];

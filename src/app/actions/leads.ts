@@ -22,7 +22,7 @@ import {
   bulkDeleteLeadsSchema,
 } from "@/lib/schemas";
 import { backupPush } from "@/lib/backup-push";
-import { buildBackupPayload } from "@/lib/backup-payload";
+import { buildBackupPayload, backupPushBatch } from "@/lib/backup-payload";
 
 const getTenantId = requireTenant;
 
@@ -527,6 +527,14 @@ export async function createFollowUp(input: {
 
     revalidatePath("/leads");
     revalidatePath("/");
+
+    // 🔄 backup push — متابعة جديدة تظهر في Sheet (event حقيقي مستخدَم لأول مرة)
+    void buildBackupPayload(input.leadId, tenantId, "lead.followup_added", {
+      note: `${input.type}${input.notes ? `: ${input.notes.slice(0, 100)}` : ""}`,
+    }).then((p) => {
+      if (p) void backupPush(tenantId, p);
+    });
+
     return followUp;
   });
 }
@@ -730,17 +738,22 @@ export async function bulkImportLeads(raw: unknown) {
     const toInsert = valid.filter((e) => !existingSet.has(e.phone));
     const skippedDuplicate = valid.length - toInsert.length;
 
+    let createdIds: string[] = [];
     if (toInsert.length > 0) {
-      await tx.insert(leads).values(
-        toInsert.map((e) => ({
-          tenantId,
-          name: e.name,
-          phone: e.phone,
-          priority: "MEDIUM" as const,
-          stageId: defaultStage?.id || null,
-          sourceId,
-        })),
-      );
+      const inserted = await tx
+        .insert(leads)
+        .values(
+          toInsert.map((e) => ({
+            tenantId,
+            name: e.name,
+            phone: e.phone,
+            priority: "MEDIUM" as const,
+            stageId: defaultStage?.id || null,
+            sourceId,
+          })),
+        )
+        .returning({ id: leads.id });
+      createdIds = inserted.map((r) => r.id);
     }
 
     const created = toInsert.length;
@@ -763,6 +776,14 @@ export async function bulkImportLeads(raw: unknown) {
 
     revalidatePath("/leads");
     revalidatePath("/");
+
+    // 🔄 backup push — كل lead مستورد يصل للـ Sheet (بـ batches)
+    if (createdIds.length > 0) {
+      void backupPushBatch(createdIds, tenantId, "lead.created", {
+        note: `bulk import: ${input.campaignName}`,
+      });
+    }
+
     // skipped للتوافق العكسي مع UI القديمة
     return { created, skipped: totalSkipped, skippedNoPhone, skippedInvalid, skippedDuplicate };
   });
@@ -821,6 +842,11 @@ export async function bulkUpdateLeads(raw: unknown) {
 
   revalidatePath("/leads");
   revalidatePath("/");
+
+  // 🔄 backup push — كل lead مُحدَّث يصل للـ Sheet
+  const event = input.patch.assignedTo ? "lead.assigned" : "lead.updated";
+  void backupPushBatch(input.ids, tenantId, event, { note: "bulk update" });
+
   return { updated: input.ids.length };
 }
 
@@ -869,6 +895,10 @@ export async function bulkDeleteLeads(raw: unknown) {
 
   revalidatePath("/leads");
   revalidatePath("/");
+
+  // 🔄 backup push — يُعلم Sheet بالحذف ليُعرف أي صفوف لم تعد نشطة
+  void backupPushBatch(input.ids, tenantId, "lead.deleted", { note: "bulk delete" });
+
   return { deleted: input.ids.length };
 }
 

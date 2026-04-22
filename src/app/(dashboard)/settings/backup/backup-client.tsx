@@ -19,7 +19,6 @@ type Status = {
   enabled: boolean;
   url: string;
   hasSecret: boolean;
-  secret: string;
   lastSyncAt: string | null;
   lastError: string | null;
 };
@@ -27,7 +26,8 @@ type Status = {
 export default function BackupClient({ initial }: { initial: Status }) {
   const [enabled, setEnabled] = useState(initial.enabled);
   const [url, setUrl] = useState(initial.url);
-  const [secret, setSecret] = useState(initial.secret);
+  // السر لا يُحمَّل من الخادم لأمانك — فارغ عند الفتح، يُملأ فقط لو تغيّر
+  const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [testing, setTesting] = useState(false);
@@ -44,8 +44,17 @@ export default function BackupClient({ initial }: { initial: Status }) {
   };
 
   const handleTest = () => {
-    if (!url || !secret) {
-      setTestResult({ ok: false, message: "أدخل URL والسر أولاً" });
+    if (!url) {
+      setTestResult({ ok: false, message: "أدخل URL أولاً" });
+      return;
+    }
+    if (!secret) {
+      setTestResult({
+        ok: false,
+        message: initial.hasSecret
+          ? "أدخل السر أو ولّد سراً جديداً للاختبار"
+          : "ولّد سراً أولاً",
+      });
       return;
     }
     setTesting(true);
@@ -67,8 +76,14 @@ export default function BackupClient({ initial }: { initial: Status }) {
     setSaved(false);
     startTransition(async () => {
       try {
-        await saveBackupSettings({ url, secret, enabled });
+        // لو السر فارغ ومحفوظ سابقاً، لا نُرسله — يُبقي على القديم
+        await saveBackupSettings({
+          url,
+          secret: secret || undefined,
+          enabled,
+        });
         setSaved(true);
+        setSecret(""); // امسح من الـ UI بعد الحفظ
         setTimeout(() => setSaved(false), 3000);
       } catch (e) {
         setError(e instanceof Error ? e.message : "فشل الحفظ");
@@ -115,7 +130,14 @@ export default function BackupClient({ initial }: { initial: Status }) {
         {/* Secret */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label className="text-sm font-medium">السر المشترك</Label>
+            <Label className="text-sm font-medium">
+              السر المشترك
+              {initial.hasSecret && !secret && (
+                <span className="ms-2 text-[10px] font-normal text-success-600 bg-success-50 px-1.5 py-0.5 rounded">
+                  ✓ محفوظ
+                </span>
+              )}
+            </Label>
             <button
               onClick={generateSecret}
               type="button"
@@ -123,7 +145,7 @@ export default function BackupClient({ initial }: { initial: Status }) {
               className="text-xs text-primary-600 hover:text-primary-800 inline-flex items-center gap-1"
             >
               <RefreshCw className="h-3 w-3" />
-              ولّد سراً جديداً
+              {initial.hasSecret ? "ولّد سراً جديداً" : "ولّد سراً"}
             </button>
           </div>
           <div className="relative">
@@ -131,7 +153,11 @@ export default function BackupClient({ initial }: { initial: Status }) {
               type={showSecret ? "text" : "password"}
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
-              placeholder="السر — انسخه أيضاً في Apps Script"
+              placeholder={
+                initial.hasSecret
+                  ? "السر محفوظ — اتركه فارغاً للإبقاء، أو الصق سراً جديداً"
+                  : "ولّد سراً جديداً أو الصق واحداً"
+              }
               dir="ltr"
               className="text-left font-mono pe-10"
             />
@@ -145,6 +171,7 @@ export default function BackupClient({ initial }: { initial: Status }) {
           </div>
           <p className="text-[11px] text-surface-500 leading-relaxed">
             ⚠️ يجب أن يكون نفس السر الذي وضعته في كود Apps Script (السطر الأول).
+            {initial.hasSecret && " السر مخفي لأمانك — لو نسيته، ولّد سراً جديداً وحدّث Apps Script."}
           </p>
         </div>
 

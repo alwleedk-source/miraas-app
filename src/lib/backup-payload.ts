@@ -4,9 +4,10 @@
  */
 
 import { db } from "@/db";
-import { leads, users, leadSources, pipelineStages } from "@/db/schema";
+import { leads, users, leadSources, pipelineStages, departments } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { BackupPayload, BackupEventType } from "./backup-push";
+import { backupPush } from "./backup-push";
 
 export async function buildBackupPayload(
   leadId: string,
@@ -32,11 +33,13 @@ export async function buildBackupPayload(
       sourceName: leadSources.name,
       stageName: pipelineStages.name,
       assignedToName: users.name,
+      bookingDepartmentName: departments.name,
     })
     .from(leads)
     .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
     .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
     .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(departments, eq(leads.bookingDepartmentId, departments.id))
     .where(and(eq(leads.id, leadId), eq(leads.tenantId, tenantId)))
     .limit(1);
 
@@ -58,6 +61,7 @@ export async function buildBackupPayload(
       bookingDate: row.bookingDate ? row.bookingDate.toISOString() : null,
       bookingService: row.bookingService ?? null,
       bookingNotes: row.bookingNotes ?? null,
+      bookingDepartmentName: row.bookingDepartmentName ?? null,
       archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
       archiveReason: row.archiveReason ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -65,4 +69,33 @@ export async function buildBackupPayload(
     },
     meta,
   };
+}
+
+/**
+ * يدفع batch من leads للـ Sheet — استخدم بعد bulk operations.
+ * fire-and-forget لكل lead على حدة (Apps Script يقبل request واحد في كل مرة).
+ * نستخدم setTimeout لتقطيع الدفعات حتى لا نُغرق Apps Script.
+ */
+export async function backupPushBatch(
+  leadIds: string[],
+  tenantId: string,
+  event: BackupEventType,
+  meta?: BackupPayload["meta"],
+): Promise<void> {
+  if (leadIds.length === 0) return;
+  // قطّع لمجموعات من 10 لتجنّب إرهاق Apps Script
+  const CHUNK = 10;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const chunk = leadIds.slice(i, i + CHUNK);
+    // ادفع المجموعة بالتوازي، انتظر بسيط بين المجموعات
+    await Promise.allSettled(
+      chunk.map(async (id) => {
+        const p = await buildBackupPayload(id, tenantId, event, meta);
+        if (p) await backupPush(tenantId, p);
+      }),
+    );
+    if (i + CHUNK < leadIds.length) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
 }

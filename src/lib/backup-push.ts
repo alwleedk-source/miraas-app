@@ -43,6 +43,7 @@ export type BackupPayload = {
     bookingDate: string | null;
     bookingService: string | null;
     bookingNotes: string | null;
+    bookingDepartmentName: string | null;
     archivedAt: string | null;
     archiveReason: string | null;
     createdAt: string;
@@ -177,6 +178,7 @@ export async function testBackupConnection(args: {
       bookingDate: null,
       bookingService: null,
       bookingNotes: null,
+      bookingDepartmentName: null,
       archivedAt: null,
       archiveReason: null,
       createdAt: new Date().toISOString(),
