@@ -196,22 +196,31 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // فحص المكررات دفعة واحدة
+      // فحص المكررات + DNC دفعة واحدة
       const phones = normalized.map((e) => e.phone);
       const existing = await tx
-        .select({ phone: leads.phone, isDeleted: leads.isDeleted })
+        .select({
+          phone: leads.phone,
+          isDeleted: leads.isDeleted,
+          canRecontact: leads.canRecontact,
+        })
         .from(leads)
         .where(and(eq(leads.tenantId, webhook.tenantId), inArray(leads.phone, phones)));
+
       const activeSet = new Set(
         existing.filter((e) => !e.isDeleted).map((e) => e.phone!),
       );
       const deletedSet = new Set(
         existing.filter((e) => e.isDeleted).map((e) => e.phone!),
       );
+      // DNC = العميل سبق وطلب عدم التواصل — احترم القرار، لا تُنشئ lead جديد
+      const dncSet = new Set(
+        existing.filter((e) => !e.canRecontact).map((e) => e.phone!),
+      );
 
-      // تصفية: جديد فقط
+      // تصفية: جديد فعلاً + ليس DNC
       const toInsert = normalized.filter(
-        (e) => !activeSet.has(e.phone) && !deletedSet.has(e.phone),
+        (e) => !activeSet.has(e.phone) && !deletedSet.has(e.phone) && !dncSet.has(e.phone),
       );
 
       const createdLeads: { id: string; name: string; phone: string }[] = [];
@@ -256,6 +265,7 @@ export async function POST(request: NextRequest) {
         createdLeads,
         skippedDuplicate: activeSet.size,
         skippedDeleted: deletedSet.size,
+        skippedDnc: dncSet.size,
       };
     });
 
@@ -278,6 +288,7 @@ export async function POST(request: NextRequest) {
       created: result.createdLeads.length,
       skippedDuplicate: result.skippedDuplicate,
       skippedDeleted: result.skippedDeleted,
+      skippedDnc: result.skippedDnc, // عملاء طلبوا عدم التواصل — احتُرم قرارهم
       invalidPhones,
       rejected: rejectedCount,
       total: rawEntries.length,

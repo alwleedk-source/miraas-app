@@ -24,6 +24,7 @@ import {
   Inbox,
   Pencil,
   Trash2,
+  Archive,
   ChevronDown,
   Eye,
   ArrowRightLeft,
@@ -59,6 +60,7 @@ import {
 } from "@/app/actions/followups";
 
 const ImportDialog = lazy(() => import("./import-dialog"));
+import { ArchiveModal } from "@/components/archive/archive-modal";
 
 // =============================================
 // Types
@@ -135,6 +137,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
   const [editingLead, setEditingLead] = useState<LeadData | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
 
@@ -1426,6 +1429,13 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
+                          <button
+                            onClick={() => setArchiveTarget({ id: lead.id, name: lead.name })}
+                            className="p-1.5 rounded-md hover:bg-warning-50 text-surface-400 hover:text-warning-600 transition-colors"
+                            title="أرشف (مع سبب)"
+                          >
+                            <Archive className="h-4 w-4" />
+                          </button>
                           {currentUserRole !== "COORDINATOR" && (
                           <button
                             onClick={() => setShowDeleteConfirm(lead.id)}
@@ -2145,6 +2155,22 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
           </div>
         </div>
       )}
+      {/* نافذة الأرشفة */}
+      {archiveTarget && (
+        <ArchiveModal
+          leadId={archiveTarget.id}
+          leadName={archiveTarget.name}
+          open={true}
+          onClose={() => setArchiveTarget(null)}
+          onArchived={() => {
+            // أزل الـ lead من القائمة المعروضة (هو الآن في الأرشيف)
+            setLeads((prev) => prev.filter((l) => l.id !== archiveTarget.id));
+            setSelectedLead(null);
+            setArchiveTarget(null);
+          }}
+        />
+      )}
+
       {/* نافذة الاستيراد */}
       {showImport && (
         <Suspense fallback={null}>
