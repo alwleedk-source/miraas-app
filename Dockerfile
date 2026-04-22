@@ -4,14 +4,25 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
+# Force development mode to install devDependencies (typescript, tailwind, etc.)
+# Coolify may inject NODE_ENV=production which would skip them and break `next build`
+ENV NODE_ENV=development
+
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+# npm install (not ci) — tolerant of minor lock-file drift across platforms
+# Explicitly include dev deps since next build needs typescript/tailwindcss
+RUN npm install --include=dev --no-audit --no-fund --ignore-scripts
 
 # ============================================
 # Stage 2: Build
 # ============================================
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Production mode for the actual `next build` (optimized output)
+# devDeps are already installed in the deps stage; we just reuse them
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
