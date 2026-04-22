@@ -21,6 +21,8 @@ import AgingLeadsBanner from "./aging-leads-banner";
 import ReactivationBanner from "./reactivation-banner";
 import OwnerPulseCard from "./owner-pulse-card";
 import { getOwnerPulse, type OwnerPulse } from "@/app/actions/owner-pulse";
+import OnboardingChecklist from "./onboarding-checklist";
+import { getOnboardingStatus, type OnboardingStatus } from "@/app/actions/onboarding";
 
 export default async function DashboardPage() {
   const { tenantId, role: userRole, session, userId } = await requireTenant();
@@ -44,11 +46,15 @@ export default async function DashboardPage() {
 
   // نبض المالك — للمالك/المدير فقط
   let ownerPulse: OwnerPulse | null = null;
+  let onboarding: OnboardingStatus | null = null;
   if (userRole === "OWNER" || userRole === "ADMIN") {
     try {
-      ownerPulse = await getOwnerPulse();
+      [ownerPulse, onboarding] = await Promise.all([
+        getOwnerPulse().catch(() => null),
+        getOnboardingStatus().catch(() => null),
+      ]);
     } catch {
-      ownerPulse = null;
+      // ignore
     }
   }
 
@@ -335,6 +341,9 @@ export default async function DashboardPage() {
       {/* تنبيهات ذكية — يظهر فقط ما يحتاج اهتمام */}
       <ReactivationBanner />
       <AgingLeadsBanner />
+
+      {/* قائمة الإعداد الأولي — للـ tenants الجدد، تختفي عند الاكتمال */}
+      {onboarding && <OnboardingChecklist status={onboarding} />}
 
       {/* نبض الأسبوع — للمالك/المدير فقط، يخفي نفسه إذا لا بيانات */}
       {ownerPulse && <OwnerPulseCard pulse={ownerPulse} />}
