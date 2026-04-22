@@ -1,12 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, departments, internalMessages, users } from "@/db/schema";
+import { leads, internalMessages, users } from "@/db/schema";
 import { eq, and, gte, lte, inArray, desc, asc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
-
-const RIYADH_TZ = "Asia/Riyadh";
 
 // =============================================
 // جلب مواعيد مقدم الخدمة لتاريخ محدد

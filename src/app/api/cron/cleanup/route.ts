@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { db } from "@/db";
-import { errorLog, rateLimits, users, sessions } from "@/db/schema";
+import { errorLog, users, sessions } from "@/db/schema";
 import { sql, isNull, lt, and } from "drizzle-orm";
 import { cleanupRateLimits } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";

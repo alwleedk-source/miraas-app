@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, X, Loader2, Tag } from "lucide-react";
+import { Plus, X, Loader2 } from "lucide-react";
 import { createTag, deleteTag } from "@/app/actions/tags";
 
 interface TagData {

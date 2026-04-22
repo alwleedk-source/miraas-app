@@ -53,17 +53,22 @@ export default function ProviderScheduleEditor({
   const [isPending, startTransition] = useTransition();
   const [schedule, setSchedule] = useState<ScheduleDay[]>(DEFAULT_SCHEDULE);
   const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState<"schedule" | "dayoffs">("schedule");
   const [newDayOffDate, setNewDayOffDate] = useState("");
   const [newDayOffReason, setNewDayOffReason] = useState("");
 
+  // loading يُشتقّ من حالة التحميل بدلاً من setState داخل effect
+  const sessionKey = open ? userId : null;
+  const loading = sessionKey !== null && loadedKey !== sessionKey;
+
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
+    let cancelled = false;
     Promise.all([getProviderSchedule(userId), getProviderDayOffs(userId)])
       .then(([scheduleData, dayOffsData]) => {
+        if (cancelled) return;
         if (scheduleData.length > 0) {
           const merged = DEFAULT_SCHEDULE.map((defaultDay) => {
             const found = scheduleData.find((s) => s.dayOfWeek === defaultDay.dayOfWeek);
@@ -81,9 +86,14 @@ export default function ProviderScheduleEditor({
           setSchedule(merged);
         }
         setDayOffs(dayOffsData);
+        setLoadedKey(userId);
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setLoadedKey(userId);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open, userId]);
 
   const handleSave = () => {

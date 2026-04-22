@@ -102,6 +102,8 @@ export default function GlobalError({
                 <RefreshCw size={16} />
                 إعادة المحاولة
               </button>
+              {/* hard-reload to "/" — global-error replaces the whole document, so client nav can't recover */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
               <a
                 href="/"
                 style={{

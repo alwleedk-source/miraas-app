@@ -28,7 +28,7 @@ function check(name: string, cond: boolean, details?: string) {
 async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
     return await fn();
-  } catch (e) {
+  } catch {
     return null;
   }
 }

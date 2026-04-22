@@ -106,9 +106,10 @@ export default function QuickBookingModal({
     return () => clearTimeout(timer);
   }, [phone, doSearch]);
 
-  // إعادة تعيين عند الإغلاق
+  // إعادة تعيين عند الإغلاق — 16 حقل، استخدام key للـ remount يبدو أنظف لكن يكسر animations
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- إعادة تعيين عند إغلاق المودال
       setStep("phone");
       setPhone("");
       setSearchResults(null);
@@ -132,6 +133,7 @@ export default function QuickBookingModal({
   // جلب مقدمي الخدمة عند اختيار القسم
   useEffect(() => {
     if (!selectedDeptId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- مسح القائمة عند إلغاء القسم
       setDeptProviders([]);
       setSelectedProviderId("");
       return;
@@ -149,6 +151,7 @@ export default function QuickBookingModal({
   // توليد الأوقات المتاحة عند اختيار الطبيب + التاريخ + المدة
   useEffect(() => {
     if (!selectedProviderId || !selectedDeptId || !bookingDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- مسح الأوقات عند نقص المدخلات
       setAvailableSlots([]);
       return;
     }

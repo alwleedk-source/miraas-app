@@ -13,7 +13,6 @@
  */
 
 import { db } from "@/db";
-import { rateLimits } from "@/db/schema";
 import { sql } from "drizzle-orm";
 
 export type RateLimitResult = {

@@ -1,4 +1,4 @@
-import { Trophy, Medal, Award, TrendingUp } from "lucide-react";
+import { Trophy, Medal, Award } from "lucide-react";
 import type { CoordinatorPerformance } from "@/app/actions/analytics-funnel";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";

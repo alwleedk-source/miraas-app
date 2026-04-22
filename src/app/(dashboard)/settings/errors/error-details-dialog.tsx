@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getErrorDetails } from "@/app/actions/errors";
 import { AlertTriangle, Clock, Hash, X, Loader2, ChevronRight } from "lucide-react";
+import { useNow } from "@/lib/hooks";
 
 type ErrorSummary = {
   fingerprint: string | null;
@@ -22,6 +23,7 @@ export default function ErrorDetailsDialog({ summary }: { summary: ErrorSummary 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [details, setDetails] = useState<ErrorDetail[]>([]);
+  const now = useNow();
 
   const handleOpen = async () => {
     if (!summary.fingerprint) return;
@@ -38,8 +40,9 @@ export default function ErrorDetailsDialog({ summary }: { summary: ErrorSummary 
   };
 
   const timeAgo = (d: Date | string) => {
+    if (now === 0) return "";
     const date = new Date(d);
-    const diff = Date.now() - date.getTime();
+    const diff = now - date.getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 1) return "الآن";
     if (mins < 60) return `منذ ${mins} د`;

@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Sans_Arabic } from "next/font/google";
 import "./globals.css";
+
+const arabic = IBM_Plex_Sans_Arabic({
+  subsets: ["arabic"],
+  weight: ["300", "400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-arabic",
+});
 
 export const metadata: Metadata = {
   title: "مِراس — منصة إدارة العملاء لشركات التسويق",
@@ -14,20 +22,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ar" dir="rtl">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body className="min-h-full bg-surface-50">{children}</body>
+    <html lang="ar" dir="rtl" className={arabic.variable}>
+      <body className={`min-h-full bg-surface-50 ${arabic.className}`}>{children}</body>
     </html>
   );
 }

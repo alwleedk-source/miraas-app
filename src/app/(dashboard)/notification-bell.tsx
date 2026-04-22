@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useTransition, useRef } from "react";
-import { Bell, Check, CheckCheck, X, UserPlus, UserCheck, Clock, Info } from "lucide-react";
+import { Bell, CheckCheck, X, UserPlus, UserCheck, Clock, Info } from "lucide-react";
 import { getNotifications, getUnreadCount, markAsRead, markAllAsRead } from "@/app/actions/notifications";
 import { cn } from "@/lib/utils";
+import { useNow } from "@/lib/hooks";
 
 interface Notification {
   id: string;
@@ -33,6 +34,7 @@ export default function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isPending, startTransition] = useTransition();
+  const now = useNow();
   const [loaded, setLoaded] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
@@ -93,7 +95,8 @@ export default function NotificationBell() {
   };
 
   function timeAgo(date: Date): string {
-    const diff = Date.now() - new Date(date).getTime();
+    if (now === 0) return "";
+    const diff = now - new Date(date).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "الآن";
     if (mins < 60) return `منذ ${mins} د`;

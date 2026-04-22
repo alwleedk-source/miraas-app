@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, followUps, users, leadSources } from "@/db/schema";
-import { sql, eq, and, gte, lte, isNotNull, count, desc } from "drizzle-orm";
+import { leads, followUps } from "@/db/schema";
+import { sql, eq, and, gte, lte, isNotNull, count } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
 

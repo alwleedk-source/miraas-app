@@ -14,6 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+const COMPLETED_STATUSES = ["COMPLETED", "ATTENDED_NOT_SUITABLE", "CANCELLED", "NO_RESPONSE"];
+const DESTRUCTIVE_STATUSES = ["CANCELLED", "ATTENDED_NOT_SUITABLE", "NO_RESPONSE"];
+
 type Booking = {
   id: string;
   name: string;
@@ -92,9 +95,6 @@ export default function BookingBoard({
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "tomorrow" | "next_7" | "past">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [hideCompleted, setHideCompleted] = useState(false);
-
-  const COMPLETED_STATUSES = ["COMPLETED", "ATTENDED_NOT_SUITABLE", "CANCELLED", "NO_RESPONSE"];
-  const DESTRUCTIVE_STATUSES = ["CANCELLED", "ATTENDED_NOT_SUITABLE", "NO_RESPONSE"];
 
   const runStatusChange = (leadId: string, status: string) => {
     setActionError(null);

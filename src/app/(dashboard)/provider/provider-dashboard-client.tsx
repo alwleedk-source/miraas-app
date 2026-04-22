@@ -3,13 +3,10 @@
 import { useState, useTransition } from "react";
 import {
   CalendarDays,
-  Clock,
   Phone,
   User,
   MessageCircle,
   Send,
-  ChevronLeft,
-  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sendQuickMessage } from "@/app/actions/provider";

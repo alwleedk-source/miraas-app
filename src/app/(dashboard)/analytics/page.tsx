@@ -126,14 +126,12 @@ export default async function AnalyticsPage({
 
   const convertedIds = convertedStages.map((s) => s.id);
   let conversionRate = 0;
-  let convertedCount = 0;
 
   if (convertedIds.length > 0 && totalLeadsResult.count > 0) {
     const [converted] = await db
       .select({ count: count() })
       .from(leads)
       .where(and(...baseConditions, inArray(leads.stageId, convertedIds)));
-    convertedCount = converted.count;
     conversionRate = Math.round((converted.count / totalLeadsResult.count) * 100);
   }
 
@@ -1162,9 +1160,6 @@ export default async function AnalyticsPage({
                           </div>
                         </div>
                       );
-                    }).sort((a, b) => {
-                      // ترتيب وهمي: الأكبر أولاً
-                      return 0;
                     })}
                   </div>
                 ) : (

@@ -2,7 +2,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getArchivedLeads, getArchiveStats } from "@/app/actions/archive";
 import { Card, CardContent } from "@/components/ui/card";
-import { Archive, ArrowRight, RefreshCw, Search } from "lucide-react";
+import { Archive, ArrowRight, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { ARCHIVE_REASONS } from "@/lib/archive-reasons";
 import ArchiveClient from "./archive-client";

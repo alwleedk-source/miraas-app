@@ -19,15 +19,14 @@ export const dynamic = "force-dynamic";
 // =============================================
 
 // تنظيف القيمة من المسافات/quotes (Coolify قد يحفظها بـ wrappers)
-const CRON_SECRET = process.env.CRON_SECRET
-  ?.trim()
-  .replace(/^["']|["']$/g, "")
-  .replace(/\s+/g, "");
-if (!CRON_SECRET || CRON_SECRET.length < 32) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("CRON_SECRET required in production (min 32 chars)");
-  }
-  console.warn("⚠️ CRON_SECRET not set or too short — cron will reject all requests");
+// lazy: نتحقّق عند أول طلب، ليس عند تحميل الموديول (يكسر next build)
+function getCronSecret(): string | null {
+  const raw = process.env.CRON_SECRET
+    ?.trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\s+/g, "");
+  if (!raw || raw.length < 32) return null;
+  return raw;
 }
 const RIYADH_TZ = "Asia/Riyadh";
 
@@ -180,11 +179,12 @@ export async function GET(request: NextRequest) {
     request.headers.get("x-cron-key") ??
     request.nextUrl.searchParams.get("secret") ??
     "";
-  if (!CRON_SECRET) {
+  const cronSecret = getCronSecret();
+  if (!cronSecret) {
     return NextResponse.json({ error: "server not configured" }, { status: 500 });
   }
   const providedBuf = Buffer.from(provided);
-  const expectedBuf = Buffer.from(CRON_SECRET);
+  const expectedBuf = Buffer.from(cronSecret);
   const valid =
     providedBuf.length === expectedBuf.length &&
     timingSafeEqual(providedBuf, expectedBuf);

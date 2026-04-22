@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition } from "react";
 import { MessageCircle, X, Check, Bell } from "lucide-react";
 import { markMessagesAsRead } from "@/app/actions/provider";
 
@@ -16,7 +16,7 @@ type Message = {
 
 export default function InternalMessagesBar({ messages }: { messages: Message[] }) {
   const [isPending, startTransition] = useTransition();
-  const [visibleMessages, setVisibleMessages] = useState(messages);
+  const [visibleMessages] = useState(messages);
   const [dismissed, setDismissed] = useState<string[]>([]);
 
   if (visibleMessages.length === 0) return null;

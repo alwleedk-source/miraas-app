@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search, RefreshCw, ArrowLeft, ArrowRight, Loader2, Ban,
-  CheckCircle2, X, Clock, MessageCircle, Phone,
+  X, Clock, MessageCircle, Phone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ARCHIVE_REASONS } from "@/lib/archive-reasons";
 import { unarchiveLead, bulkReactivateLeads } from "@/app/actions/archive";
 import { toTelUrl, toWhatsappUrl } from "@/lib/utils";
+import { useNow } from "@/lib/hooks";
 
 type ArchivedLeadRow = {
   id: string;
@@ -37,10 +38,10 @@ type Props = {
   dueOnly?: boolean;
 };
 
-function timeAgo(date: Date | string | null): string {
-  if (!date) return "";
+function timeAgo(date: Date | string | null, now: number): string {
+  if (!date || now === 0) return "";
   const d = new Date(date);
-  const diff = Date.now() - d.getTime();
+  const diff = now - d.getTime();
   const days = Math.floor(diff / 86400_000);
   if (days < 1) return "اليوم";
   if (days === 1) return "أمس";
@@ -65,6 +66,7 @@ export default function ArchiveClient({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkPending, startBulkTransition] = useTransition();
   const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const now = useNow();
 
   const updateSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -227,8 +229,9 @@ export default function ArchiveClient({
                     : null;
                   const isDnc = !lead.canRecontact;
                   const isDue =
-                    lead.reactivateAt &&
-                    new Date(lead.reactivateAt).getTime() <= Date.now();
+                    !!lead.reactivateAt &&
+                    now > 0 &&
+                    new Date(lead.reactivateAt).getTime() <= now;
 
                   return (
                     <tr key={lead.id} className="border-b border-surface-100 hover:bg-surface-50/50">
@@ -303,7 +306,7 @@ export default function ArchiveClient({
                       </td>
                       <td className="p-2 hidden md:table-cell">
                         <span className="text-[11px] text-surface-400">
-                          {timeAgo(lead.archivedAt)}
+                          {timeAgo(lead.archivedAt, now)}
                         </span>
                       </td>
                       <td className="p-2">

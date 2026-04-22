@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Bell, X, ArrowLeft } from "lucide-react";
+import Link from "next/link";
+import { Bell, X, ArrowLeft } from "lucide-react";
 
 interface Props {
   overdueCount: number;
@@ -25,13 +26,13 @@ export default function OverdueFollowUpsBar({ overdueCount }: Props) {
           {" "}تحتاج اهتمامك
         </p>
       </div>
-      <a
+      <Link
         href="/"
         className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-medium transition-colors shrink-0"
       >
         عرض المهام
         <ArrowLeft className="h-3 w-3" />
-      </a>
+      </Link>
       <button
         onClick={() => setDismissed(true)}
         className="p-1 hover:bg-white/20 rounded-lg transition-colors shrink-0"

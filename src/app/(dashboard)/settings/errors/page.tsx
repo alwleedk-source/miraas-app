@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, Clock, Hash } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { getErrors } from "@/app/actions/errors";
 import ErrorDetailsDialog from "./error-details-dialog";
 
@@ -43,9 +43,9 @@ export default async function ErrorsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {errors.map((err) => (
+            {errors.map((err, idx) => (
               <ErrorDetailsDialog
-                key={err.fingerprint ?? Math.random().toString()}
+                key={err.fingerprint ?? `no-fp-${idx}`}
                 summary={err}
               />
             ))}

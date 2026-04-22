@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Globe, Clock, Palette, Tag, Briefcase, LayoutGrid } from "lucide-react";
+import { Globe, Clock, Palette, Tag, Briefcase, LayoutGrid } from "lucide-react";
 import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getTenantSettings } from "@/app/actions/settings";

@@ -11,7 +11,7 @@ import { assertRole, ROLE, assertStageInTenant } from "@/lib/tenant-guards";
  * إضافة مرحلة جديدة
  */
 export async function createStage(input: { name: string; color: string }) {
-  const { tenantId, userId: _userId, role } = await requireTenant();
+  const { tenantId, role } = await requireTenant();
   assertRole(role, ROLE.OWNER_ADMIN);
 
   const name = input.name.trim();

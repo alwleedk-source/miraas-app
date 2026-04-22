@@ -27,7 +27,6 @@ import {
   Archive,
   ChevronDown,
   Eye,
-  ArrowRightLeft,
   MessageSquare,
   Check,
   AlertTriangle,
@@ -39,6 +38,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS, toWhatsappUrl } from "@/lib/utils";
+import { useNow } from "@/lib/hooks";
 import {
   createLead,
   updateLead,
@@ -128,7 +128,8 @@ const FOLLOW_UP_TYPES: { value: FollowUpType; label: string }[] = [
 // Component
 // =============================================
 
-export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [] }: Props) {
+export default function LeadsClient({ initialLeads, stages, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [] }: Props) {
+  const now = useNow();
   const [leads, setLeads] = useState(initialLeads);
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [searchQuery, setSearchQuery] = useState("");
@@ -179,11 +180,11 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
     completedAt?: Date | null;
     user: { id: string; name: string; image: string | null } | null;
   }>>([]);
-  const [loadingFollowUps, setLoadingFollowUps] = useState(false);
+  // loadingFollowUps يُشتقّ أدناه من followUpsLoadedFor (تجنّب setState في effect)
 
   // تصنيفات العميل
   const [leadTags, setLeadTags] = useState<TagData[]>([]);
-  const [loadingTags, setLoadingTags] = useState(false);
+  // loadingTags يُشتقّ أدناه من tagsLoadedFor
 
   // نافذة الحجز
   const [bookingModal, setBookingModal] = useState<{ leadId: string; stageId: string; leadName: string } | null>(null);
@@ -214,24 +215,24 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   }, [undoToast]);
 
   // جلب المتابعات عند اختيار عميل
+  // loading يُشتقّ من followUpsLoadedFor: لو لا يطابق selectedLead.id → جاري التحميل
+  // لا حاجة لمسح القوائم عند selectedLead=null لأن السكشن لا يُعرض أصلاً
+  const [followUpsLoadedFor, setFollowUpsLoadedFor] = useState<string | null>(null);
+  const [, setTagsLoadedFor] = useState<string | null>(null);
+  const fuKey = selectedLead && !editingLead ? selectedLead.id : null;
+  const loadingFollowUps = fuKey !== null && followUpsLoadedFor !== fuKey;
   useEffect(() => {
-    if (selectedLead && !editingLead) {
-      setLoadingFollowUps(true);
-      getFollowUps(selectedLead.id)
-        .then((data) => setFollowUpsList(data))
-        .catch(() => setFollowUpsList([]))
-        .finally(() => setLoadingFollowUps(false));
-      // جلب تصنيفات العميل
-      setLoadingTags(true);
-      getLeadTags(selectedLead.id)
-        .then((data) => setLeadTags(data))
-        .catch(() => setLeadTags([]))
-        .finally(() => setLoadingTags(false));
-    } else {
-      setFollowUpsList([]);
-      setLeadTags([]);
-    }
-  }, [selectedLead?.id, editingLead]);
+    if (!selectedLead || editingLead) return;
+    let cancelled = false;
+    const id = selectedLead.id;
+    getFollowUps(id)
+      .then((data) => { if (!cancelled) { setFollowUpsList(data); setFollowUpsLoadedFor(id); } })
+      .catch(() => { if (!cancelled) { setFollowUpsList([]); setFollowUpsLoadedFor(id); } });
+    getLeadTags(id)
+      .then((data) => { if (!cancelled) { setLeadTags(data); setTagsLoadedFor(id); } })
+      .catch(() => { if (!cancelled) { setLeadTags([]); setTagsLoadedFor(id); } });
+    return () => { cancelled = true; };
+  }, [selectedLead, editingLead]);
 
   // تنسيق الأرقام بالإنجليزية
   const formatPhoneDisplay = (phone: string) => {
@@ -372,7 +373,7 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
         ]);
         setNewLead({ name: "", phone: "", email: "", priority: "MEDIUM", stageId: "", source: "" });
         setShowAddForm(false);
-      } catch (err) {
+      } catch {
         setError("فشل في إضافة العميل");
       }
     });
@@ -593,27 +594,33 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   };
 
   // تعيين اليوم — يحافظ على الوقت المُختار، ويقفز لوقت منطقي إذا صار الوقت ماضياً
+  // event handler — `new Date()` فيه آمن لأنه يُنفّذ عند الضغط، لا أثناء render
   const setQuickDay = (daysFromNow: number) => {
-    const now = new Date();
+     
+    const ref = new Date();
     const target = new Date();
-    target.setDate(now.getDate() + daysFromNow);
+     
+    target.setDate(ref.getDate() + daysFromNow);
     const base = quickDateTime ? new Date(quickDateTime) : null;
     if (base) {
       target.setHours(base.getHours(), base.getMinutes(), 0, 0);
     } else {
-      target.setHours(now.getHours() + 1, 0, 0, 0);
+      target.setHours(ref.getHours() + 1, 0, 0, 0);
     }
-    if (target.getTime() < Date.now()) {
-      target.setHours(now.getHours() + 1, 0, 0, 0);
+    if (target.getTime() < ref.getTime()) {
+      target.setHours(ref.getHours() + 1, 0, 0, 0);
     }
     setQuickDateTime(toDateTimeLocal(target));
   };
 
   // تعيين الساعة — يحافظ على اليوم المُختار، ويقفز للغد إذا صار الوقت ماضياً
   const setQuickHour = (hour24: number) => {
+     
+    const ref = new Date();
     const base = quickDateTime ? new Date(quickDateTime) : new Date();
+     
     base.setHours(hour24, 0, 0, 0);
-    if (base.getTime() < Date.now()) {
+    if (base.getTime() < ref.getTime()) {
       base.setDate(base.getDate() + 1);
     }
     setQuickDateTime(toDateTimeLocal(base));
@@ -732,7 +739,8 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
   };
 
   function timeAgo(date: Date): string {
-    const diff = Date.now() - new Date(date).getTime();
+    if (now === 0) return "";
+    const diff = now - new Date(date).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "الآن";
     if (mins < 60) return `منذ ${mins} دقيقة`;
@@ -2018,14 +2026,13 @@ export default function LeadsClient({ initialLeads, stages, total, teamMembers =
                                 const rawNotes = fu.notes ?? "";
                                 const isCancelled = /^\(?ملغ[اى]ة?\)?\s*/.test(rawNotes);
                                 const displayNotes = rawNotes.replace(/^\(?ملغ[اى]ة?\)?\s*/, "").trim();
-                                const now = Date.now();
                                 const scheduled = fu.scheduledAt ? new Date(fu.scheduledAt) : null;
                                 const status: "cancelled" | "completed" | "overdue" | "pending" =
                                   isCancelled
                                     ? "cancelled"
                                     : fu.completedAt
                                     ? "completed"
-                                    : scheduled && scheduled.getTime() < now
+                                    : scheduled && now > 0 && scheduled.getTime() < now
                                     ? "overdue"
                                     : "pending";
 
@@ -2332,6 +2339,7 @@ function StageDropdown({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const btnRef = useCallback(
     (node: HTMLButtonElement | null) => {
       if (node && open) {
@@ -2341,7 +2349,6 @@ function StageDropdown({
     },
     [open]
   );
-  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
 
   return (
     <div className="relative">

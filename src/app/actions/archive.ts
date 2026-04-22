@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { leads, followUps, activityLog, users, leadSources, pipelineStages } from "@/db/schema";
-import { eq, and, isNull, isNotNull, sql, desc, count, lte, ilike, or, inArray } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, desc, count, lte, ilike, or, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { assertLeadInTenant, assertRole, ROLE } from "@/lib/tenant-guards";

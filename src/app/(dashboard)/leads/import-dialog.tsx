@@ -10,10 +10,7 @@ import {
   FileSpreadsheet,
   X,
   Check,
-  AlertTriangle,
   Loader2,
-  ArrowUpLeft,
-  ChevronDown,
 } from "lucide-react";
 import { bulkImportLeads, checkDuplicatePhones } from "@/app/actions/leads";
 import * as XLSX from "xlsx";
