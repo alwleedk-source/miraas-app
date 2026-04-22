@@ -1,0 +1,167 @@
+"use server";
+
+import { db } from "@/db";
+import { leads, leadSources, users, pipelineStages } from "@/db/schema";
+import { eq, and, or, ilike, sql } from "drizzle-orm";
+import { requireTenant } from "@/lib/auth-server";
+import { assertRole, ROLE } from "@/lib/tenant-guards";
+
+const PRIORITY_LABELS: Record<string, string> = {
+  LOW: "منخفضة",
+  MEDIUM: "متوسطة",
+  HIGH: "عالية",
+  URGENT: "عاجلة",
+};
+
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  PENDING: "بانتظار",
+  COMPLETED: "حضر",
+  ATTENDED_NOT_SUITABLE: "لم يناسبه",
+  CANCELLED: "ألغى",
+  NO_RESPONSE: "لم يرد",
+  POSTPONED: "مؤجّل",
+};
+
+/** يُهرب قيمة CSV: لو فيها , أو " أو newline → اقتباس مزدوج */
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function formatDateRiyadh(d: Date | null): string {
+  if (!d) return "";
+  return new Date(d).toLocaleString("ar-SA-u-ca-gregory", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * تصدير العملاء كـ CSV (يدعم نفس فلاتر getLeads).
+ *
+ * - OWNER/ADMIN فقط (يحوي بيانات شخصية كاملة)
+ * - يرجع string مع UTF-8 BOM لكي Excel يفتحها بعربي صحيح
+ * - بدون pagination — كل المطابق
+ * - أقصى 10,000 صف protective cap
+ */
+export async function exportLeadsCSV(options?: {
+  search?: string;
+  stageId?: string;
+  priority?: string;
+  assignedTo?: string;
+  includeArchived?: boolean;
+}): Promise<{ filename: string; csv: string; count: number }> {
+  const { tenantId, role } = await requireTenant();
+  assertRole(role, ROLE.OWNER_ADMIN);
+
+  const conditions = [
+    eq(leads.tenantId, tenantId),
+    eq(leads.isDeleted, false),
+  ];
+
+  if (!options?.includeArchived) {
+    conditions.push(sql`${leads.archivedAt} IS NULL`);
+  }
+  if (options?.stageId) {
+    conditions.push(eq(leads.stageId, options.stageId));
+  }
+  if (options?.priority) {
+    conditions.push(
+      eq(leads.priority, options.priority as "LOW" | "MEDIUM" | "HIGH" | "URGENT"),
+    );
+  }
+  if (options?.assignedTo) {
+    conditions.push(eq(leads.assignedTo, options.assignedTo));
+  }
+
+  const whereClause = options?.search
+    ? and(
+        and(...conditions),
+        or(
+          ilike(leads.name, `%${options.search}%`),
+          ilike(leads.phone, `%${options.search}%`),
+        ),
+      )
+    : and(...conditions);
+
+  const rows = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      phone: leads.phone,
+      email: leads.email,
+      company: leads.company,
+      priority: leads.priority,
+      createdAt: leads.createdAt,
+      bookingStatus: leads.bookingStatus,
+      bookingDate: leads.bookingDate,
+      bookingService: leads.bookingService,
+      bookingNotes: leads.bookingNotes,
+      stageName: pipelineStages.name,
+      assignedUserName: users.name,
+      sourceName: leadSources.name,
+    })
+    .from(leads)
+    .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
+    .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .where(whereClause)
+    .orderBy(leads.createdAt)
+    .limit(10_000);
+
+  const headers = [
+    "الاسم",
+    "الهاتف",
+    "الإيميل",
+    "الشركة",
+    "الأولوية",
+    "المرحلة",
+    "المنسق",
+    "المصدر",
+    "موعد الحجز",
+    "حالة الحجز",
+    "الخدمة",
+    "ملاحظات الحجز",
+    "تاريخ الإضافة",
+  ];
+
+  const lines: string[] = [headers.map(csvCell).join(",")];
+
+  for (const r of rows) {
+    lines.push(
+      [
+        csvCell(r.name),
+        csvCell(r.phone),
+        csvCell(r.email),
+        csvCell(r.company),
+        csvCell(PRIORITY_LABELS[r.priority] ?? r.priority),
+        csvCell(r.stageName),
+        csvCell(r.assignedUserName),
+        csvCell(r.sourceName),
+        csvCell(formatDateRiyadh(r.bookingDate)),
+        csvCell(BOOKING_STATUS_LABELS[r.bookingStatus ?? ""] ?? r.bookingStatus),
+        csvCell(r.bookingService),
+        csvCell(r.bookingNotes),
+        csvCell(formatDateRiyadh(r.createdAt)),
+      ].join(","),
+    );
+  }
+
+  const csv = "﻿" + lines.join("\n"); // BOM لـ Excel-Arabic
+  const today = new Date().toISOString().slice(0, 10);
+  const suffix = options?.includeArchived ? "-with-archive" : "";
+
+  return {
+    filename: `meras-leads-${today}${suffix}.csv`,
+    csv,
+    count: rows.length,
+  };
+}

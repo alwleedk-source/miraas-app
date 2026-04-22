@@ -27,6 +27,7 @@ import {
   Archive,
   ChevronDown,
   Eye,
+  Download,
   MessageSquare,
   Check,
   AlertTriangle,
@@ -58,6 +59,7 @@ import {
   updateFollowUpSchedule,
   cancelFollowUp,
 } from "@/app/actions/followups";
+import { exportLeadsCSV } from "@/app/actions/export-leads";
 
 const ImportDialog = lazy(() => import("./import-dialog"));
 import { ArchiveModal } from "@/components/archive/archive-modal";
@@ -340,6 +342,31 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
   // =============================================
   // Actions
   // =============================================
+
+  const handleExport = async () => {
+    setError(null);
+    try {
+      const result = await exportLeadsCSV({
+        search: searchQuery.trim() || undefined,
+        stageId: filterStage || undefined,
+        priority: filterPriority || undefined,
+        assignedTo: filterAssigned || undefined,
+      });
+      const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setQuickSuccess(`📥 تم تصدير ${result.count} عميل`);
+      setTimeout(() => setQuickSuccess(null), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "فشل التصدير");
+    }
+  };
 
   const handleAddLead = () => {
     if (!newLead.name.trim()) return;
@@ -764,7 +791,13 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
             إدارة ومتابعة العملاء المحتملين ({leads.length} عميل)
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {(currentUserRole === "OWNER" || currentUserRole === "ADMIN") && (
+            <Button variant="outline" onClick={handleExport} title="تصدير المعروض كـ CSV">
+              <Download className="h-4 w-4 me-2" />
+              تصدير
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setShowImport(true)}>
             <FileSpreadsheet className="h-4 w-4 me-2" />
             استيراد
