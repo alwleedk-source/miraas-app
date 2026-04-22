@@ -8,8 +8,22 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 
+/**
+ * يُنظّف قيمة env من المسافات + علامات التنصيص + الـ newlines
+ * (Coolify وبعض الأدوات قد تحفظ القيم مع quotes بالخطأ)
+ */
+function sanitizeEnvValue(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  return raw
+    .trim()
+    .replace(/^["']|["']$/g, "") // strip surrounding quotes
+    .replace(/\s+/g, ""); // strip any internal whitespace/newlines
+}
+
 function getEncryptionKey(): Buffer {
-  const key = process.env.ENCRYPTION_KEY;
+  const raw = process.env.ENCRYPTION_KEY;
+  const key = sanitizeEnvValue(raw);
+
   if (!key) {
     if (process.env.NODE_ENV === "production") {
       throw new Error("ENCRYPTION_KEY required in production — refusing to operate");
@@ -17,11 +31,17 @@ function getEncryptionKey(): Buffer {
     console.warn("⚠️ ENCRYPTION_KEY not set — using dev fallback");
     return Buffer.from("0".repeat(64), "hex");
   }
-  const buf = Buffer.from(key, "hex");
-  if (buf.length !== 32) {
-    throw new Error("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
+  if (!/^[0-9a-fA-F]+$/.test(key)) {
+    throw new Error(
+      `ENCRYPTION_KEY contains invalid characters (must be hex 0-9, a-f). Length received: ${key.length}`,
+    );
   }
-  return buf;
+  if (key.length !== 64) {
+    throw new Error(
+      `ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes). Got ${key.length} chars.`,
+    );
+  }
+  return Buffer.from(key, "hex");
 }
 
 /**

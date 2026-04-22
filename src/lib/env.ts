@@ -2,22 +2,30 @@
  * Environment validation — fail-fast عند startup
  *
  * يتأكّد أن كل الأسرار الحرجة موجودة وقوية **قبل** بدء التطبيق.
- * في production: يرمي exception يمنع النشر.
- * في development: يطبع warnings.
+ * يتسامح مع المسافات + علامات التنصيص (Coolify يحفظ بعض القيم بـ quotes).
  */
+
+/** ينظّف القيم من المسافات/الـ quotes/الـ newlines */
+function sanitize(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  return raw
+    .trim()
+    .replace(/^["']|["']$/g, "") // strip surrounding quotes
+    .replace(/\s+/g, ""); // strip internal whitespace
+}
 
 type EnvCheck = {
   name: string;
   value: string | undefined;
   requiredInProd: boolean;
   minLength?: number;
-  validator?: (v: string) => string | null; // return error message or null
+  validator?: (v: string) => string | null;
 };
 
 const CHECKS: EnvCheck[] = [
   {
     name: "DATABASE_URL",
-    value: process.env.DATABASE_URL,
+    value: sanitize(process.env.DATABASE_URL),
     requiredInProd: true,
     minLength: 20,
     validator: (v) =>
@@ -27,26 +35,33 @@ const CHECKS: EnvCheck[] = [
   },
   {
     name: "ENCRYPTION_KEY",
-    value: process.env.ENCRYPTION_KEY,
+    value: sanitize(process.env.ENCRYPTION_KEY),
     requiredInProd: true,
-    validator: (v) =>
-      !/^[0-9a-fA-F]{64}$/.test(v) ? "must be 64 hex chars (32 bytes)" : null,
+    validator: (v) => {
+      if (!/^[0-9a-fA-F]+$/.test(v)) {
+        return `contains invalid characters (must be hex). Got ${v.length} chars: "${v.slice(0, 8)}..."`;
+      }
+      if (v.length !== 64) {
+        return `must be exactly 64 hex chars. Got ${v.length} chars.`;
+      }
+      return null;
+    },
   },
   {
     name: "CRON_SECRET",
-    value: process.env.CRON_SECRET,
+    value: sanitize(process.env.CRON_SECRET),
     requiredInProd: true,
     minLength: 32,
   },
   {
     name: "BETTER_AUTH_SECRET",
-    value: process.env.BETTER_AUTH_SECRET,
+    value: sanitize(process.env.BETTER_AUTH_SECRET),
     requiredInProd: true,
     minLength: 16,
   },
   {
     name: "BETTER_AUTH_URL",
-    value: process.env.BETTER_AUTH_URL,
+    value: sanitize(process.env.BETTER_AUTH_URL),
     requiredInProd: true,
     validator: (v) =>
       !v.startsWith("http://") && !v.startsWith("https://")
@@ -68,7 +83,7 @@ export function validateEnv(): { ok: boolean; errors: string[]; warnings: string
       continue;
     }
     if (check.minLength && check.value.length < check.minLength) {
-      const msg = `${check.name}: too short (min ${check.minLength})`;
+      const msg = `${check.name}: too short (min ${check.minLength}, got ${check.value.length})`;
       if (isProd && check.requiredInProd) errors.push(msg);
       else warnings.push(msg);
       continue;
@@ -86,7 +101,6 @@ export function validateEnv(): { ok: boolean; errors: string[]; warnings: string
   return { ok: errors.length === 0, errors, warnings };
 }
 
-/** يُستدعى عند أول import — يرمي إذا production بلا أسرار */
 export function assertEnv(): void {
   const { ok, errors, warnings } = validateEnv();
   for (const w of warnings) console.warn(`⚠️ ENV: ${w}`);

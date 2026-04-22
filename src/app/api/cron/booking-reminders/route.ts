@@ -18,7 +18,11 @@ export const dynamic = "force-dynamic";
 // 8 صباحاً → ?type=morning (تذكير بحجوزات اليوم)
 // =============================================
 
-const CRON_SECRET = process.env.CRON_SECRET;
+// تنظيف القيمة من المسافات/quotes (Coolify قد يحفظها بـ wrappers)
+const CRON_SECRET = process.env.CRON_SECRET
+  ?.trim()
+  .replace(/^["']|["']$/g, "")
+  .replace(/\s+/g, "");
 if (!CRON_SECRET || CRON_SECRET.length < 32) {
   if (process.env.NODE_ENV === "production") {
     throw new Error("CRON_SECRET required in production (min 32 chars)");
