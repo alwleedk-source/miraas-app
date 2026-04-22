@@ -28,10 +28,17 @@ const CHECKS: EnvCheck[] = [
     value: sanitize(process.env.DATABASE_URL),
     requiredInProd: true,
     minLength: 20,
-    validator: (v) =>
-      !v.startsWith("postgres://") && !v.startsWith("postgresql://")
-        ? "must start with postgres:// or postgresql://"
-        : null,
+    validator: (v) => {
+      if (!v.startsWith("postgres://") && !v.startsWith("postgresql://")) {
+        return "must start with postgres:// or postgresql://";
+      }
+      // SSL ضروري في production — يحمي البيانات أثناء النقل
+      // (Coolify-managed Postgres قد يكون localhost دون SSL لكن في cluster setup ضروري)
+      if (process.env.NODE_ENV === "production" && !v.includes("sslmode=")) {
+        return "production يجب أن يحوي ?sslmode=require — يحمي البيانات أثناء النقل";
+      }
+      return null;
+    },
   },
   {
     name: "ENCRYPTION_KEY",
