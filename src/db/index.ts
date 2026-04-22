@@ -1,58 +1,40 @@
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres, { type Sql } from "postgres";
+import postgres from "postgres";
 import * as schema from "./schema";
 
 /**
- * Lazy DB initialization.
+ * DB initialization — يضمن أن التطبيق يستمع على port 3000 حتى
+ * لو DATABASE_URL مفقود (وقتها كل query يفشل لكن /api/health يعمل ويُبلغ).
  *
- * التطبيق يستمع على port 3000 فوراً حتى لو DATABASE_URL مفقود مؤقتاً —
- * بدل crash عند import time والذي يقتل healthcheck.
- *
- * أول query فعلي يُنشئ الاتصال. إذا env مفقود، يرمي خطأ واضح يُعرض في /api/health.
+ * استراتيجية: استخدم placeholder URL غير صالح كـ fallback.
+ * postgres-js لا يحاول الاتصال حتى أول query.
+ * النتيجة: import يمر بسلاسة، queries تفشل بخطأ واضح، health endpoint يكشف الحقيقة.
  */
 
-let _client: Sql | null = null;
+const PLACEHOLDER_URL =
+  "postgres://placeholder:placeholder@db-not-configured.invalid:5432/placeholder";
 
-function getClient(): Sql {
-  if (_client) return _client;
+const realUrl = process.env.DATABASE_URL;
+export const isDatabaseConfigured = !!realUrl && realUrl.startsWith("postgres");
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error(
-      "DATABASE_URL not set — check Coolify env vars (must be Runtime, not Buildtime-only)",
-    );
-  }
-
-  _client = postgres(connectionString, {
-    max: 20,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    connection: {
-      statement_timeout: 30_000,
-      idle_in_transaction_session_timeout: 60_000,
-    },
-    onnotice: () => {},
-  });
-
-  return _client;
+if (!isDatabaseConfigured) {
+  console.error(
+    "⚠️  DATABASE_URL not set or invalid — app will start but queries will fail.\n" +
+      "    Check Coolify env vars: DATABASE_URL must be Available at Runtime.",
+  );
 }
 
-/**
- * Proxy على دالة وهمية — يدعم استخدام postgres كـ tagged template
- * (sql`...`) و كـ object (sql.unsafe(), sql.end()).
- */
-const lazyClient = new Proxy(function () {} as unknown as Sql, {
-  apply(_target, _thisArg, args) {
-    const c = getClient() as unknown as (...a: unknown[]) => unknown;
-    return c(...args);
+const client = postgres(realUrl ?? PLACEHOLDER_URL, {
+  max: 20,
+  idle_timeout: 20,
+  connect_timeout: 10,
+  connection: {
+    statement_timeout: 30_000,
+    idle_in_transaction_session_timeout: 60_000,
   },
-  get(_target, prop, _receiver) {
-    const c = getClient() as unknown as Record<string | symbol, unknown>;
-    const v = c[prop];
-    return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(c) : v;
-  },
+  onnotice: () => {},
 });
 
-export const db = drizzle(lazyClient, { schema });
+export const db = drizzle(client, { schema });
 
 export type Database = typeof db;

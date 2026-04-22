@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/db";
+import { db, isDatabaseConfigured } from "@/db";
 import { sql } from "drizzle-orm";
 import { validateEnv } from "@/lib/env";
 
@@ -25,15 +25,20 @@ export async function GET(req: Request) {
   const errors: string[] = [];
 
   // 1. DB ping (مع timeout قصير حتى لا يحبس probe)
-  try {
-    await Promise.race([
-      db.execute(sql`SELECT 1`),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("db timeout 3s")), 3000)),
-    ]);
-    checks.database = "ok";
-  } catch (e) {
+  if (!isDatabaseConfigured) {
     checks.database = "fail";
-    errors.push("db: " + (e instanceof Error ? e.message : String(e)).slice(0, 200));
+    errors.push("db: DATABASE_URL not set — check Coolify env (Runtime tab)");
+  } else {
+    try {
+      await Promise.race([
+        db.execute(sql`SELECT 1`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("db timeout 3s")), 3000)),
+      ]);
+      checks.database = "ok";
+    } catch (e) {
+      checks.database = "fail";
+      errors.push("db: " + (e instanceof Error ? e.message : String(e)).slice(0, 200));
+    }
   }
 
   // 2. env validation
