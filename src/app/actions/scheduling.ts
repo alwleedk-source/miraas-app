@@ -6,6 +6,46 @@ import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertUserInTenant, assertDepartmentInTenant } from "@/lib/tenant-guards";
 
+const RIYADH_TZ = "Asia/Riyadh";
+
+/**
+ * يُرجع عدد الدقائق منذ منتصف الليل **بتوقيت الرياض** من Date (UTC في DB).
+ * على Coolify السيرفر يعمل بـ UTC — استخدام getHours() البسيط يعطي UTC hours
+ * ويسبّب تعارض حسابات الجدولة بـ 3 ساعات.
+ */
+function riyadhMinutesFromDate(date: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: RIYADH_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  // 24:XX → 00:XX (Intl قد ترجع 24 لمنتصف الليل)
+  return (h % 24) * 60 + m;
+}
+
+/** يُرجع رقم اليوم في الأسبوع (0=الأحد) **بتوقيت الرياض** */
+function riyadhDayOfWeek(date: Date): number {
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: RIYADH_TZ,
+    weekday: "short",
+  }).format(date);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(wd);
+}
+
+/**
+ * يحوّل "YYYY-MM-DD" + توقيت الرياض → Date (UTC) لبداية اليوم في الرياض.
+ * مثال: "2026-04-20" → 2026-04-19T21:00:00Z (= 2026-04-20 00:00 الرياض)
+ */
+function riyadhDayBoundaries(dateStr: string): { start: Date; end: Date } {
+  // ضع +03:00 صراحةً لتجاوز اعتمادات timezone السيرفر
+  const start = new Date(`${dateStr}T00:00:00+03:00`);
+  const end = new Date(`${dateStr}T23:59:59.999+03:00`);
+  return { start, end };
+}
+
 // =============================================
 // أنواع البيانات
 // =============================================
@@ -40,7 +80,8 @@ export async function generateAvailableSlots(
 
   const targetDate = new Date(input.date);
   if (isNaN(targetDate.getTime())) throw new Error("تاريخ غير صالح");
-  const dayOfWeek = targetDate.getDay(); // 0=الأحد ... 6=السبت
+  // يوم الأسبوع بتوقيت الرياض — ليس local timezone للسيرفر
+  const dayOfWeek = riyadhDayOfWeek(new Date(`${input.date}T12:00:00+03:00`));
 
   // 1. جلب جدول عمل المورد لهذا اليوم
   const [schedule] = await db
@@ -60,9 +101,8 @@ export async function generateAvailableSlots(
     return { slots: [] }; // لا يعمل هذا اليوم
   }
 
-  // 2. تحقق من الإجازات
-  const startOfDay = new Date(input.date + "T00:00:00Z");
-  const endOfDay = new Date(input.date + "T23:59:59Z");
+  // 2. تحقق من الإجازات (حدود اليوم بتوقيت الرياض)
+  const { start: startOfDay, end: endOfDay } = riyadhDayBoundaries(input.date);
 
   const dayOffs = await db
     .select()
@@ -115,7 +155,8 @@ export async function generateAvailableSlots(
   const bookedRanges: BookedRange[] = existingBookings
     .filter((b) => b.bookingDate)
     .map((b) => {
-      const startMin = getMinutesFromDate(b.bookingDate!);
+      // الدقائق بتوقيت الرياض — ليس UTC السيرفر
+      const startMin = riyadhMinutesFromDate(b.bookingDate!);
       const duration = b.bookingDurationMin || 30;
       const endMin = startMin + duration + gapMinutes;
       return { start: startMin, end: endMin, name: b.name };
@@ -192,11 +233,9 @@ export async function checkBookingConflict(input: {
   const gapMinutes = dept?.defaultGapMinutes ?? 15;
   const endTime = new Date(startTime.getTime() + (input.durationMin + gapMinutes) * 60000);
 
-  // بداية ونهاية اليوم للبحث
-  const dayStart = new Date(startTime);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(startTime);
-  dayEnd.setHours(23, 59, 59, 999);
+  // حدود اليوم بتوقيت الرياض (input.date "2026-04-20T10:00" → نأخذ التاريخ فقط)
+  const dateOnly = input.date.slice(0, 10); // "2026-04-20"
+  const { start: dayStart, end: dayEnd } = riyadhDayBoundaries(dateOnly);
 
   const existingBookings = await db
     .select({
@@ -234,6 +273,7 @@ export async function checkBookingConflict(input: {
       name: b.name,
       time: b.bookingDate
         ? b.bookingDate.toLocaleTimeString("ar-SA-u-ca-gregory", {
+            timeZone: RIYADH_TZ,
             hour: "2-digit",
             minute: "2-digit",
           })
@@ -259,8 +299,4 @@ function minutesToTime(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
-}
-
-function getMinutesFromDate(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes();
 }

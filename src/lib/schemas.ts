@@ -70,6 +70,9 @@ export const createBookingSchema = z.object({
   bookingService: z.string().trim().min(1).max(500),
   bookingNotes: z.string().max(2000).optional(),
   bookingDepartmentId: z.string().uuid().optional().nullable(),
+  // اختياري لكن لو مُمرّر يفعّل EXCLUDE constraint لمنع double-booking
+  bookingResourceId: z.string().uuid().optional().nullable(),
+  bookingDurationMin: z.number().int().min(5).max(480).optional(),
 });
 
 export const updateBookingStatusSchema = z.object({

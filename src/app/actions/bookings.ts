@@ -5,7 +5,7 @@ import { leads, activityLog, leadSources, users, pipelineStages, followUps, depa
 import { eq, and, isNotNull, gte, lte, sql, ilike, or } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
-import { normalizePhone } from "@/lib/utils";
+import { normalizePhone, normalizePhoneStrict } from "@/lib/utils";
 import {
   assertLeadInTenant,
   assertUserInTenant,
@@ -58,6 +58,27 @@ export async function createBooking(raw: unknown) {
   if (input.bookingDepartmentId) {
     await assertDepartmentInTenant(input.bookingDepartmentId, tenantId);
   }
+  if (input.bookingResourceId) {
+    await assertUserInTenant(input.bookingResourceId, tenantId);
+  }
+
+  // حساب bookingEndTime إذا توفّرت المدة + المقدم
+  // (شرط ضروري لتفعيل EXCLUDE constraint الذي يمنع double-booking)
+  const bookingStart = new Date(input.bookingDate);
+  let bookingEndTime: Date | null = null;
+  if (input.bookingResourceId && input.bookingDurationMin) {
+    // gap من إعدادات القسم — للتباعد بين المواعيد
+    let gapMinutes = 15;
+    if (input.bookingDepartmentId) {
+      const [dept] = await db
+        .select({ defaultGapMinutes: departments.defaultGapMinutes })
+        .from(departments)
+        .where(eq(departments.id, input.bookingDepartmentId))
+        .limit(1);
+      if (dept) gapMinutes = dept.defaultGapMinutes;
+    }
+    bookingEndTime = new Date(bookingStart.getTime() + (input.bookingDurationMin + gapMinutes) * 60000);
+  }
 
   try {
   return await db.transaction(async (tx) => {
@@ -65,10 +86,13 @@ export async function createBooking(raw: unknown) {
       .update(leads)
       .set({
         bookingStatus: "PENDING",
-        bookingDate: new Date(input.bookingDate),
+        bookingDate: bookingStart,
         bookingService: input.bookingService,
         bookingNotes: input.bookingNotes || null,
         bookingDepartmentId: input.bookingDepartmentId || null,
+        bookingResourceId: input.bookingResourceId || null,
+        bookingDurationMin: input.bookingDurationMin ?? null,
+        bookingEndTime,
         updatedAt: new Date(),
       })
       .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
@@ -115,7 +139,12 @@ export async function updateBookingStatus(raw: unknown) {
   await assertLeadInTenant(input.leadId, tenantId);
 
   const [currentLead] = await db
-    .select({ bookingNotes: leads.bookingNotes })
+    .select({
+      bookingNotes: leads.bookingNotes,
+      bookingDurationMin: leads.bookingDurationMin,
+      bookingResourceId: leads.bookingResourceId,
+      bookingDepartmentId: leads.bookingDepartmentId,
+    })
     .from(leads)
     .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)));
 
@@ -127,10 +156,30 @@ export async function updateBookingStatus(raw: unknown) {
   // التأجيل: التاريخ اختياري (قائمة انتظار إذا لم يُحدد)
   if (input.status === "POSTPONED") {
     if (input.postponeDate) {
-      updateData.bookingDate = new Date(input.postponeDate);
+      const newStart = new Date(input.postponeDate);
+      updateData.bookingDate = newStart;
+      // أعد حساب bookingEndTime بناءً على duration الحالي + gap القسم
+      // (ضروري لـ EXCLUDE constraint — وإلا تتناقض البيانات)
+      if (currentLead?.bookingResourceId && currentLead?.bookingDurationMin) {
+        let gapMinutes = 15;
+        if (currentLead.bookingDepartmentId) {
+          const [dept] = await db
+            .select({ defaultGapMinutes: departments.defaultGapMinutes })
+            .from(departments)
+            .where(eq(departments.id, currentLead.bookingDepartmentId))
+            .limit(1);
+          if (dept) gapMinutes = dept.defaultGapMinutes;
+        }
+        updateData.bookingEndTime = new Date(
+          newStart.getTime() + (currentLead.bookingDurationMin + gapMinutes) * 60000,
+        );
+      } else {
+        updateData.bookingEndTime = null;
+      }
     } else {
-      // قائمة انتظار — بدون موعد محدد
+      // قائمة انتظار — بدون موعد محدد، نظّف endTime أيضاً
       updateData.bookingDate = null;
+      updateData.bookingEndTime = null;
     }
     const originalNote = currentLead?.bookingNotes || "";
     const postponeNote = input.postponeReason
@@ -277,6 +326,8 @@ export async function getBookingsSummary() {
     )
     .orderBy(leads.bookingDate);
 
+  // المتأخرة = أي PENDING موعده فات (الآن، لا بداية اليوم)
+  // قبل: lte(bookingDate, todayStart) — يستثني حجوزات اليوم نفسه التي فاتت
   const overdueBookings = await db
     .select(selectCols)
     .from(leads)
@@ -287,7 +338,8 @@ export async function getBookingsSummary() {
         eq(leads.tenantId, tenantId),
         eq(leads.isDeleted, false),
         eq(leads.bookingStatus, "PENDING"),
-        lte(leads.bookingDate, todayStart)
+        isNotNull(leads.bookingDate),
+        lte(leads.bookingDate, new Date())
       )
     )
     .orderBy(leads.bookingDate);
@@ -355,21 +407,50 @@ export async function updateBookingDate(raw: unknown) {
   if (input.departmentId) await assertDepartmentInTenant(input.departmentId, tenantId);
   if (input.resourceId) await assertUserInTenant(input.resourceId, tenantId);
 
+  // اقرأ الحالة الحالية لإعادة حساب bookingEndTime باستخدام duration الحالي إذا لم يُرسَل
+  const [current] = await db
+    .select({
+      bookingDurationMin: leads.bookingDurationMin,
+      bookingResourceId: leads.bookingResourceId,
+      bookingDepartmentId: leads.bookingDepartmentId,
+    })
+    .from(leads)
+    .where(and(eq(leads.id, input.leadId), eq(leads.tenantId, tenantId)))
+    .limit(1);
+  if (!current) throw new Error("not_found");
+
+  const newStart = new Date(input.bookingDate);
+  const effectiveDuration = input.duration ?? current.bookingDurationMin ?? null;
+  const effectiveResource = input.resourceId !== undefined ? input.resourceId : current.bookingResourceId;
+  const effectiveDept = input.departmentId !== undefined ? input.departmentId : current.bookingDepartmentId;
+
+  // حساب gap من القسم
+  let gapMinutes = 15;
+  if (effectiveDept) {
+    const [dept] = await db
+      .select({ defaultGapMinutes: departments.defaultGapMinutes })
+      .from(departments)
+      .where(eq(departments.id, effectiveDept))
+      .limit(1);
+    if (dept) gapMinutes = dept.defaultGapMinutes;
+  }
+
+  // bookingEndTime ضروري لتفعيل EXCLUDE — نُحدّثه دائماً عند تغيير التاريخ
+  const newEndTime =
+    effectiveResource && effectiveDuration
+      ? new Date(newStart.getTime() + (effectiveDuration + gapMinutes) * 60000)
+      : null;
+
   const updateData: Record<string, unknown> = {
-    bookingDate: new Date(input.bookingDate),
+    bookingDate: newStart,
+    bookingEndTime: newEndTime,
     updatedAt: new Date(),
   };
   if (input.bookingService !== undefined) updateData.bookingService = input.bookingService;
   if (input.bookingNotes !== undefined) updateData.bookingNotes = input.bookingNotes;
   if (input.departmentId !== undefined) updateData.bookingDepartmentId = input.departmentId || null;
   if (input.resourceId !== undefined) updateData.bookingResourceId = input.resourceId || null;
-  if (input.duration !== undefined) {
-    updateData.bookingDurationMin = input.duration;
-    // حساب وقت النهاية تلقائياً
-    const endTime = new Date(input.bookingDate);
-    endTime.setMinutes(endTime.getMinutes() + input.duration);
-    updateData.bookingEndTime = endTime;
-  }
+  if (input.duration !== undefined) updateData.bookingDurationMin = input.duration;
 
   try {
     await db.transaction(async (tx) => {
@@ -537,12 +618,18 @@ export async function quickCreateBooking(raw: unknown) {
 
     const assignedTo = role === "COORDINATOR" ? userId : null;
 
+    // تحقق صارم من الرقم — لا نقبل أرقاماً تالفة
+    const phoneCheck = normalizePhoneStrict(input.phone);
+    if (!phoneCheck.ok) {
+      throw new Error(`رقم العميل غير صالح: ${phoneCheck.error}`);
+    }
+
     const [newLead] = await db
       .insert(leads)
       .values({
         tenantId,
         name: input.name.trim(),
-        phone: normalizePhone(input.phone),
+        phone: phoneCheck.phone,
         priority: "MEDIUM",
         stageId: stageId || null,
         assignedTo,
