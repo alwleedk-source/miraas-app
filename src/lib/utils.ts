@@ -331,6 +331,9 @@ export function toTelUrl(phone: string | null | undefined): string | null {
 /**
  * تنسيق موحد لأرقام الهاتف — للتوافق مع الكود الحالي
  * يُرجع الرقم بصيغة E.164 إذا صالح، أو الرقم المنظّف إذا فشل التحقق
+ *
+ * ⚠️ متساهل عمداً (لأغراض البحث/المقارنة على بيانات قديمة).
+ * **لا تستخدمه لإدخال بيانات جديدة** — استخدم normalizePhoneStrict.
  */
 export function normalizePhone(raw: string): string {
   const result = validateAndNormalizePhone(raw);
@@ -339,4 +342,32 @@ export function normalizePhone(raw: string): string {
   }
   // fallback: إزالة كل غير الأرقام
   return raw.replace(/\D/g, "");
+}
+
+/**
+ * نسخة صارمة لإدخال البيانات الجديدة — ترفض الأرقام غير الصالحة بدلاً من
+ * حفظ نسخة منكسرة في DB.
+ *
+ * يُرجع:
+ *   - { ok: true, phone: "+966551234567" } للأرقام الصالحة
+ *   - { ok: false, error: "..." } للأرقام التالفة (مع سبب عربي للعرض)
+ *
+ * استخدمه في: createLead, updateLead, bulkImportLeads, ImportDialog
+ */
+export type StrictPhoneResult =
+  | { ok: true; phone: string }
+  | { ok: false; error: string };
+
+export function normalizePhoneStrict(raw: string | null | undefined): StrictPhoneResult {
+  if (!raw || !String(raw).trim()) {
+    return { ok: false, error: "الرقم فارغ" };
+  }
+  const result = validateAndNormalizePhone(String(raw));
+  if (result.valid && result.phone) {
+    return { ok: true, phone: result.phone };
+  }
+  return {
+    ok: false,
+    error: result.error || "صيغة الرقم غير صالحة",
+  };
 }

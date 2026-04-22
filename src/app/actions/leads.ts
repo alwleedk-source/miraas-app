@@ -5,7 +5,7 @@ import { leads, followUps, activityLog, pipelineStages, notifications, leadSourc
 import { eq, and, desc, asc, ilike, or, count, sql, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
-import { normalizePhone } from "@/lib/utils";
+import { normalizePhone, normalizePhoneStrict } from "@/lib/utils";
 import {
   assertLeadInTenant,
   assertUserInTenant,
@@ -77,13 +77,21 @@ export async function createLead(raw: unknown) {
     }
   }
 
+  // تحقق صارم من الرقم — لو موجود يجب أن يكون صالحاً (E.164)
+  let normalizedPhone: string | undefined;
+  if (input.phone) {
+    const r = normalizePhoneStrict(input.phone);
+    if (!r.ok) throw new Error(`الرقم غير صالح: ${r.error}`);
+    normalizedPhone = r.phone;
+  }
+
   return await db.transaction(async (tx) => {
     const [lead] = await tx
       .insert(leads)
       .values({
         tenantId,
         name: input.name,
-        phone: input.phone ? normalizePhone(input.phone) : undefined,
+        phone: normalizedPhone,
         email: input.email ?? undefined,
         priority: input.priority,
         sourceId: resolvedSourceId,
@@ -127,12 +135,24 @@ export async function updateLead(raw: unknown) {
   if (input.sourceId) await assertSourceInTenant(input.sourceId, tenantId);
   if (input.assignedTo) await assertUserInTenant(input.assignedTo, tenantId);
 
+  // تحقق صارم من الرقم — لو تم تغييره يجب أن يكون صالحاً (أو null للحذف)
+  let phoneUpdate: string | null | undefined = undefined;
+  if (input.phone !== undefined) {
+    if (!input.phone) {
+      phoneUpdate = null; // حذف الرقم
+    } else {
+      const r = normalizePhoneStrict(input.phone);
+      if (!r.ok) throw new Error(`الرقم غير صالح: ${r.error}`);
+      phoneUpdate = r.phone;
+    }
+  }
+
   return await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(leads)
       .set({
         ...(input.name && { name: input.name }),
-        ...(input.phone !== undefined && { phone: input.phone ? normalizePhone(input.phone) : null }),
+        ...(phoneUpdate !== undefined && { phone: phoneUpdate }),
         ...(input.email !== undefined && { email: input.email }),
         ...(input.priority && { priority: input.priority }),
         ...(input.sourceId !== undefined && { sourceId: input.sourceId || null }),
@@ -677,12 +697,26 @@ export async function bulkImportLeads(raw: unknown) {
       )
       .limit(1);
 
-    // 3. normalize + batch dup check
-    const normalized = input.leads
-      .map((e) => ({ name: e.name, phone: normalizePhone(e.phone) }))
-      .filter((e) => !!e.phone);
-    const phones = normalized.map((e) => e.phone);
+    // 3. تحقق صارم من كل رقم — يفصل بين: صالح / فارغ / غير صالح
+    type Categorized = { name: string; phone: string }; // صالح فقط
+    const valid: Categorized[] = [];
+    let skippedNoPhone = 0;
+    let skippedInvalid = 0;
+    for (const e of input.leads) {
+      if (!e.phone || !String(e.phone).trim()) {
+        skippedNoPhone++;
+        continue;
+      }
+      const r = normalizePhoneStrict(e.phone);
+      if (!r.ok) {
+        skippedInvalid++;
+        continue;
+      }
+      valid.push({ name: e.name, phone: r.phone });
+    }
 
+    // 4. فحص المكررات على المُنظَّفة فقط
+    const phones = valid.map((e) => e.phone);
     const existing =
       phones.length > 0
         ? await tx
@@ -693,7 +727,8 @@ export async function bulkImportLeads(raw: unknown) {
             )
         : [];
     const existingSet = new Set(existing.map((e) => e.phone));
-    const toInsert = normalized.filter((e) => !existingSet.has(e.phone));
+    const toInsert = valid.filter((e) => !existingSet.has(e.phone));
+    const skippedDuplicate = valid.length - toInsert.length;
 
     if (toInsert.length > 0) {
       await tx.insert(leads).values(
@@ -709,7 +744,7 @@ export async function bulkImportLeads(raw: unknown) {
     }
 
     const created = toInsert.length;
-    const skipped = input.leads.length - created;
+    const totalSkipped = skippedNoPhone + skippedInvalid + skippedDuplicate;
 
     await tx.insert(activityLog).values({
       tenantId,
@@ -720,13 +755,16 @@ export async function bulkImportLeads(raw: unknown) {
         bulkImport: true,
         campaign: input.campaignName,
         created,
-        skipped,
+        skippedNoPhone,
+        skippedInvalid,
+        skippedDuplicate,
       },
     });
 
     revalidatePath("/leads");
     revalidatePath("/");
-    return { created, skipped };
+    // skipped للتوافق العكسي مع UI القديمة
+    return { created, skipped: totalSkipped, skippedNoPhone, skippedInvalid, skippedDuplicate };
   });
 }
 
