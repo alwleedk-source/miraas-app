@@ -256,31 +256,49 @@ export default async function DashboardPage() {
       title: "إجمالي العملاء",
       value: stats.totalLeads.toLocaleString("ar-SA"),
       icon: Users,
-      color: "bg-primary-50 text-primary-600",
+      gradient: "from-blue-500/10 to-blue-600/5",
+      iconBg: "bg-blue-100 text-blue-600",
+      hint: "كل العملاء النشطين",
     },
     {
       title: "عملاء جدد اليوم",
       value: stats.todayLeads.toLocaleString("ar-SA"),
       icon: UserPlus,
-      color: "bg-success-50 text-success-600",
+      gradient: "from-emerald-500/10 to-emerald-600/5",
+      iconBg: "bg-emerald-100 text-emerald-600",
+      hint: stats.todayLeads > 0 ? `+${stats.todayLeads} منذ منتصف الليل` : "لا جديد بعد",
     },
     {
       title: "متابعات اليوم",
       value: stats.todayFollowUps.toLocaleString("ar-SA"),
       icon: PhoneCall,
-      color: "bg-warning-50 text-warning-600",
+      gradient: "from-amber-500/10 to-amber-600/5",
+      iconBg: "bg-amber-100 text-amber-600",
+      hint: "مهام مجدولة لليوم",
     },
     {
       title: "مهام مجدولة",
       value: scheduledTasks.length.toString(),
       icon: CalendarClock,
-      color: scheduledTasks.length > 0 ? "bg-danger-50 text-danger-600" : "bg-surface-50 text-surface-500",
+      gradient: scheduledTasks.length > 0
+        ? "from-rose-500/10 to-rose-600/5"
+        : "from-surface-100 to-surface-50",
+      iconBg: scheduledTasks.length > 0
+        ? "bg-rose-100 text-rose-600"
+        : "bg-surface-100 text-surface-400",
+      hint: scheduledTasks.length > 0 ? "تحتاج اهتمام" : "كل شيء تحت السيطرة",
     },
     {
       title: "حجوزات اليوم",
       value: todayBookings.toString(),
       icon: CalendarDays,
-      color: todayBookings > 0 ? "bg-purple-50 text-purple-600" : "bg-surface-50 text-surface-500",
+      gradient: todayBookings > 0
+        ? "from-violet-500/10 to-violet-600/5"
+        : "from-surface-100 to-surface-50",
+      iconBg: todayBookings > 0
+        ? "bg-violet-100 text-violet-600"
+        : "bg-surface-100 text-surface-400",
+      hint: todayBookings > 0 ? "احجوزات نشطة" : "لا حجوزات",
     },
   ];
 
@@ -306,25 +324,37 @@ export default async function DashboardPage() {
       <ReactivationBanner />
       <AgingLeadsBanner />
 
-      {/* بطاقات الإحصائيات */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* بطاقات الإحصائيات — تصميم gradient أنيق */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {statCards.map((stat) => (
-          <Card key={stat.title} className="hover:shadow-elevated transition-shadow">
+          <Card
+            key={stat.title}
+            className={`relative overflow-hidden hover:shadow-elevated transition-all duration-300 hover:-translate-y-0.5 bg-gradient-to-br ${stat.gradient} border-surface-200/50`}
+          >
             <CardContent className="p-4 lg:p-5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs lg:text-sm text-surface-500 truncate">{stat.title}</p>
-                  <p className="text-xl lg:text-2xl font-bold text-surface-900 mt-1">{stat.value}</p>
-                </div>
-                <div className={`p-2 lg:p-2.5 rounded-xl ${stat.color} shrink-0`}>
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div
+                  className={`p-2 lg:p-2.5 rounded-xl ${stat.iconBg} shrink-0 shadow-sm`}
+                >
                   <stat.icon className="h-4 w-4 lg:h-5 lg:w-5" />
                 </div>
               </div>
+              <p className="text-[11px] lg:text-xs text-surface-500 font-medium">
+                {stat.title}
+              </p>
+              <p className="text-2xl lg:text-3xl font-bold text-surface-900 mt-0.5 tabular-nums leading-tight">
+                {stat.value}
+              </p>
+              <p className="text-[10px] text-surface-400 mt-1 truncate">{stat.hint}</p>
+
               {/* تفصيل نوع المتابعات */}
               {stat.title === "متابعات اليوم" && todayFollowUpsByType.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-surface-100">
                   {todayFollowUpsByType.map((t) => (
-                    <span key={t.type} className="text-[10px] bg-surface-100 text-surface-600 rounded-full px-1.5 py-0.5">
+                    <span
+                      key={t.type}
+                      className="text-[10px] bg-white/60 text-surface-600 rounded-full px-1.5 py-0.5 backdrop-blur-sm"
+                    >
                       {followUpTypeLabels[t.type] || t.type} {t.count}
                     </span>
                   ))}
@@ -334,6 +364,27 @@ export default async function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {/* رابط سريع للقمع — يبرز قيمة Meras للمالك */}
+      {(userRole === "OWNER" || userRole === "ADMIN") && stats.totalLeads > 5 && (
+        <a
+          href="/analytics/funnel"
+          className="group flex items-center justify-between gap-3 p-3 rounded-xl bg-gradient-to-l from-primary-50 to-blue-50 border border-primary-100 hover:from-primary-100 hover:to-blue-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">📊</span>
+            <div>
+              <p className="text-sm font-semibold text-surface-900">
+                شاهد قمع التحويل الكامل
+              </p>
+              <p className="text-xs text-surface-500">
+                من &quot;استفسار&quot; إلى &quot;صفقة&quot; — وأين تخسر العملاء
+              </p>
+            </div>
+          </div>
+          <span className="text-primary-600 group-hover:translate-x-1 transition-transform">←</span>
+        </a>
+      )}
 
       {/* مهام اليوم */}
       {scheduledTasks.length > 0 && (

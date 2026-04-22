@@ -43,6 +43,7 @@ const mainNav: NavItem[] = [
   { label: "الأنابيب", href: "/pipeline", icon: <GitBranch className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "الفريق", href: "/team", icon: <UserCog className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "التحليلات", href: "/analytics", icon: <BarChart3 className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  { label: "قمع التحويل", href: "/analytics/funnel", icon: <BarChart3 className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
 ];
 
 // كل عناصر الإعدادات محصورة في OWNER/ADMIN
