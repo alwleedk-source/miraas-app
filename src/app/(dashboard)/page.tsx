@@ -19,6 +19,8 @@ import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
 import AgingLeadsBanner from "./aging-leads-banner";
 import ReactivationBanner from "./reactivation-banner";
+import OwnerPulseCard from "./owner-pulse-card";
+import { getOwnerPulse, type OwnerPulse } from "@/app/actions/owner-pulse";
 
 export default async function DashboardPage() {
   const { tenantId, role: userRole, session, userId } = await requireTenant();
@@ -38,6 +40,16 @@ export default async function DashboardPage() {
     stats = await getDashboardStats();
   } catch {
     stats = { totalLeads: 0, todayLeads: 0, todayFollowUps: 0, stageBreakdown: [] };
+  }
+
+  // نبض المالك — للمالك/المدير فقط
+  let ownerPulse: OwnerPulse | null = null;
+  if (userRole === "OWNER" || userRole === "ADMIN") {
+    try {
+      ownerPulse = await getOwnerPulse();
+    } catch {
+      ownerPulse = null;
+    }
   }
 
   // جلب المتابعات المجدولة لليوم أو المتأخرة
@@ -323,6 +335,9 @@ export default async function DashboardPage() {
       {/* تنبيهات ذكية — يظهر فقط ما يحتاج اهتمام */}
       <ReactivationBanner />
       <AgingLeadsBanner />
+
+      {/* نبض الأسبوع — للمالك/المدير فقط، يخفي نفسه إذا لا بيانات */}
+      {ownerPulse && <OwnerPulseCard pulse={ownerPulse} />}
 
       {/* بطاقات الإحصائيات — تصميم gradient أنيق */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
