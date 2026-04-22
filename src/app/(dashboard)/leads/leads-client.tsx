@@ -2262,9 +2262,9 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
               </div>
 
               {/* القسم — يُرشّح قائمة الخدمات */}
-              {availableDepartments.length > 0 && (
-                <div className="space-y-2">
-                  <Label>القسم</Label>
+              <div className="space-y-2">
+                <Label>القسم</Label>
+                {availableDepartments.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -2308,8 +2308,12 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                       );
                     })}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div className="text-xs text-surface-400 p-3 rounded-lg bg-surface-50 border border-dashed border-surface-200">
+                    لم تُضف أقسام بعد. <a href="/settings" className="text-primary-600 underline">أضفها من الإعدادات</a> ليعرف الرسبشن التوجيه.
+                  </div>
+                )}
+              </div>
 
               <div className="space-y-2">
                 <Label>الخدمات *</Label>
