@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, internalMessages, users, activityLog } from "@/db/schema";
+import { leads, internalMessages, users, activityLog, notifications } from "@/db/schema";
 import { eq, and, gte, lte, inArray, desc, asc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -186,6 +186,7 @@ export async function updateProviderBookingStatus(
       name: leads.name,
       currentStatus: leads.bookingStatus,
       bookingDate: leads.bookingDate,
+      assignedTo: leads.assignedTo,
     })
     .from(leads)
     .where(
@@ -201,6 +202,14 @@ export async function updateProviderBookingStatus(
   if (!booking) {
     throw new Error("الموعد غير موجود أو ليس مُسنَداً لك");
   }
+
+  // اسم المقدم — لاستخدامه في الإشعار
+  const [provider] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const providerName = provider?.name ?? "مقدم الخدمة";
 
   await db.transaction(async (tx) => {
     await tx
@@ -222,6 +231,22 @@ export async function updateProviderBookingStatus(
         leadName: booking.name,
       },
     });
+
+    // أبلغ المنسق المُسند له العميل (لو موجود) — يُغلق loop التواصل
+    if (booking.assignedTo) {
+      const statusMsg: Record<typeof status, string> = {
+        COMPLETED: "حضر العميل ✅",
+        ATTENDED_NOT_SUITABLE: "حضر — لكن لم يناسبه",
+        NO_RESPONSE: "لم يحضر العميل 📵",
+      };
+      await tx.insert(notifications).values({
+        tenantId,
+        userId: booking.assignedTo,
+        type: "SYSTEM",
+        title: `${providerName}: ${statusMsg[status]}`,
+        message: `${booking.name} — ${statusMsg[status]}`,
+      });
+    }
   });
 
   revalidatePath("/provider");
@@ -251,6 +276,7 @@ export async function addProviderSessionNote(leadId: string, note: string) {
       id: leads.id,
       name: leads.name,
       currentNotes: leads.bookingNotes,
+      assignedTo: leads.assignedTo,
     })
     .from(leads)
     .where(
@@ -309,6 +335,17 @@ export async function addProviderSessionNote(leadId: string, note: string) {
         addedBy: providerName,
       },
     });
+
+    // أبلغ المنسق بالملاحظة الجديدة
+    if (booking.assignedTo) {
+      await tx.insert(notifications).values({
+        tenantId,
+        userId: booking.assignedTo,
+        type: "SYSTEM",
+        title: `📝 ملاحظة جلسة من ${providerName}`,
+        message: `${booking.name}: ${trimmed.slice(0, 200)}`,
+      });
+    }
   });
 
   revalidatePath("/provider");
