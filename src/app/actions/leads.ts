@@ -539,17 +539,20 @@ export async function getFollowUps(leadId: string) {
 export async function getDashboardStats() {
   const { tenantId } = await getTenantId();
 
+  // dashboard يستثني المؤرشفين ليطابق ما يراه المستخدم في /leads
+  const notArchived = sql`${leads.archivedAt} IS NULL`;
+
   const [
     totalLeads,
     todayLeads,
     todayFollowUps,
     stageBreakdown,
   ] = await Promise.all([
-    // إجمالي العملاء
+    // إجمالي العملاء (بدون مؤرشفين)
     db
       .select({ count: count() })
       .from(leads)
-      .where(and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false))),
+      .where(and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false), notArchived)),
     // عملاء اليوم
     db
       .select({ count: count() })
@@ -558,6 +561,7 @@ export async function getDashboardStats() {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          notArchived,
           sql`${leads.createdAt}::date = CURRENT_DATE`
         )
       ),
@@ -572,7 +576,7 @@ export async function getDashboardStats() {
           sql`${followUps.completedAt} IS NULL`
         )
       ),
-    // توزيع المراحل
+    // توزيع المراحل (بدون مؤرشفين)
     db
       .select({
         stageId: leads.stageId,
@@ -582,7 +586,7 @@ export async function getDashboardStats() {
       })
       .from(leads)
       .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
-      .where(and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)))
+      .where(and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false), notArchived))
       .groupBy(leads.stageId, pipelineStages.name, pipelineStages.color, pipelineStages.position)
       .orderBy(asc(pipelineStages.position)),
   ]);
