@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, internalMessages, users } from "@/db/schema";
+import { leads, internalMessages, users, activityLog } from "@/db/schema";
 import { eq, and, gte, lte, inArray, desc, asc } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -150,6 +150,170 @@ export async function getProviderDashboard() {
     pendingToday: todayBookings.filter((b) => b.bookingStatus === "PENDING").length,
     unreadMessages,
   };
+}
+
+// =============================================
+// تحديث حالة موعد من قِبَل المقدم نفسه
+// =============================================
+
+const PROVIDER_ALLOWED_STATUSES = ["COMPLETED", "ATTENDED_NOT_SUITABLE", "NO_RESPONSE"] as const;
+type ProviderStatus = (typeof PROVIDER_ALLOWED_STATUSES)[number];
+
+/**
+ * المقدم يحدّث حالة موعد بنفسه — يحدّ من friction والاحتياج للمنسق.
+ *
+ * قيود الأمان:
+ *   - PROVIDER فقط
+ *   - فقط مواعيد bookingResourceId === userId (موعده الشخصي)
+ *   - فقط الحالات: COMPLETED / ATTENDED_NOT_SUITABLE / NO_RESPONSE
+ *   - لا يستطيع تعديل تواريخ، إلغاء، تأجيل (يرسل رسالة للمنسق بدلاً)
+ */
+export async function updateProviderBookingStatus(
+  leadId: string,
+  status: ProviderStatus,
+) {
+  const { tenantId, userId, role } = await requireTenant();
+  if (role !== "PROVIDER") throw new Error("هذه الصلاحية لمقدم الخدمة فقط");
+
+  if (!PROVIDER_ALLOWED_STATUSES.includes(status)) {
+    throw new Error("حالة غير مسموحة");
+  }
+
+  // تحقّق أن الموعد موجود + مُسند للمقدم نفسه
+  const [booking] = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      currentStatus: leads.bookingStatus,
+      bookingDate: leads.bookingDate,
+    })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.id, leadId),
+        eq(leads.tenantId, tenantId),
+        eq(leads.bookingResourceId, userId),
+        eq(leads.isDeleted, false),
+      ),
+    )
+    .limit(1);
+
+  if (!booking) {
+    throw new Error("الموعد غير موجود أو ليس مُسنَداً لك");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(leads)
+      .set({ bookingStatus: status, updatedAt: new Date() })
+      .where(eq(leads.id, leadId));
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_UPDATED",
+      entityType: "lead",
+      entityId: leadId,
+      details: {
+        change: "booking_status",
+        from: booking.currentStatus,
+        to: status,
+        updatedBy: "provider",
+        leadName: booking.name,
+      },
+    });
+  });
+
+  revalidatePath("/provider");
+  revalidatePath("/bookings");
+  return { success: true };
+}
+
+// =============================================
+// المقدم يضيف ملاحظة جلسة على موعد
+// =============================================
+
+/**
+ * يُلحق ملاحظة جلسة على bookingNotes مع توقيت + اسم المقدم.
+ * المنسق يراها في تفاصيل الحجز لاحقاً.
+ */
+export async function addProviderSessionNote(leadId: string, note: string) {
+  const { tenantId, userId, role } = await requireTenant();
+  if (role !== "PROVIDER") throw new Error("هذه الصلاحية لمقدم الخدمة فقط");
+
+  const trimmed = note.trim();
+  if (!trimmed || trimmed.length > 1000) {
+    throw new Error("الملاحظة يجب أن تكون 1-1000 حرف");
+  }
+
+  const [booking] = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      currentNotes: leads.bookingNotes,
+    })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.id, leadId),
+        eq(leads.tenantId, tenantId),
+        eq(leads.bookingResourceId, userId),
+        eq(leads.isDeleted, false),
+      ),
+    )
+    .limit(1);
+
+  if (!booking) {
+    throw new Error("الموعد غير موجود أو ليس مُسنَداً لك");
+  }
+
+  // اسم المقدم
+  const [provider] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const providerName = provider?.name ?? "مقدم الخدمة";
+
+  // الوقت بصيغة عربية مختصرة
+  const ts = new Date().toLocaleString("ar-SA-u-ca-gregory", {
+    timeZone: "Asia/Riyadh",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  // ملاحظة الجلسة بصيغة موحّدة قابلة للتمييز عند العرض
+  const sessionLine = `\n📝 ${providerName} (${ts}): ${trimmed}`;
+  const newNotes = booking.currentNotes
+    ? booking.currentNotes + sessionLine
+    : sessionLine.trim();
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(leads)
+      .set({ bookingNotes: newNotes, updatedAt: new Date() })
+      .where(eq(leads.id, leadId));
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId,
+      action: "LEAD_UPDATED",
+      entityType: "lead",
+      entityId: leadId,
+      details: {
+        change: "provider_session_note",
+        leadName: booking.name,
+        notePreview: trimmed.slice(0, 100),
+        addedBy: providerName,
+      },
+    });
+  });
+
+  revalidatePath("/provider");
+  revalidatePath("/bookings");
+  return { success: true, note: sessionLine.trim() };
 }
 
 // =============================================
