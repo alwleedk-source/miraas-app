@@ -17,6 +17,7 @@ import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-
 import TodayTasks from "./today-tasks";
 import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
+import AgingLeadsBanner from "./aging-leads-banner";
 
 export default async function DashboardPage() {
   const { tenantId, role: userRole, session, userId } = await requireTenant();
@@ -299,6 +300,9 @@ export default async function DashboardPage() {
           إليك ملخص نشاط شركتك اليوم
         </p>
       </div>
+
+      {/* تنبيه العملاء المُهمَلين — يظهر فقط إذا فيه ما يحتاج متابعة */}
+      <AgingLeadsBanner />
 
       {/* بطاقات الإحصائيات */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">

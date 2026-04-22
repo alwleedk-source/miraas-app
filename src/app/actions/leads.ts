@@ -806,3 +806,175 @@ export async function bulkDeleteLeads(raw: unknown) {
   revalidatePath("/");
   return { deleted: input.ids.length };
 }
+
+// =============================================
+// عملاء مُهمَلون (Aging Leads) — لم يُتابَعون منذ X يوم
+// =============================================
+
+export type AgingLead = {
+  id: string;
+  name: string;
+  phone: string | null;
+  createdAt: Date;
+  assignedTo: string | null;
+  assignedUserName: string | null;
+  stageName: string | null;
+  stageColor: string | null;
+  sourceName: string | null;
+  lastActivityAt: Date;
+  daysSilent: number;
+  severity: "warning" | "critical"; // warning: 3-6 يوم، critical: 7+
+};
+
+/**
+ * جلب العملاء الذين لم يحدث لهم تواصل (follow-up) منذ X أيام
+ * يحدد "آخر نشاط" = آخر follow_up أو وقت الإنشاء إن لم يكن هناك متابعات
+ *
+ * COORDINATOR: يرى عملاءه فقط
+ * OWNER/ADMIN: يرى الكل
+ * PROVIDER: forbidden
+ */
+export async function getAgingLeads(minDays: number = 3): Promise<AgingLead[]> {
+  const { tenantId, userId, role } = await getTenantId();
+  if (role === "PROVIDER") return [];
+  if (!Number.isFinite(minDays) || minDays < 1 || minDays > 365) {
+    throw new Error("minDays غير صالح");
+  }
+
+  const conditions = [
+    eq(leads.tenantId, tenantId),
+    eq(leads.isDeleted, false),
+    sql`${leads.bookingStatus} IS NULL`,
+  ];
+  if (role === "COORDINATOR") {
+    conditions.push(eq(leads.assignedTo, userId));
+  }
+
+  const rows = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      phone: leads.phone,
+      createdAt: leads.createdAt,
+      assignedTo: leads.assignedTo,
+      assignedUserName: users.name,
+      stageName: pipelineStages.name,
+      stageColor: pipelineStages.color,
+      sourceName: leadSources.name,
+      lastActivityRaw: sql<string | null>`(
+        SELECT MAX(created_at) FROM follow_ups
+        WHERE follow_ups.lead_id = ${leads.id}
+      )`.as("last_activity_raw"),
+    })
+    .from(leads)
+    .leftJoin(users, eq(leads.assignedTo, users.id))
+    .leftJoin(pipelineStages, eq(leads.stageId, pipelineStages.id))
+    .leftJoin(leadSources, eq(leads.sourceId, leadSources.id))
+    .where(and(...conditions))
+    .orderBy(asc(leads.createdAt));
+
+  const now = Date.now();
+  const minMs = minDays * 86400_000;
+
+  return rows
+    .map((r) => {
+      const lastActivityAt = r.lastActivityRaw ? new Date(r.lastActivityRaw) : new Date(r.createdAt);
+      const silentMs = now - lastActivityAt.getTime();
+      const daysSilent = Math.floor(silentMs / 86400_000);
+      return {
+        id: r.id,
+        name: r.name,
+        phone: r.phone,
+        createdAt: r.createdAt,
+        assignedTo: r.assignedTo,
+        assignedUserName: r.assignedUserName,
+        stageName: r.stageName,
+        stageColor: r.stageColor,
+        sourceName: r.sourceName,
+        lastActivityAt,
+        daysSilent,
+        severity: (daysSilent >= 7 ? "critical" : "warning") as "warning" | "critical",
+      };
+    })
+    .filter((l) => Date.now() - l.lastActivityAt.getTime() >= minMs)
+    .sort((a, b) => b.daysSilent - a.daysSilent);
+}
+
+/**
+ * عدد سريع للـ aging leads — للـ banner في dashboard
+ * أرخص من جلب الكل (يستخدم COUNT)
+ */
+export async function getAgingLeadsCount(minDays: number = 3): Promise<{
+  total: number;
+  critical: number; // 7+ days
+  byCoordinator: Array<{ userId: string; userName: string; count: number }>;
+}> {
+  const { tenantId, userId, role } = await getTenantId();
+  if (role === "PROVIDER") return { total: 0, critical: 0, byCoordinator: [] };
+
+  const cutoffWarning = new Date(Date.now() - minDays * 86400_000);
+  const cutoffCritical = new Date(Date.now() - 7 * 86400_000);
+
+  const baseConditions = [
+    eq(leads.tenantId, tenantId),
+    eq(leads.isDeleted, false),
+    sql`${leads.bookingStatus} IS NULL`,
+    sql`COALESCE(
+      (SELECT MAX(created_at) FROM follow_ups WHERE follow_ups.lead_id = ${leads.id}),
+      ${leads.createdAt}
+    ) <= ${cutoffWarning}`,
+  ];
+  if (role === "COORDINATOR") {
+    baseConditions.push(eq(leads.assignedTo, userId));
+  }
+
+  const [totalRow] = await db
+    .select({ c: count() })
+    .from(leads)
+    .where(and(...baseConditions));
+
+  const [criticalRow] = await db
+    .select({ c: count() })
+    .from(leads)
+    .where(
+      and(
+        ...baseConditions,
+        sql`COALESCE(
+          (SELECT MAX(created_at) FROM follow_ups WHERE follow_ups.lead_id = ${leads.id}),
+          ${leads.createdAt}
+        ) <= ${cutoffCritical}`,
+      ),
+    );
+
+  // breakdown per coordinator (OWNER/ADMIN only)
+  let byCoordinator: Array<{ userId: string; userName: string; count: number }> = [];
+  if (role !== "COORDINATOR") {
+    const grouped = await db
+      .select({
+        userId: leads.assignedTo,
+        userName: users.name,
+        c: count(),
+      })
+      .from(leads)
+      .leftJoin(users, eq(leads.assignedTo, users.id))
+      .where(and(...baseConditions, sql`${leads.assignedTo} IS NOT NULL`))
+      .groupBy(leads.assignedTo, users.name)
+      .orderBy(desc(count()))
+      .limit(10);
+
+    byCoordinator = grouped
+      .filter((g) => g.userId)
+      .map((g) => ({
+        userId: g.userId!,
+        userName: g.userName ?? "غير معروف",
+        count: g.c,
+      }));
+  }
+
+  return {
+    total: totalRow?.c ?? 0,
+    critical: criticalRow?.c ?? 0,
+    byCoordinator,
+  };
+}
+
