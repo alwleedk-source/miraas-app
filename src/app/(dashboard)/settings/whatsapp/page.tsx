@@ -636,11 +636,19 @@ export default function WhatsAppSettingsPage() {
 
             {/* مثال نص القالب — بأسماء صحيحة */}
             <div className="p-2.5 bg-surface-50 rounded-lg border border-surface-200 text-xs" dir="rtl">
-              <p className="text-surface-400 text-[10px] mb-1 font-medium">مثال نص القالب (انسخه عند الإنشاء في Meta):</p>
+              <p className="text-surface-400 text-[10px] mb-1 font-medium">
+                مثال نص القالب (انسخه عند الإنشاء في Meta — وغيّر{" "}
+                <span className="bg-amber-100 text-amber-800 px-1 rounded">[اسم منشأتك]</span>{" "}
+                لاسمك الحقيقي):
+              </p>
               <p className="text-surface-700 leading-relaxed">
                 {`مرحباً {{customer_name}} 👋`}<br />
-                {`تذكير بموعدك {{appointment_time}} — {{service}}`}<br />
-                نتطلع لرؤيتك!
+                نُذكّرك بموعدك مع{" "}
+                <span className="bg-amber-100 text-amber-800 px-1 rounded font-semibold">
+                  [اسم منشأتك]
+                </span>
+                {` — {{service}} في {{appointment_time}}`}<br />
+                نتطلع لرؤيتك! إن أردت التأجيل أرسل ردّاً.
               </p>
             </div>
           </div>
@@ -888,10 +896,22 @@ export default function WhatsAppSettingsPage() {
                       {`مرحباً {{customer_name}} 👋`}
                     </p>
                     <p className="text-sm text-surface-800 leading-relaxed mt-1">
-                      شكراً لتواصلك معنا. استلمنا طلبك وسيقوم أحد ممثلينا بالتواصل معك في أقرب وقت لمساعدتك.
+                      شكراً لتواصلك مع{" "}
+                      <span className="bg-amber-100 text-amber-800 px-1.5 rounded font-semibold">
+                        [اسم منشأتك]
+                      </span>
+                      . استلمنا طلبك وسيقوم أحد ممثلينا بالتواصل معك في أقرب وقت لمساعدتك.
                     </p>
                     <p className="text-sm text-surface-800 leading-relaxed mt-1">
                       إذا كان لديك أي استفسار عاجل، لا تتردد في الرد على هذه الرسالة.
+                    </p>
+                  </div>
+                  <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      💡 <strong>غيّر</strong>{" "}
+                      <span className="bg-amber-100 px-1 rounded font-mono">[اسم منشأتك]</span>{" "}
+                      لاسمك الحقيقي مكتوباً مباشرة في النص (مثل: <strong>عيادة النخبة</strong> أو <strong>مركز الجمال</strong>).
+                      لا تجعله متغيّراً <code className="bg-amber-100 px-1 rounded">{`{{...}}`}</code> — Meta تفضّل القوالب المحدّدة وتقبلها أسرع.
                     </p>
                   </div>
                   <div className="mt-2 flex items-center gap-2">
