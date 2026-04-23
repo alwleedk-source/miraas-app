@@ -19,7 +19,7 @@ import {
   ChevronUp,
   MessageSquare,
 } from "lucide-react";
-import { createWebhookKey, deleteWebhook, toggleWebhook, toggleWebhookWelcome } from "@/app/actions/settings";
+import { createWebhookKey, deleteWebhook, toggleWebhook, toggleWebhookWelcome, updateWebhookWelcomeTemplate } from "@/app/actions/settings";
 
 interface Webhook {
   id: string;
@@ -28,6 +28,7 @@ interface Webhook {
   label: string | null;
   isActive: boolean;
   sendWelcome: boolean;
+  welcomeTemplateName: string | null;
   lastReceivedAt: Date | null;
   createdAt: Date;
 }
@@ -93,6 +94,18 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
   const handleToggleWelcome = (id: string) => {
     startTransition(async () => {
       await toggleWebhookWelcome(id);
+    });
+  };
+
+  const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
+  const [templateInput, setTemplateInput] = useState("");
+
+  const handleSaveTemplate = (id: string) => {
+    const value = templateInput.trim();
+    startTransition(async () => {
+      await updateWebhookWelcomeTemplate(id, value || null);
+      setEditingTemplate(null);
+      setTemplateInput("");
     });
   };
 
@@ -196,9 +209,72 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
                 </Badge>
               </button>
               {wh.sendWelcome && (
-                <p className="text-[11px] text-surface-400 -mt-1 px-1">
-                  ⚡ تُرسل فقط للعملاء الجدد من فورم حقيقي (عميل واحد). الدفع الجماعي لا يُرسل ترحيب.
-                </p>
+                <>
+                  <p className="text-[11px] text-surface-400 -mt-1 px-1">
+                    ⚡ تُرسل فقط للعملاء الجدد من فورم حقيقي (عميل واحد). الدفع الجماعي لا يُرسل ترحيب.
+                  </p>
+
+                  {/* قالب ترحيب مخصّص لهذه الحملة (override الافتراضي) */}
+                  <div className="rounded-lg border border-primary-100 bg-primary-50/30 p-2.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-primary-700 flex items-center gap-1">
+                        <Code2 className="h-3 w-3" />
+                        قالب ترحيب خاص بهذه الحملة
+                      </span>
+                      {wh.welcomeTemplateName && editingTemplate !== wh.id && (
+                        <Badge variant="outline" className="text-[9px] border-primary-300 text-primary-700">
+                          {wh.welcomeTemplateName}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {editingTemplate === wh.id ? (
+                      <div className="flex gap-1.5">
+                        <Input
+                          value={templateInput}
+                          onChange={(e) => setTemplateInput(e.target.value)}
+                          placeholder="مثال: welcome_eyes_clinic (اتركه فارغاً للافتراضي)"
+                          dir="ltr"
+                          className="text-left font-mono text-xs h-8 flex-1"
+                          maxLength={255}
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => handleSaveTemplate(wh.id)}
+                          disabled={isPending}
+                          className="h-8 text-xs"
+                        >
+                          حفظ
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setEditingTemplate(null); setTemplateInput(""); }}
+                          className="h-8 text-xs"
+                        >
+                          إلغاء
+                        </Button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditingTemplate(wh.id);
+                          setTemplateInput(wh.welcomeTemplateName ?? "");
+                        }}
+                        className="w-full text-start text-[11px] text-primary-600 hover:text-primary-800 hover:underline"
+                      >
+                        {wh.welcomeTemplateName
+                          ? `✏️ تغيير القالب الخاص (الحالي: ${wh.welcomeTemplateName})`
+                          : "➕ استخدم قالب مخصّص لهذه الحملة (افتراضي: قالب الإعدادات العام)"}
+                      </button>
+                    )}
+                    <p className="text-[10px] text-primary-600/70 leading-relaxed">
+                      مفيد لمن يدير عيادات/تخصصات متعدّدة — كل حملة برسالة مناسبة لجمهورها.
+                      اسم القالب يجب أن يكون معتمداً من Meta أولاً.
+                    </p>
+                  </div>
+                </>
               )}
 
               {/* زر عرض الكود الجاهز */}

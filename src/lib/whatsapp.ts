@@ -155,7 +155,12 @@ export async function sendWelcomeMessage(
   tenantId: string,
   leadPhone: string,
   leadName: string,
-  leadId?: string
+  leadId?: string,
+  /**
+   * اسم قالب يتجاوز الافتراضي — يأتي من webhookEndpoints.welcomeTemplateName
+   * يسمح بقالب مخصّص لكل حملة/مصدر
+   */
+  templateNameOverride?: string | null,
 ): Promise<SendResult> {
   // 1. جلب إعدادات الواتساب
   const config = await db.query.whatsappConfigs.findFirst({
@@ -170,7 +175,9 @@ export async function sendWelcomeMessage(
     return { success: false, error: "إعدادات واتساب غير مكتملة — أدخل Access Token و Phone Number ID" };
   }
 
-  if (!config.templateName) {
+  // قالب الـ webhook له الأولوية، ثم قالب tenant الافتراضي
+  const effectiveTemplateName = templateNameOverride?.trim() || config.templateName;
+  if (!effectiveTemplateName) {
     return { success: false, error: "اسم القالب غير محدد — أنشئ Template في Meta وأدخل اسمه" };
   }
 
@@ -196,7 +203,7 @@ export async function sendWelcomeMessage(
   const templateLang = config.templateLanguage || "ar";
   const result = await sendTemplateViaMeta(
     accessToken, config.phoneNumber, toPhone,
-    config.templateName, templateLang, params
+    effectiveTemplateName, templateLang, params
   );
 
   // 6. تحديث حالة العميل + تسجيل النشاط
@@ -215,7 +222,11 @@ export async function sendWelcomeMessage(
     details: {
       to: toPhone,
       leadName,
-      templateName: config.templateName,
+      templateName: effectiveTemplateName,
+      // إذا استخدمنا override، سجّله ليرى المالك أيّ webhook استخدم أيّ قالب
+      templateOverride: templateNameOverride && templateNameOverride !== config.templateName
+        ? templateNameOverride
+        : undefined,
       messageId: result.messageId,
       error: result.error,
     },

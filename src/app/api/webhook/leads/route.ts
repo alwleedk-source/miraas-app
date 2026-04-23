@@ -270,11 +270,18 @@ export async function POST(request: NextRequest) {
     });
 
     // 8. ترحيب تلقائي — فقط لدفعة من عميل واحد حقيقي
+    // يمرّر welcomeTemplateName من الـ webhook (override) — null = استخدم الافتراضي
     const isSingleRealTime = rawEntries.length === 1 && result.createdLeads.length === 1;
     const shouldSendWelcome = webhook.sendWelcome && isSingleRealTime;
     if (shouldSendWelcome && result.createdLeads[0]) {
       const l = result.createdLeads[0];
-      sendWelcomeMessage(webhook.tenantId, l.phone, l.name, l.id).catch((err) => {
+      sendWelcomeMessage(
+        webhook.tenantId,
+        l.phone,
+        l.name,
+        l.id,
+        webhook.welcomeTemplateName, // ← قالب مخصّص لهذه الحملة، إن وُجد
+      ).catch((err) => {
         logger.error("welcome message failed", err, {
           leadId: l.id,
           tenantId: webhook.tenantId,

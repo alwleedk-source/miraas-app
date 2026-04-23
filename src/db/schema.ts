@@ -434,6 +434,10 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   label: varchar("label", { length: 255 }).default("Google Sheets"),
   isActive: boolean("is_active").default(true).notNull(),
   sendWelcome: boolean("send_welcome").default(true).notNull(),
+  // قالب ترحيب مخصّص لهذا الـ webhook — يتجاوز قالب tenant الافتراضي
+  // null = استخدم whatsappConfigs.templateName (الافتراضي العام)
+  // مفيد لمن يدير حملات/تخصصات مختلفة، كل واحدة برسالة مناسبة لجمهورها
+  welcomeTemplateName: varchar("welcome_template_name", { length: 255 }),
   lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

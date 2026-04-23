@@ -188,6 +188,46 @@ export async function toggleWebhookWelcome(webhookId: string) {
 }
 
 // =============================================
+// تحديث قالب الترحيب الخاص بـ webhook (override)
+// =============================================
+
+/**
+ * يحفظ قالب ترحيب مخصّص لهذا الـ webhook فقط.
+ * تمرير string فارغ أو null = حذف الـ override (استخدم قالب tenant الافتراضي).
+ *
+ * مفيد لمن يدير حملات/تخصصات مختلفة بنفس الحساب — كل حملة لها رسالتها.
+ */
+export async function updateWebhookWelcomeTemplate(
+  webhookId: string,
+  templateName: string | null,
+) {
+  const { tenantId } = await requireOwnerOrAdmin();
+
+  const cleaned = templateName?.trim() || null;
+  if (cleaned && (cleaned.length > 255 || cleaned.length < 1)) {
+    throw new Error("اسم القالب يجب أن يكون بين 1 و 255 حرف");
+  }
+
+  const [webhook] = await db
+    .select({ id: webhookEndpoints.id })
+    .from(webhookEndpoints)
+    .where(
+      and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId)),
+    );
+  if (!webhook) throw new Error("الويب هوك غير موجود");
+
+  await db
+    .update(webhookEndpoints)
+    .set({ welcomeTemplateName: cleaned })
+    .where(
+      and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId)),
+    );
+
+  revalidatePath("/settings/webhooks");
+  return { success: true, templateName: cleaned };
+}
+
+// =============================================
 // حذف ويب هوك
 // =============================================
 
