@@ -928,6 +928,135 @@ export default function WhatsAppSettingsPage() {
         )}
       </Card>
 
+      {/* استكشاف أخطاء Meta الشائعة */}
+      <Card className="border-warning-200">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-warning-600" />
+            أخطاء Meta الشائعة وحلولها
+          </CardTitle>
+          <CardDescription>
+            لو واجهت رسالة خطأ من Meta عند إنشاء قالب أو الربط، ابحث عنها هنا
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* خطأ 1: غير مسموح بإدارة القوالب */}
+          <details className="rounded-xl border border-danger-200 bg-danger-50/50 overflow-hidden">
+            <summary className="cursor-pointer p-3 font-semibold text-sm text-danger-800 hover:bg-danger-50 flex items-start gap-2">
+              <span className="text-base">🚫</span>
+              <span className="flex-1">
+                &quot;غير مسموح لحساب واتساب للأعمال هذا بإنشاء قوالب أو تحديثها&quot;
+              </span>
+            </summary>
+            <div className="p-3 pt-0 text-xs text-surface-700 space-y-3 leading-relaxed">
+              <p className="text-danger-700 font-medium">
+                ⚠️ هذا خطأ من Meta — ليس من Meras. السبب الأكثر شيوعاً: <strong>Business Verification غير مكتمل</strong>.
+              </p>
+              <div>
+                <p className="font-bold mb-1.5 text-surface-900">افحص بهذا الترتيب:</p>
+                <ol className="list-decimal list-inside space-y-2">
+                  <li>
+                    <strong>Display Name (الاسم المعروض)</strong>:{" "}
+                    <a
+                      href="https://business.facebook.com/wa/manage/phone-numbers/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-600 underline"
+                    >
+                      افتح Phone Numbers
+                    </a>{" "}
+                    → يجب أن تكون &quot;Approved&quot; (لو Pending، انتظر 24-48 ساعة)
+                  </li>
+                  <li>
+                    <strong>Business Verification (التحقق من النشاط) — الأهم</strong>:{" "}
+                    <a
+                      href="https://business.facebook.com/settings/security"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-600 underline"
+                    >
+                      افتح Security Center
+                    </a>
+                    <br />
+                    لو غير موجود ✓ Verified، ابدأ Verification بـ:
+                    <ul className="list-disc list-inside mt-1 ms-4 text-surface-600">
+                      <li>سجل تجاري ساري</li>
+                      <li>فاتورة كهرباء/ماء على اسم الشركة (آخر 90 يوم)</li>
+                      <li>رقم هاتف رسمي للشركة</li>
+                    </ul>
+                    <span className="block mt-1 text-warning-700">⏱️ يستغرق 2-7 أيام عمل</span>
+                  </li>
+                  <li>
+                    <strong>صلاحياتك على الـ WABA</strong>: Settings → People → ابحث عن نفسك → يجب أن تكون <strong>Admin</strong> (لا Employee)
+                  </li>
+                  <li>
+                    <strong>Payment Method</strong>:{" "}
+                    <a
+                      href="https://business.facebook.com/wa/manage/payment-methods/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-600 underline"
+                    >
+                      افتح Payment Methods
+                    </a>{" "}
+                    → أضف بطاقة (Meta أصبحت تشترطها 2025، لن تُخصم قبل إرسال أول رسالة)
+                  </li>
+                  <li>
+                    <strong>Account Quality</strong>: WhatsApp Manager → Insights → لو Quality أحمر، انتظر تحسّنه (1-7 أيام)
+                  </li>
+                </ol>
+              </div>
+              <div className="p-2 rounded-lg bg-warning-100 border border-warning-300">
+                <p className="text-warning-900 text-[11px]">
+                  💡 <strong>أكثر سيناريو:</strong> Business Verification غير مكتمل. ابدأ بهذه الخطوة قبل أي شيء آخر.
+                </p>
+              </div>
+            </div>
+          </details>
+
+          {/* خطأ 2: قالب رُفض */}
+          <details className="rounded-xl border border-warning-200 bg-warning-50/50 overflow-hidden">
+            <summary className="cursor-pointer p-3 font-semibold text-sm text-warning-800 hover:bg-warning-50 flex items-start gap-2">
+              <span className="text-base">⚠️</span>
+              <span className="flex-1">قالبي رُفض — Template Rejected</span>
+            </summary>
+            <div className="p-3 pt-0 text-xs text-surface-700 space-y-2 leading-relaxed">
+              <p>الأسباب الشائعة للرفض (مرتّبة بالأكثر):</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li><strong>تصنيف خاطئ</strong>: محتوى ترويجي في تصنيف Utility → غيّر لـ Marketing</li>
+                <li><strong>ادعاءات بدون دليل</strong>: &quot;الأفضل&quot;، &quot;الأعلى تقييماً&quot; → احذفها</li>
+                <li><strong>إيموجي مبالغ</strong>: 🔥🔥🔥⭐️⭐️⭐️ → 1-2 إيموجي كافية</li>
+                <li><strong>كلمات ضغط</strong>: &quot;فرصة محدودة&quot;، &quot;احجز الآن!!!&quot; → استبدلها بصياغة هادئة</li>
+                <li><strong>اسم القالب غير صحيح</strong>: استخدم snake_case (welcome_lead) لا CamelCase</li>
+              </ul>
+              <p className="text-warning-700 mt-2">
+                💡 راجع &quot;دليل القبول السريع للقوالب&quot; أعلاه للحصول على قالب نموذجي يُقبل سريعاً.
+              </p>
+            </div>
+          </details>
+
+          {/* خطأ 3: رسالة فشلت بعد القبول */}
+          <details className="rounded-xl border border-surface-200 bg-surface-50/50 overflow-hidden">
+            <summary className="cursor-pointer p-3 font-semibold text-sm text-surface-800 hover:bg-surface-100 flex items-start gap-2">
+              <span className="text-base">📵</span>
+              <span className="flex-1">القالب مقبول لكن الرسائل لا تصل</span>
+            </summary>
+            <div className="p-3 pt-0 text-xs text-surface-700 space-y-2 leading-relaxed">
+              <ul className="list-disc list-inside space-y-1">
+                <li><strong>اسم القالب في Meras مختلف</strong>: تأكد من تطابق الاسم بدقة (case-sensitive)</li>
+                <li><strong>أسماء المتغيرات مختلفة</strong>: في القالب كتبت {`{{name}}`} لكن مِراس يرسل {`{{customer_name}}`} → غيّر القالب لـ snake_case الصحيح</li>
+                <li><strong>اللغة مختلفة</strong>: القالب &quot;ar&quot; لكن مِراس يرسل &quot;ar_SA&quot; → اختر اللغة الصحيحة في إعدادات القالب</li>
+                <li><strong>Access Token منتهي</strong>: System User Token دائم، لكن temp tokens تنتهي بعد 24 ساعة → استبدله</li>
+                <li><strong>راجع</strong>{" "}
+                  <a href="/settings/errors" className="text-primary-600 underline">سجل الأخطاء</a>{" "}
+                  لرؤية رسالة Meta التفصيلية
+                </li>
+              </ul>
+            </div>
+          </details>
+        </CardContent>
+      </Card>
+
       {/* معلومات التكلفة */}
       <Card>
         <CardContent className="p-5">
