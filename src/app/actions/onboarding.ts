@@ -7,7 +7,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
 
 export type OnboardingStep = {
-  key: "whatsapp" | "team" | "webhook" | "first_lead";
+  key: "whatsapp" | "team" | "webhook" | "first_lead" | "backup";
   label: string;
   description: string;
   icon: string;
@@ -41,7 +41,7 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
     leadCount,
   ] = await Promise.all([
     db
-      .select({ name: tenants.name })
+      .select({ name: tenants.name, settings: tenants.settings })
       .from(tenants)
       .where(eq(tenants.id, tenantId))
       .limit(1)
@@ -69,6 +69,9 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
       .then((r) => Number(r[0]?.c ?? 0)),
   ]);
 
+  const settings = (tenantInfo?.settings ?? {}) as { backupSheetEnabled?: boolean };
+  const backupEnabled = !!settings.backupSheetEnabled;
+
   const steps: OnboardingStep[] = [
     {
       key: "whatsapp",
@@ -93,6 +96,14 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
       icon: "🔗",
       href: "/settings/webhooks",
       done: webhookCount > 0,
+    },
+    {
+      key: "backup",
+      label: "فعّل النسخة الاحتياطية في Google Sheet",
+      description: "بياناتك مرآة في Sheet خاص بك — حماية إضافية لو حدث أيّ طارئ",
+      icon: "🛡️",
+      href: "/settings/backup",
+      done: backupEnabled,
     },
     {
       key: "first_lead",
