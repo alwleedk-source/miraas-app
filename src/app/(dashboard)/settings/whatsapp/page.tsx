@@ -537,7 +537,7 @@ export default function WhatsAppSettingsPage() {
                   <a href="https://business.facebook.com/wa/manage/message-templates/" target="_blank" rel="noopener noreferrer" className="font-bold underline hover:text-primary-800">
                     Meta Business Manager
                   </a>
-                  {" "}→ أنشئ Template جديد من نوع <strong>Utility</strong>
+                  {" "}→ أنشئ Template جديد من نوع <strong>Utility (أدوات مساعدة)</strong>
                 </li>
                 <li>سمّه <code className="bg-primary-100 px-1 rounded">booking_reminder</code> — الموافقة عادةً <strong>دقائق إلى ساعات</strong> (راجع &quot;دليل القبول السريع&quot; أدناه)</li>
                 <li>بعد الموافقة → اكتب اسم القالب في الحقل أدناه واختر استراتيجيتك</li>
@@ -679,29 +679,37 @@ export default function WhatsAppSettingsPage() {
                 <div>
                   <h4 className="font-bold text-surface-900 text-sm mb-1">اختر التصنيف الصحيح</h4>
                   <p className="text-sm text-surface-600 leading-relaxed">
-                    أهم سبب للرفض هو التصنيف الخاطئ. اختر بدقة:
+                    أهم سبب للرفض هو التصنيف الخاطئ. الأسماء أدناه تظهر بالعربية لو فتحت Meta بالعربية:
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                     <div className="p-2 bg-white rounded-lg border border-surface-100 text-xs">
-                      <span className="font-bold text-emerald-600">Utility ✅</span>
+                      <div className="font-bold text-emerald-600">
+                        Utility ✅ <span className="text-surface-400 font-normal">(أدوات مساعدة)</span>
+                      </div>
                       <p className="text-surface-500 mt-0.5">رسائل ترحيب، تأكيد، إشعارات</p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100 text-xs">
-                      <span className="font-bold text-blue-600">Marketing 📢</span>
+                      <div className="font-bold text-blue-600">
+                        Marketing 📢 <span className="text-surface-400 font-normal">(تسويق)</span>
+                      </div>
                       <p className="text-surface-500 mt-0.5">عروض، تخفيضات، حملات ترويجية</p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100 text-xs">
-                      <span className="font-bold text-violet-600">Authentication 🔐</span>
+                      <div className="font-bold text-violet-600">
+                        Authentication 🔐 <span className="text-surface-400 font-normal">(مصادقة)</span>
+                      </div>
                       <p className="text-surface-500 mt-0.5">رموز تحقق OTP فقط</p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100 text-xs">
-                      <span className="font-bold text-amber-600">Service 🛎️</span>
+                      <div className="font-bold text-amber-600">
+                        Service 🛎️ <span className="text-surface-400 font-normal">(خدمة)</span>
+                      </div>
                       <p className="text-surface-500 mt-0.5">ردود على استفسارات العملاء</p>
                     </div>
                   </div>
                   <div className="mt-2 p-2 bg-emerald-100/60 rounded-lg">
                     <p className="text-xs text-emerald-700">
-                      <strong>💡 لمِراس:</strong> رسالة الترحيب بعميل جديد = <strong>Utility</strong> (ليست Marketing)
+                      <strong>💡 لمِراس:</strong> الترحيب والتذكيرات = <strong>Utility (أدوات مساعدة)</strong> — ليست Marketing
                     </p>
                   </div>
                 </div>
@@ -791,13 +799,13 @@ export default function WhatsAppSettingsPage() {
                 <div>
                   <h4 className="font-bold text-surface-900 text-sm mb-1">أضف خيار إلغاء الاشتراك (للتسويق)</h4>
                   <p className="text-sm text-surface-600 leading-relaxed">
-                    إذا كان القالب من نوع <strong>Marketing</strong>، يجب أن يحتوي على طريقة لإلغاء الاشتراك:
+                    إذا كان القالب من نوع <strong>Marketing (تسويق)</strong>، يجب أن يحتوي على طريقة لإلغاء الاشتراك:
                   </p>
                   <div className="mt-2 p-2 bg-white rounded-lg border border-violet-100 text-xs text-surface-600" dir="rtl">
                     <p>إذا لم تعد ترغب في استلام رسائلنا، أرسل &quot;إلغاء&quot;</p>
                   </div>
                   <p className="text-xs text-violet-600 mt-1.5">
-                    <strong>ملاحظة:</strong> قوالب Utility (مثل الترحيب) لا تحتاج هذا عادةً
+                    <strong>ملاحظة:</strong> قوالب Utility (أدوات مساعدة، مثل الترحيب) لا تحتاج هذا عادةً
                   </p>
                 </div>
               </div>
@@ -864,7 +872,7 @@ export default function WhatsAppSettingsPage() {
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100">
                       <p className="text-surface-400">التصنيف:</p>
-                      <p className="font-bold text-emerald-600">Utility</p>
+                      <p className="font-bold text-emerald-600">Utility <span className="text-[10px] text-surface-400 font-normal">(أدوات مساعدة)</span></p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100">
                       <p className="text-surface-400">اللغة:</p>
@@ -920,11 +928,11 @@ export default function WhatsAppSettingsPage() {
                 </li>
                 <li className="flex items-start gap-1.5">
                   <CircleAlert className="h-3 w-3 text-warning-500 shrink-0 mt-0.5" />
-                  <span>قوالب الترحيب والتذكير = <strong>Utility messages</strong> — لها تسعير لكل دولة (السعودية ~٢٫٥ هللة/رسالة). تُدفع لـ Meta مباشرة.</span>
+                  <span>قوالب الترحيب والتذكير = <strong>Utility (أدوات مساعدة)</strong> — لها تسعير لكل دولة (السعودية ~٢٫٥ هللة/رسالة). تُدفع لـ Meta مباشرة.</span>
                 </li>
                 <li className="flex items-start gap-1.5">
                   <Check className="h-3 w-3 text-success-500 shrink-0 mt-0.5" />
-                  <span>المحادثات التي يبدأها العميل (Service) أرخص — أول <strong>1,000 شهرياً مجانية</strong> من Meta لكنها لا تشمل قوالبك</span>
+                  <span>المحادثات التي يبدأها العميل (Service / خدمة) أرخص — أول <strong>1,000 شهرياً مجانية</strong> من Meta لكنها لا تشمل قوالبك</span>
                 </li>
               </ul>
               <a
