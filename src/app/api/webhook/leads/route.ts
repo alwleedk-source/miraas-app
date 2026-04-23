@@ -236,6 +236,8 @@ export async function POST(request: NextRequest) {
               priority: "MEDIUM" as const,
               stageId: defaultStage?.id ?? null,
               sourceId: e.campaign ? campaignToSourceId.get(e.campaign) ?? null : null,
+              // ربط مباشر بالـ webhook لتقييد رؤية المنسقين على حملاتهم فقط
+              webhookEndpointId: webhook.id,
             })),
           )
           .returning({ id: leads.id, name: leads.name, phone: leads.phone });

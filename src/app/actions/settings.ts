@@ -1,13 +1,14 @@
 "use server";
 
 import { db } from "@/db";
-import { tenants, webhookEndpoints, whatsappConfigs, activityLog } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { tenants, webhookEndpoints, whatsappConfigs, activityLog, webhookCoordinators, users } from "@/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { encrypt } from "@/lib/encryption";
 import { hashSecret, secretPrefix } from "@/lib/secret-hash";
+import { setWebhookCoordinatorsSchema, webhookLabelSchema } from "@/lib/schemas";
 
 async function requireOwnerOrAdmin() {
   const ctx = await requireTenant();
@@ -92,6 +93,11 @@ export async function updateTenantSettings(input: {
 export async function createWebhookKey(label?: string) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
+  // تحقّق صارم من اسم الحملة (1-60 حرف) — يطابق حدّ DB + يمنع أسماء فارغة
+  const validatedLabel = label
+    ? webhookLabelSchema.parse(label)
+    : "Google Sheets";
+
   // نولّد السر plaintext (يُعاد للمستخدم مرة واحدة فقط)
   const secretKey = randomBytes(32).toString("hex");
   const secretHash = await hashSecret(secretKey);
@@ -104,7 +110,7 @@ export async function createWebhookKey(label?: string) {
       // لا نحفظ plaintext — فقط hash + prefix
       secretHash,
       secretPrefix: prefix,
-      label: label || "Google Sheets",
+      label: validatedLabel,
       isActive: true,
     })
     .returning();
@@ -225,6 +231,100 @@ export async function updateWebhookWelcomeTemplate(
 
   revalidatePath("/settings/webhooks");
   return { success: true, templateName: cleaned };
+}
+
+// =============================================
+// تخصيص منسقين لحملة (webhook → coordinators)
+// =============================================
+
+/**
+ * يقرأ المنسقين المخوّلين برؤية leads هذه الحملة.
+ * فارغ = الحملة مرئية لكل المنسقين (السلوك الافتراضي).
+ */
+export async function getWebhookCoordinators(webhookId: string) {
+  const { tenantId } = await requireOwnerOrAdmin();
+
+  // تحقّق ملكية webhook
+  const [wh] = await db
+    .select({ id: webhookEndpoints.id })
+    .from(webhookEndpoints)
+    .where(and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId)))
+    .limit(1);
+  if (!wh) throw new Error("الويب هوك غير موجود");
+
+  return db
+    .select({ userId: webhookCoordinators.userId })
+    .from(webhookCoordinators)
+    .where(eq(webhookCoordinators.webhookId, webhookId));
+}
+
+/**
+ * يحدّد المنسقين لحملة. array فارغ = إزالة كل التخصيصات (تصبح مرئية للجميع).
+ *
+ * نمط replace-all (DELETE + INSERT) — الأبسط والـ idempotent.
+ * الأعداد صغيرة (typically 1-10) فلا قلق على أداء.
+ */
+export async function setWebhookCoordinators(input: { webhookId: string; userIds: string[] }) {
+  const { tenantId, userId: actorId } = await requireOwnerOrAdmin();
+  const parsed = setWebhookCoordinatorsSchema.parse(input);
+
+  // 1. تحقّق ملكية webhook
+  const [wh] = await db
+    .select({ id: webhookEndpoints.id, label: webhookEndpoints.label })
+    .from(webhookEndpoints)
+    .where(and(eq(webhookEndpoints.id, parsed.webhookId), eq(webhookEndpoints.tenantId, tenantId)))
+    .limit(1);
+  if (!wh) throw new Error("الويب هوك غير موجود");
+
+  // 2. تحقّق أن كل userIds في نفس tenant + نشطون
+  if (parsed.userIds.length > 0) {
+    const validUsers = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          inArray(users.id, parsed.userIds),
+          eq(users.tenantId, tenantId),
+          eq(users.isActive, true),
+        ),
+      );
+    if (validUsers.length !== parsed.userIds.length) {
+      throw new Error("بعض المنسقين غير موجودين أو معطّلون");
+    }
+  }
+
+  // 3. replace-all في transaction
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(webhookCoordinators)
+      .where(eq(webhookCoordinators.webhookId, parsed.webhookId));
+
+    if (parsed.userIds.length > 0) {
+      await tx.insert(webhookCoordinators).values(
+        parsed.userIds.map((uid) => ({
+          webhookId: parsed.webhookId,
+          userId: uid,
+        })),
+      );
+    }
+
+    await tx.insert(activityLog).values({
+      tenantId,
+      userId: actorId,
+      action: "SETTINGS_UPDATED",
+      entityType: "webhook_endpoint",
+      entityId: parsed.webhookId,
+      details: {
+        change: "coordinators_set",
+        webhookLabel: wh.label,
+        coordinatorCount: parsed.userIds.length,
+        coordinatorIds: parsed.userIds,
+      },
+    });
+  });
+
+  revalidatePath("/settings/webhooks");
+  return { success: true, count: parsed.userIds.length };
 }
 
 // =============================================

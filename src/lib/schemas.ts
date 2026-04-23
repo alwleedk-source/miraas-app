@@ -1,6 +1,19 @@
 import { z } from "zod";
 
 // =============================================
+// Webhooks
+// =============================================
+
+/** اسم الحملة/الـ webhook — قصير ومنظّم للعرض في القوائم والكود */
+export const webhookLabelSchema = z.string().trim().min(1).max(60);
+
+/** ربط منسقين بحملة معيّنة — array فارغ = إزالة كل التخصيصات */
+export const setWebhookCoordinatorsSchema = z.object({
+  webhookId: z.string().uuid(),
+  userIds: z.array(z.string().uuid()).max(50),
+});
+
+// =============================================
 // Leads
 // =============================================
 

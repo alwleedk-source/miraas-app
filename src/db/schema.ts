@@ -315,6 +315,10 @@ export const leads = pgTable("leads", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   assignedTo: uuid("assigned_to").references(() => users.id, { onDelete: "set null" }),
   sourceId: uuid("source_id").references(() => leadSources.id, { onDelete: "set null" }),
+  // الـ webhook الذي جلب هذا العميل — يُستخدم لتقييد رؤية المنسقين على حملاتهم فقط
+  // null = lead أُضيف يدوياً أو من بدء قبل هذه الميزة (legacy)
+  // forward reference: webhookEndpoints مُعرَّف لاحقاً، callback lazy
+  webhookEndpointId: uuid("webhook_endpoint_id"),
   stageId: uuid("stage_id").references(() => pipelineStages.id, { onDelete: "set null" }),
   name: varchar("name", { length: 255 }).notNull(),
   phone: varchar("phone", { length: 50 }),
@@ -431,7 +435,7 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   // النهج الجديد: hash + prefix (أول 12 حرفاً للبحث السريع)
   secretHash: text("secret_hash"),
   secretPrefix: varchar("secret_prefix", { length: 12 }),
-  label: varchar("label", { length: 255 }).default("Google Sheets"),
+  label: varchar("label", { length: 60 }).default("Google Sheets"),
   isActive: boolean("is_active").default(true).notNull(),
   sendWelcome: boolean("send_welcome").default(true).notNull(),
   // قالب ترحيب مخصّص لهذا الـ webhook — يتجاوز قالب tenant الافتراضي
@@ -442,6 +446,24 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   prefixIdx: index("webhook_endpoints_prefix_idx").on(t.secretPrefix),
+}));
+
+// ============================================
+// 8b. Webhook Coordinators (junction)
+// يربط webhook بمنسقين محدّدين — لتقييد رؤية leads الحملة عليهم فقط
+// junction فارغ = الحملة مرئية لكل المنسقين (السلوك الافتراضي/legacy)
+// نمط مطابق لـ departmentProviders
+// ============================================
+
+export const webhookCoordinators = pgTable("webhook_coordinators", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  webhookId: uuid("webhook_id").notNull().references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  webhookUserUnique: uniqueIndex("webhook_coordinators_webhook_user_unique")
+    .on(t.webhookId, t.userId),
+  userIdx: index("webhook_coordinators_user_idx").on(t.userId),
 }));
 
 // ============================================

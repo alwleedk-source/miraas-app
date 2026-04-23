@@ -18,8 +18,10 @@ import {
   ChevronDown,
   ChevronUp,
   MessageSquare,
+  Users,
+  AlertTriangle,
 } from "lucide-react";
-import { createWebhookKey, deleteWebhook, toggleWebhook, toggleWebhookWelcome, updateWebhookWelcomeTemplate } from "@/app/actions/settings";
+import { createWebhookKey, deleteWebhook, toggleWebhook, toggleWebhookWelcome, updateWebhookWelcomeTemplate, setWebhookCoordinators } from "@/app/actions/settings";
 
 interface Webhook {
   id: string;
@@ -29,13 +31,20 @@ interface Webhook {
   isActive: boolean;
   sendWelcome: boolean;
   welcomeTemplateName: string | null;
+  coordinatorIds: string[]; // فارغ = مرئية لكل المنسقين (السلوك الافتراضي)
   lastReceivedAt: Date | null;
   createdAt: Date;
+}
+
+interface Coordinator {
+  id: string;
+  name: string;
 }
 
 interface Props {
   webhooks: Webhook[];
   appUrl: string;
+  availableCoordinators: Coordinator[];
 }
 
 function generateScript(appUrl: string, secretKey: string, campaignName: string) {
@@ -58,11 +67,40 @@ function generateScript(appUrl: string, secretKey: string, campaignName: string)
 }`;
 }
 
-export default function WebhookActions({ webhooks, appUrl }: Props) {
+export default function WebhookActions({ webhooks, appUrl, availableCoordinators }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [editingCoords, setEditingCoords] = useState<string | null>(null);
+  const [draftCoords, setDraftCoords] = useState<Set<string>>(new Set());
+  // عداد الأحرف للـ label الجديد عند الإنشاء
+  const [newLabelLen, setNewLabelLen] = useState(0);
+
+  const handleSaveCoords = (webhookId: string) => {
+    startTransition(async () => {
+      await setWebhookCoordinators({
+        webhookId,
+        userIds: Array.from(draftCoords),
+      });
+      setEditingCoords(null);
+      setDraftCoords(new Set());
+    });
+  };
+
+  const startEditCoords = (webhook: Webhook) => {
+    setEditingCoords(webhook.id);
+    setDraftCoords(new Set(webhook.coordinatorIds));
+  };
+
+  const toggleDraftCoord = (id: string) => {
+    setDraftCoords((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -277,6 +315,114 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
                 </>
               )}
 
+              {/* تخصيص المنسقين — يقيّد رؤية leads هذه الحملة */}
+              <div className={`rounded-lg border p-2.5 space-y-2 ${
+                wh.coordinatorIds.length === 0
+                  ? "border-warning-200 bg-warning-50/40"
+                  : "border-surface-200 bg-surface-50/50"
+              }`}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-surface-700 flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    المنسقون المسؤولون عن هذه الحملة
+                  </span>
+                  {wh.coordinatorIds.length === 0 ? (
+                    <Badge variant="outline" className="text-[9px] border-warning-300 text-warning-700 bg-warning-50">
+                      <AlertTriangle className="h-2.5 w-2.5 me-1" />
+                      الكل يرى
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[9px]">
+                      {wh.coordinatorIds.length} منسق
+                    </Badge>
+                  )}
+                </div>
+
+                {editingCoords === wh.id ? (
+                  <div className="space-y-2">
+                    {availableCoordinators.length === 0 ? (
+                      <p className="text-[11px] text-surface-500">
+                        لا منسقين بعد —{" "}
+                        <a href="/team" className="text-primary-600 underline">أضف فريق العمل</a>
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-40 overflow-y-auto">
+                        {availableCoordinators.map((c) => {
+                          const checked = draftCoords.has(c.id);
+                          return (
+                            <label
+                              key={c.id}
+                              className={`flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors ${
+                                checked ? "bg-primary-100 text-primary-800" : "bg-white hover:bg-surface-50"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleDraftCoord(c.id)}
+                                className="rounded"
+                              />
+                              <span className="truncate">{c.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="flex gap-1.5">
+                      <Button
+                        size="sm"
+                        onClick={() => handleSaveCoords(wh.id)}
+                        disabled={isPending}
+                        className="h-8 text-xs"
+                      >
+                        حفظ ({draftCoords.size})
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setEditingCoords(null); setDraftCoords(new Set()); }}
+                        className="h-8 text-xs"
+                      >
+                        إلغاء
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {wh.coordinatorIds.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {wh.coordinatorIds.map((id) => {
+                          const c = availableCoordinators.find((x) => x.id === id);
+                          return (
+                            <Badge
+                              key={id}
+                              variant="outline"
+                              className="text-[10px] border-primary-200 bg-primary-50 text-primary-700"
+                            >
+                              {c?.name ?? "منسق محذوف"}
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => startEditCoords(wh)}
+                      className="w-full text-start text-[11px] text-primary-600 hover:text-primary-800 hover:underline"
+                    >
+                      {wh.coordinatorIds.length === 0
+                        ? "➕ خصّص منسقاً (أو أكثر) ليرى عملاء هذه الحملة فقط"
+                        : "✏️ تعديل المنسقين"}
+                    </button>
+                  </>
+                )}
+
+                <p className="text-[10px] text-surface-500 leading-relaxed">
+                  {wh.coordinatorIds.length === 0
+                    ? "حالياً كل المنسقين يرون عملاء هذه الحملة. خصّص منسقاً ليرى وحده."
+                    : "فقط المنسقون المختارون يرون عملاء هذه الحملة. الباقون لا يرونها."}
+                </p>
+              </div>
+
               {/* زر عرض الكود الجاهز */}
               <button
                 onClick={() => setExpandedCode(isExpanded ? null : wh.id)}
@@ -350,10 +496,26 @@ export default function WebhookActions({ webhooks, appUrl }: Props) {
             <span className="text-sm font-semibold text-surface-900">مفتاح جديد</span>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="wh-label">اسم الحملة / المصدر</Label>
-            <Input id="wh-label" name="label" placeholder="مثال: حملة رمضان - فيسبوك" autoFocus maxLength={50} />
+            <div className="flex items-center justify-between">
+              <Label htmlFor="wh-label">اسم الحملة / المصدر</Label>
+              <span
+                className={`text-[10px] tabular-nums ${
+                  newLabelLen > 50 ? "text-warning-600 font-semibold" : "text-surface-400"
+                }`}
+              >
+                {newLabelLen} / 60
+              </span>
+            </div>
+            <Input
+              id="wh-label"
+              name="label"
+              placeholder="مثال: حملة رمضان - فيسبوك"
+              autoFocus
+              maxLength={60}
+              onChange={(e) => setNewLabelLen(e.target.value.length)}
+            />
             <p className="text-[11px] text-surface-400">
-              هذا الاسم سيظهر في الكود الجاهز كاسم الحملة تلقائياً
+              اسم قصير وواضح — يظهر في الكود وفي قوائم العملاء (60 حرف كحد أقصى)
             </p>
           </div>
           <div className="flex items-center gap-2">

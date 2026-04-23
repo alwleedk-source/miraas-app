@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, followUps, activityLog, pipelineStages, notifications, leadSources, users } from "@/db/schema";
+import { leads, followUps, activityLog, pipelineStages, notifications, leadSources, users, webhookCoordinators } from "@/db/schema";
 import { eq, and, desc, asc, ilike, or, count, sql, inArray } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
@@ -323,16 +323,34 @@ export async function getLeads(options?: {
   }
 
   // ✅ فلتر أمني على مستوى الخادم — لا يُعتمد على client:
-  // COORDINATOR يرى فقط عملاءه + عملاء المراحل غير الحصرية
+  // COORDINATOR يرى فقط عملاءه + (إما حملاته الخاصة، أو المراحل غير الحصرية لو لم يُربَط بحملات)
   if (role === "COORDINATOR") {
-    const orExpr = or(
-      eq(leads.assignedTo, currentUserId),
-      sql`${leads.stageId} NOT IN (
-        SELECT id FROM pipeline_stages
-        WHERE tenant_id = ${tenantId} AND is_exclusive = true
-      )`,
-    );
-    if (orExpr) conditions.push(orExpr);
+    // اقرأ webhooks المخصّصة لهذا المنسق (لو فيه أي تخصيص)
+    const assignedWebhooks = await db
+      .select({ webhookId: webhookCoordinators.webhookId })
+      .from(webhookCoordinators)
+      .where(eq(webhookCoordinators.userId, currentUserId));
+    const assignedWebhookIds = assignedWebhooks.map((r) => r.webhookId);
+
+    if (assignedWebhookIds.length === 0) {
+      // لا تخصيص → السلوك القديم: assigned-to-me + non-exclusive stages
+      const orExpr = or(
+        eq(leads.assignedTo, currentUserId),
+        sql`${leads.stageId} NOT IN (
+          SELECT id FROM pipeline_stages
+          WHERE tenant_id = ${tenantId} AND is_exclusive = true
+        )`,
+      );
+      if (orExpr) conditions.push(orExpr);
+    } else {
+      // مع تخصيص webhooks → assigned-to-me OR من حملاته فقط
+      // (لا يرى leads حملات الزملاء، حتى لو في non-exclusive stage)
+      const orExpr = or(
+        eq(leads.assignedTo, currentUserId),
+        inArray(leads.webhookEndpointId, assignedWebhookIds),
+      );
+      if (orExpr) conditions.push(orExpr);
+    }
   }
 
   // فلتر إضافي اختياري من client (UX فقط، ليس أمنياً)

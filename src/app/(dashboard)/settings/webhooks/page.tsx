@@ -6,6 +6,9 @@ import {
 import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { getWebhookKeys } from "@/app/actions/settings";
+import { db } from "@/db";
+import { users, webhookCoordinators, webhookEndpoints } from "@/db/schema";
+import { and, eq, asc } from "drizzle-orm";
 import WebhookActions from "./webhook-actions";
 
 export default async function WebhooksSettingsPage() {
@@ -18,6 +21,51 @@ export default async function WebhooksSettingsPage() {
   } catch {
     // ignore
   }
+
+  // جلب كل المنسقين النشطين (للـ picker) + خريطة assignments لكل webhook
+  let coordinators: { id: string; name: string }[] = [];
+  let assignmentsByWebhook = new Map<string, string[]>();
+  try {
+    coordinators = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(
+        and(
+          eq(users.tenantId, tenantId),
+          eq(users.isActive, true),
+          eq(users.role, "COORDINATOR"),
+        ),
+      )
+      .orderBy(asc(users.name));
+
+    // كل assignments بـ JOIN واحد (يستثني cross-tenant بـ webhookEndpoints filter)
+    const allAssignments = await db
+      .select({
+        webhookId: webhookCoordinators.webhookId,
+        userId: webhookCoordinators.userId,
+      })
+      .from(webhookCoordinators)
+      .innerJoin(
+        webhookEndpoints,
+        eq(webhookEndpoints.id, webhookCoordinators.webhookId),
+      )
+      .where(eq(webhookEndpoints.tenantId, tenantId));
+
+    assignmentsByWebhook = allAssignments.reduce((acc, a) => {
+      const arr = acc.get(a.webhookId) ?? [];
+      arr.push(a.userId);
+      acc.set(a.webhookId, arr);
+      return acc;
+    }, new Map<string, string[]>());
+  } catch {
+    // ignore — ميزة الـ coordinators تعمل بدون هذا (عرض فارغ)
+  }
+
+  // اربط assignments بكل webhook
+  const webhooksWithCoords = webhooks.map((w) => ({
+    ...w,
+    coordinatorIds: assignmentsByWebhook.get(w.id) ?? [],
+  }));
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -42,7 +90,11 @@ export default async function WebhooksSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <WebhookActions webhooks={webhooks} appUrl={appUrl} />
+          <WebhookActions
+            webhooks={webhooksWithCoords}
+            appUrl={appUrl}
+            availableCoordinators={coordinators}
+          />
         </CardContent>
       </Card>
 
