@@ -256,7 +256,7 @@ export async function saveWhatsappConfig(input: {
       provider: input.provider || "meta",
       templateName: input.templateName,
       templateLanguage: input.templateLanguage || "ar",
-      templateParams: input.templateParams || ["name"],
+      templateParams: input.templateParams || ["customer_name"],
       reminderTemplateName: input.reminderTemplateName,
       reminderEvening: input.reminderEvening ?? true,
       reminderMorning: input.reminderMorning ?? true,

@@ -185,8 +185,8 @@ export async function sendWelcomeMessage(
   // 3. تنسيق الرقم
   const toPhone = formatPhoneForWhatsApp(leadPhone);
 
-  // 4. بناء Parameters
-  const paramFields = config.templateParams || ["name"];
+  // 4. بناء Parameters — الافتراضي customer_name (Meta named-params الجديد)
+  const paramFields = config.templateParams || ["customer_name"];
   const params = buildTemplateParams(paramFields, {
     name: leadName,
     phone: leadPhone,
@@ -268,7 +268,7 @@ export async function testWhatsappConnection(
 
   const toPhone = phoneCheck.phone.replace("+", "");
   const templateLang = config.templateLanguage || "ar";
-  const paramFields = config.templateParams || ["name"];
+  const paramFields = config.templateParams || ["customer_name"];
   const params = buildTemplateParams(paramFields, { name: "اختبار" });
 
   const result = await sendTemplateViaMeta(

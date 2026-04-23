@@ -406,7 +406,9 @@ export const whatsappConfigs = pgTable("whatsapp_configs", {
   // Template Message fields (Meta-approved)
   templateName: varchar("template_name", { length: 255 }),
   templateLanguage: varchar("template_language", { length: 10 }).default("ar"),
-  templateParams: jsonb("template_params").default(["name"]).$type<string[]>(),
+  // Meta WhatsApp 2025+ يستخدم named parameters (snake_case) بدلاً من {{1}}, {{2}}
+  // الافتراضي customer_name يطابق التعليمات الموصى بها في UI
+  templateParams: jsonb("template_params").default(["customer_name"]).$type<string[]>(),
   // قالب تذكير الحجوزات
   reminderTemplateName: varchar("reminder_template_name", { length: 255 }),
   // استراتيجية التذكير — مبنية على دراسات: التذكير المزدوج يقلل عدم الحضور 39%

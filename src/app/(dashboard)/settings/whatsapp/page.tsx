@@ -59,7 +59,7 @@ export default function WhatsAppSettingsPage() {
   // بيانات القالب
   const [templateName, setTemplateName] = useState("");
   const [templateLanguage, setTemplateLang] = useState("ar");
-  const [templateParams, setTemplateParams] = useState<string[]>(["name"]);
+  const [templateParams, setTemplateParams] = useState<string[]>(["customer_name"]);
 
   // قالب التذكير بالحجوزات
   const [reminderTemplateName, setReminderTemplateName] = useState("");
@@ -82,7 +82,7 @@ export default function WhatsAppSettingsPage() {
           }
           setTemplateName(config.templateName || "");
           setTemplateLang(config.templateLanguage || "ar");
-          setTemplateParams((config.templateParams as string[]) || ["name"]);
+          setTemplateParams((config.templateParams as string[]) || ["customer_name"]);
           setReminderTemplateName((config as Record<string, unknown>).reminderTemplateName as string || "");
           if ((config as Record<string, unknown>).reminderEvening !== undefined) setReminderEvening((config as Record<string, unknown>).reminderEvening as boolean);
           if ((config as Record<string, unknown>).reminderMorning !== undefined) setReminderMorning((config as Record<string, unknown>).reminderMorning as boolean);
