@@ -33,10 +33,12 @@ import {
 } from "lucide-react";
 import { getWhatsappConfig, saveWhatsappConfig, saveWhatsappApiKey, testWhatsappConnectionAction } from "@/app/actions/settings";
 
+// Meta WhatsApp تطلب أسماء snake_case للمتغيرات في القوالب الجديدة
+// (لا {{1}}, {{2}} بعد الآن — يُرفض في template editor)
 const AVAILABLE_PARAMS = [
-  { value: "name", label: "اسم العميل", example: "أحمد" },
-  { value: "phone", label: "رقم الهاتف", example: "0500000000" },
-  { value: "company", label: "اسم الشركة", example: "شركة ABC" },
+  { value: "customer_name", label: "اسم العميل", example: "أحمد" },
+  { value: "customer_phone", label: "رقم الهاتف", example: "0500000000" },
+  { value: "company_name", label: "اسم الشركة", example: "شركة ABC" },
 ];
 
 export default function WhatsAppSettingsPage() {
@@ -428,15 +430,17 @@ export default function WhatsAppSettingsPage() {
             </select>
           </div>
 
-          {/* متغيرات القالب */}
+          {/* متغيرات القالب — Meta named-parameters format الجديد */}
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5">
               <Braces className="h-3.5 w-3.5 text-surface-400" />
-              متغيرات القالب (Parameters)
+              متغيرات القالب (Named Parameters)
             </Label>
-            <p className="text-[11px] text-surface-400 -mt-1">
-              {`رتّب المتغيرات بنفس ترتيب {{1}}, {{2}}, {{3}} في القالب`}
-            </p>
+            <div className="text-[11px] text-warning-700 bg-warning-50 border border-warning-200 rounded-lg p-2 -mt-1 leading-relaxed">
+              ⚠️ Meta لا تقبل <code className="bg-warning-100 px-1 rounded">{`{{1}}`}</code>{" "}
+              <code className="bg-warning-100 px-1 rounded">{`{{2}}`}</code> في القوالب الجديدة.
+              استخدم أسماء snake_case مثل <code className="bg-warning-100 px-1 rounded">{`{{customer_name}}`}</code>
+            </div>
 
             <div className="space-y-2">
               {templateParams.map((param, index) => {
@@ -444,7 +448,7 @@ export default function WhatsAppSettingsPage() {
                 return (
                   <div key={index} className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-50 border border-surface-200">
                     <span className="text-xs font-mono bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full shrink-0">
-                      {`{{${index + 1}}}`}
+                      {`{{${param}}}`}
                     </span>
                     <span className="text-sm flex-1 text-surface-700">
                       {paramInfo?.label || param}
@@ -477,10 +481,10 @@ export default function WhatsAppSettingsPage() {
             </div>
           </div>
 
-          {/* معاينة */}
+          {/* معاينة API — بصيغة Meta الجديدة (named parameters) */}
           {templateName && (
             <div className="p-3 rounded-lg bg-surface-900 border border-surface-700">
-              <p className="text-[11px] text-surface-400 mb-2 font-medium">معاينة طلب API:</p>
+              <p className="text-[11px] text-surface-400 mb-2 font-medium">معاينة طلب API (بصيغة Meta الجديدة):</p>
               <pre className="text-xs text-surface-200 overflow-x-auto leading-relaxed" dir="ltr">
 {JSON.stringify({
   messaging_product: "whatsapp",
@@ -493,7 +497,7 @@ export default function WhatsAppSettingsPage() {
       type: "body",
       parameters: templateParams.map((p) => {
         const info = AVAILABLE_PARAMS.find(x => x.value === p);
-        return { type: "text", text: info?.example || "" };
+        return { type: "text", parameter_name: p, text: info?.example || "" };
       })
     }] : undefined,
   }
@@ -618,18 +622,24 @@ export default function WhatsAppSettingsPage() {
               </div>
             </div>
 
-            {/* المتغيرات */}
+            {/* المتغيرات — named parameters (Meta 2026 format) */}
             <div className="p-2.5 bg-success-50/50 rounded-lg border border-success-200 text-xs text-success-700">
-              <p className="font-medium mb-1">📋 المتغيرات المطلوبة في القالب:</p>
-              <p dir="rtl">{`{{1}}`} = اسم العميل &nbsp;|&nbsp; {`{{2}}`} = تاريخ ووقت الموعد &nbsp;|&nbsp; {`{{3}}`} = الخدمة</p>
+              <p className="font-medium mb-1">📋 المتغيرات المطلوبة في القالب (أسماء snake_case):</p>
+              <p dir="rtl" className="leading-relaxed">
+                <code className="bg-success-100 px-1 rounded mx-0.5">{`{{customer_name}}`}</code> = اسم العميل
+                &nbsp;|&nbsp;
+                <code className="bg-success-100 px-1 rounded mx-0.5">{`{{appointment_time}}`}</code> = تاريخ ووقت الموعد
+                &nbsp;|&nbsp;
+                <code className="bg-success-100 px-1 rounded mx-0.5">{`{{service}}`}</code> = الخدمة
+              </p>
             </div>
 
-            {/* مثال نص القالب */}
+            {/* مثال نص القالب — بأسماء صحيحة */}
             <div className="p-2.5 bg-surface-50 rounded-lg border border-surface-200 text-xs" dir="rtl">
-              <p className="text-surface-400 text-[10px] mb-1 font-medium">مثال نص القالب (انسخه عند الإنشاء):</p>
+              <p className="text-surface-400 text-[10px] mb-1 font-medium">مثال نص القالب (انسخه عند الإنشاء في Meta):</p>
               <p className="text-surface-700 leading-relaxed">
-                {`مرحباً {{1}} 👋`}<br />
-                {`تذكير بموعدك {{2}} — {{3}}`}<br />
+                {`مرحباً {{customer_name}} 👋`}<br />
+                {`تذكير بموعدك {{appointment_time}} — {{service}}`}<br />
                 نتطلع لرؤيتك!
               </p>
             </div>
@@ -708,7 +718,7 @@ export default function WhatsAppSettingsPage() {
                     <div className="p-2 bg-success-50 rounded-lg border border-success-200 text-xs">
                       <p className="font-bold text-success-700 mb-1">✅ صحيح</p>
                       <p className="text-surface-600 leading-relaxed" dir="rtl">
-                        {`مرحباً {{1}}، شكراً لتواصلك معنا. سيقوم فريقنا بالتواصل معك قريباً لمساعدتك.`}
+                        {`مرحباً {{customer_name}}، شكراً لتواصلك معنا. سيقوم فريقنا بالتواصل معك قريباً لمساعدتك.`}
                       </p>
                     </div>
                     <div className="p-2 bg-danger-50 rounded-lg border border-danger-200 text-xs">
@@ -729,27 +739,27 @@ export default function WhatsAppSettingsPage() {
                 <div>
                   <h4 className="font-bold text-surface-900 text-sm mb-1">ضع قيم واقعية للمتغيرات عند الإنشاء</h4>
                   <p className="text-sm text-surface-600 leading-relaxed">
-                    {`عند إنشاء القالب، Meta تطلب "Sample Values" لكل متغير. لا تتركها فارغة!`}
+                    {`عند إنشاء القالب، Meta تطلب "Sample Values" لكل متغير named. لا تتركها فارغة!`}
                   </p>
                   <div className="mt-2 p-2 bg-white rounded-lg border border-surface-100">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-surface-100">
-                          <th className="text-start py-1 text-surface-400">المتغير</th>
+                          <th className="text-start py-1 text-surface-400">المتغير (اسمه)</th>
                           <th className="text-start py-1 text-surface-400">القيمة النموذجية</th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr className="border-b border-surface-50">
-                          <td className="py-1 font-mono text-primary-600">{`{{1}}`}</td>
+                          <td className="py-1 font-mono text-primary-600">{`{{customer_name}}`}</td>
                           <td className="py-1 text-surface-700">أحمد محمد</td>
                         </tr>
                         <tr className="border-b border-surface-50">
-                          <td className="py-1 font-mono text-primary-600">{`{{2}}`}</td>
+                          <td className="py-1 font-mono text-primary-600">{`{{company_name}}`}</td>
                           <td className="py-1 text-surface-700">شركة النخبة للعقارات</td>
                         </tr>
                         <tr>
-                          <td className="py-1 font-mono text-primary-600">{`{{3}}`}</td>
+                          <td className="py-1 font-mono text-primary-600">{`{{customer_phone}}`}</td>
                           <td className="py-1 text-surface-700">0500000000</td>
                         </tr>
                       </tbody>
@@ -861,13 +871,13 @@ export default function WhatsAppSettingsPage() {
                       <p className="font-bold text-surface-900">Arabic (ar)</p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-surface-100">
-                      <p className="text-surface-400">المتغيرات:</p>
-                      <p className="font-mono font-bold text-primary-600">{`{{1}}`} = اسم العميل</p>
+                      <p className="text-surface-400">المتغير:</p>
+                      <p className="font-mono font-bold text-primary-600">{`{{customer_name}}`}</p>
                     </div>
                   </div>
                   <div className="p-3 bg-white rounded-lg border-2 border-dashed border-emerald-300" dir="rtl">
                     <p className="text-sm text-surface-800 leading-relaxed">
-                      {`مرحباً {{1}} 👋`}
+                      {`مرحباً {{customer_name}} 👋`}
                     </p>
                     <p className="text-sm text-surface-800 leading-relaxed mt-1">
                       شكراً لتواصلك معنا. استلمنا طلبك وسيقوم أحد ممثلينا بالتواصل معك في أقرب وقت لمساعدتك.

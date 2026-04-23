@@ -58,18 +58,27 @@ function formatPhoneForWhatsApp(phone: string): string {
 // بناء Parameters من بيانات العميل
 // =============================================
 
+/**
+ * يبني parameters بصيغة Meta الجديدة (named) — تطابق snake_case في القالب.
+ * يدعم تسميات قديمة (name, phone, company) وجديدة (customer_name, ...) معاً.
+ */
 function buildTemplateParams(
   paramFields: string[],
   leadData: { name?: string; phone?: string; company?: string }
-): Array<{ type: "text"; text: string }> {
+): Array<{ type: "text"; parameter_name: string; text: string }> {
+  // map للأسماء (يدعم القديمة والجديدة) → القيمة من leadData
   const fieldMap: Record<string, string> = {
     name: leadData.name || "",
+    customer_name: leadData.name || "",
     phone: leadData.phone || "",
+    customer_phone: leadData.phone || "",
     company: leadData.company || "",
+    company_name: leadData.company || "",
   };
 
   return paramFields.map((field) => ({
     type: "text" as const,
+    parameter_name: field, // ← Meta named-parameters API الجديد
     text: fieldMap[field] || "",
   }));
 }
@@ -84,7 +93,7 @@ async function sendTemplateViaMeta(
   toPhone: string,
   templateName: string,
   templateLanguage: string,
-  params: Array<{ type: "text"; text: string }>
+  params: Array<{ type: "text"; parameter_name?: string; text: string }>
 ): Promise<SendResult> {
   try {
     const body: Record<string, unknown> = {

@@ -118,10 +118,11 @@ async function sendReminder(args: {
             components: [
               {
                 type: "body",
+                // Meta named-parameters format — يطابق {{customer_name}} في القالب
                 parameters: [
-                  { type: "text", text: booking.name },
-                  { type: "text", text: bookingTime },
-                  { type: "text", text: booking.bookingService || "موعد" },
+                  { type: "text", parameter_name: "customer_name", text: booking.name },
+                  { type: "text", parameter_name: "appointment_time", text: bookingTime },
+                  { type: "text", parameter_name: "service", text: booking.bookingService || "موعد" },
                 ],
               },
             ],
