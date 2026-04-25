@@ -316,9 +316,11 @@ export default function PersonalWhatsApp() {
           </div>
         )}
 
-        <div className="p-2.5 rounded-lg bg-primary-50 border border-primary-200 text-[11px] text-primary-700 leading-relaxed">
-          💡 <strong>كيف يعمل:</strong> عندما يُسنَد لك عميل جديد من حملتك، الترحيب والتذكيرات تُرسَل من رقمك أنت.
-          العميل يرى رقماً واحداً ثابتاً معك. لو لم تُكمل الإعداد، ستُرسَل من رقم العيادة الموحّد (السلوك الافتراضي).
+        <div className="p-2.5 rounded-lg bg-warning-50 border border-warning-300 text-[11px] text-warning-800 leading-relaxed">
+          ⚠️ <strong>مهم:</strong> عندما يُسنَد لك عميل من حملاتك، الترحيب والتذكيرات تُرسَل من <strong>رقمك أنت</strong>.
+          العميل يردّ على رقمك مباشرةً → يصلك الردّ على هاتفك.
+          <br />
+          <strong>لو لم تربط رقمك، عملاؤك لن يستلموا أي ترحيب أو تذكير</strong> (لتجنّب inbox مختلط مع رقم العيادة).
         </div>
       </CardContent>
     </Card>

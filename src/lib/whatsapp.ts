@@ -75,21 +75,32 @@ function formatPhoneForWhatsApp(phone: string): string {
 // =============================================
 
 /**
- * سلسلة fallback لاختيار credentials المناسبة لـ lead:
- *   1. لو preferredUserId مُمرَّر + له creds نشطة → استخدمها
- *   2. لو tenant default نشط → استخدمه
- *   3. null → لا credentials متاحة (نُسجّل خطأ ولا نرسل)
+ * نتيجة resolve مع سبب الفشل (للـ logging/UI الواضح)
+ */
+export type CredentialResolution =
+  | { ok: true; creds: ResolvedCredentials }
+  | { ok: false; reason: "coordinator_no_creds" | "no_credentials_at_all" | "decrypt_failed" };
+
+/**
+ * سلسلة الاختيار (مُحدَّثة بعد قرار "لا fallback عند وجود منسق"):
  *
- * يُرجَع credentials بعد decrypt جاهزة للإرسال + معلومات للـ audit log.
+ *   لو preferredUserId مُمرَّر:
+ *     - له creds نشطة → استخدمها ✓
+ *     - لا creds → ❌ STOP (لا fallback لـ tenant — نمنع inbox مختلط)
  *
- * @param tenantId — للـ scoping
- * @param preferredUserId — منسق محدّد نريد استخدام رقمه (assignedTo أو welcomeSentByUserId)
+ *   لو preferredUserId = null (lead بلا منسق):
+ *     - tenant default نشط → استخدمه ✓
+ *     - لا → ❌ STOP
+ *
+ * السبب: لو fallback لـ tenant مع وجود منسق، العميل يردّ على رقم العيادة
+ * والمنسق المسؤول لا يرى الردّ → الـ lead يضيع. الأنظف: لا إرسال بدون
+ * رقم منسق، يُفرَض على المنسق ربط رقمه.
  */
 export async function resolveCredentialsForLead(
   tenantId: string,
   preferredUserId: string | null,
-): Promise<ResolvedCredentials | null> {
-  // 1. محاولة credentials المنسق المفضّل
+): Promise<CredentialResolution> {
+  // المسار 1: lead مُسنَد لمنسق → نستخدم رقمه أو نتوقّف (لا fallback)
   if (preferredUserId) {
     const [userCreds] = await db
       .select()
@@ -103,31 +114,37 @@ export async function resolveCredentialsForLead(
       )
       .limit(1);
 
-    if (userCreds && userCreds.apiKeyEncrypted && userCreds.phoneNumberId) {
-      try {
-        const accessToken = decrypt(
-          userCreds.apiKeyEncrypted,
-          `whatsapp:user:${preferredUserId}`,
-        );
-        // templateParams يبقى من tenant config (متّسق على مستوى الـ tenant)
-        const tenantConfig = await db.query.whatsappConfigs.findFirst({
-          where: eq(whatsappConfigs.tenantId, tenantId),
-        });
-        return {
+    if (!userCreds || !userCreds.apiKeyEncrypted || !userCreds.phoneNumberId) {
+      // ❌ منسق بلا credentials → نتوقّف (لا نرسل من رقم العيادة لتجنّب inbox مختلط)
+      return { ok: false, reason: "coordinator_no_creds" };
+    }
+
+    try {
+      const accessToken = decrypt(
+        userCreds.apiKeyEncrypted,
+        `whatsapp:user:${preferredUserId}`,
+      );
+      // templateParams من tenant config (متّسق على مستوى الـ tenant)
+      const tenantConfig = await db.query.whatsappConfigs.findFirst({
+        where: eq(whatsappConfigs.tenantId, tenantId),
+      });
+      return {
+        ok: true,
+        creds: {
           source: "user",
           userId: preferredUserId,
           accessToken,
           phoneNumberId: userCreds.phoneNumberId,
           templateLanguage: userCreds.templateLanguage || "ar",
           templateParams: (tenantConfig?.templateParams as string[]) || ["customer_name"],
-        };
-      } catch {
-        // فشل decrypt → fallback للـ tenant
-      }
+        },
+      };
+    } catch {
+      return { ok: false, reason: "decrypt_failed" };
     }
   }
 
-  // 2. fallback لـ tenant default
+  // المسار 2: lead بلا منسق → tenant default (السلوك الأصلي للحالات اليدوية)
   const tenantConfig = await db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
   }) as WhatsAppConfig | undefined;
@@ -144,19 +161,22 @@ export async function resolveCredentialsForLead(
         `whatsapp:${tenantId}`,
       );
       return {
-        source: "tenant",
-        userId: null,
-        accessToken,
-        phoneNumberId: tenantConfig.phoneNumber,
-        templateLanguage: tenantConfig.templateLanguage || "ar",
-        templateParams: (tenantConfig.templateParams as string[]) || ["customer_name"],
+        ok: true,
+        creds: {
+          source: "tenant",
+          userId: null,
+          accessToken,
+          phoneNumberId: tenantConfig.phoneNumber,
+          templateLanguage: tenantConfig.templateLanguage || "ar",
+          templateParams: (tenantConfig.templateParams as string[]) || ["customer_name"],
+        },
       };
     } catch {
-      return null;
+      return { ok: false, reason: "decrypt_failed" };
     }
   }
 
-  return null;
+  return { ok: false, reason: "no_credentials_at_all" };
 }
 
 /**
@@ -268,11 +288,35 @@ export async function sendWelcomeMessage(
    */
   preferredUserId?: string | null,
 ): Promise<SendResult> {
-  // 1. تطبيق سلسلة fallback (user creds → tenant default)
-  const creds = await resolveCredentialsForLead(tenantId, preferredUserId ?? null);
-  if (!creds) {
-    return { success: false, error: "لا توجد credentials نشطة — أكمل إعدادات الواتساب" };
+  // 1. تطبيق سلسلة الاختيار (مع منسق: لا fallback)
+  const resolution = await resolveCredentialsForLead(tenantId, preferredUserId ?? null);
+  if (!resolution.ok) {
+    // سجّل سبب الفشل صراحةً للـ UI
+    const errorMsg =
+      resolution.reason === "coordinator_no_creds"
+        ? "المنسق المسؤول لم يربط رقم WhatsApp الخاص به — لن يُرسل ترحيب لتجنّب inbox مختلط"
+        : resolution.reason === "decrypt_failed"
+        ? "فشل في فك تشفير مفتاح API"
+        : "لا توجد credentials نشطة — أكمل إعدادات الواتساب";
+
+    if (leadId) {
+      await db.insert(activityLog).values({
+        tenantId,
+        action: "WHATSAPP_FAILED",
+        entityType: "lead",
+        entityId: leadId,
+        details: {
+          to: leadPhone,
+          leadName,
+          reason: resolution.reason,
+          preferredUserId: preferredUserId ?? undefined,
+          error: errorMsg,
+        },
+      });
+    }
+    return { success: false, error: errorMsg };
   }
+  const creds = resolution.creds;
 
   // 2. اسم القالب — webhook override أولاً، ثم tenant default
   // (templateName يبقى على tenant config — نقرأه إذا لم يُمرَّر override)
@@ -356,11 +400,18 @@ export async function testWhatsappConnection(
   testPhone: string,
   testUserId?: string,
 ): Promise<SendResult> {
-  // تطبيق نفس fallback chain — لو testUserId مُمرَّر، نختبر credentials المنسق
-  const creds = await resolveCredentialsForLead(tenantId, testUserId ?? null);
-  if (!creds) {
-    return { success: false, error: "أكمل إعدادات الربط أولاً (Access Token + Phone Number ID)" };
+  // تطبيق نفس منطق resolution — لو testUserId مُمرَّر، نختبر credentials المنسق
+  const resolution = await resolveCredentialsForLead(tenantId, testUserId ?? null);
+  if (!resolution.ok) {
+    const errorMsg =
+      resolution.reason === "coordinator_no_creds"
+        ? "هذا المنسق لم يربط رقم WhatsApp بعد"
+        : resolution.reason === "decrypt_failed"
+        ? "فشل في فك تشفير مفتاح API"
+        : "أكمل إعدادات الربط أولاً (Access Token + Phone Number ID)";
+    return { success: false, error: errorMsg };
   }
+  const creds = resolution.creds;
 
   // اسم القالب يبقى من tenant config
   const tenantConfig = await db.query.whatsappConfigs.findFirst({

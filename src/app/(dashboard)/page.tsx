@@ -19,6 +19,7 @@ import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
 import AgingLeadsBanner from "./aging-leads-banner";
 import ReactivationBanner from "./reactivation-banner";
+import { StuckLeadsOwnerBanner, MyWhatsappBanner } from "./whatsapp-warnings-banners";
 import OwnerPulseCard from "./owner-pulse-card";
 import { getOwnerPulse, type OwnerPulse } from "@/app/actions/owner-pulse";
 import OnboardingChecklist from "./onboarding-checklist";
@@ -346,6 +347,12 @@ export default async function DashboardPage() {
       {/* تنبيهات ذكية — يظهر فقط ما يحتاج اهتمام */}
       <ReactivationBanner />
       <AgingLeadsBanner />
+
+      {/* تنبيه المنسق: لم تربط رقم WhatsApp + عندك حملات → عملاؤك ينتظرون */}
+      <MyWhatsappBanner />
+
+      {/* تنبيه المالك: عملاء متراكمون لأن منسقين لم يربطوا أرقامهم */}
+      <StuckLeadsOwnerBanner />
 
       {/* قائمة الإعداد الأولي — للـ tenants الجدد، تختفي عند الاكتمال */}
       {onboarding && <OnboardingChecklist status={onboarding} />}

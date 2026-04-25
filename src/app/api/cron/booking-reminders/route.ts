@@ -315,13 +315,15 @@ export async function GET(request: NextRequest) {
 
       // أرسل في chunks متوازية
       // cache resolved credentials per-userId لتفادي re-decrypt متكرر في نفس run
-      const credsCache = new Map<string, ResolvedCredentials | null>();
-      const resolveCached = async (userId: string | null): Promise<ResolvedCredentials | null> => {
+      type CachedResolution = Awaited<ReturnType<typeof resolveCredentialsForLead>>;
+      const credsCache = new Map<string, CachedResolution>();
+      const resolveCached = async (userId: string | null): Promise<CachedResolution> => {
         const key = userId ?? "__tenant__";
-        if (credsCache.has(key)) return credsCache.get(key) ?? null;
-        const c = await resolveCredentialsForLead(config.tenantId, userId);
-        credsCache.set(key, c);
-        return c;
+        const cached = credsCache.get(key);
+        if (cached) return cached;
+        const r = await resolveCredentialsForLead(config.tenantId, userId);
+        credsCache.set(key, r);
+        return r;
       };
 
       const pending = bookings.filter((b) => b.phone && !sentIds.has(b.id));
@@ -331,9 +333,9 @@ export async function GET(request: NextRequest) {
         const chunk = pending.slice(i, i + BOOKING_CONCURRENCY);
         const results = await Promise.allSettled(
           chunk.map(async (booking) => {
-            const creds = await resolveCached(booking.welcomeSentByUserId);
-            if (!creds) {
-              // لا credentials متاحة (لا للمنسق ولا tenant default)
+            const resolution = await resolveCached(booking.welcomeSentByUserId);
+            if (!resolution.ok) {
+              // لا credentials متاحة — سجّل بسبب واضح ولا ترسل
               await db.insert(activityLog).values({
                 tenantId: config.tenantId,
                 action: "WHATSAPP_FAILED",
@@ -341,13 +343,14 @@ export async function GET(request: NextRequest) {
                 entityId: booking.id,
                 details: {
                   type: `booking_reminder_${type}`,
-                  reason: "no_credentials_available",
+                  reason: resolution.reason, // coordinator_no_creds | decrypt_failed | no_credentials_at_all
                   preferredUserId: booking.welcomeSentByUserId,
+                  leadName: booking.name,
                 },
               });
               return "failed" as SendOutcome;
             }
-            return sendReminder({ booking, config, creds, type });
+            return sendReminder({ booking, config, creds: resolution.creds, type });
           }),
         );
         for (const r of results) {
