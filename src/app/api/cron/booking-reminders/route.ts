@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { leads, whatsappConfigs, activityLog } from "@/db/schema";
 import { eq, and, gte, lte, isNotNull, sql } from "drizzle-orm";
-import { decrypt } from "@/lib/encryption";
 import { timingSafeEqual } from "crypto";
 import { logger } from "@/lib/logger";
 import { validateAndNormalizePhone } from "@/lib/utils";
+import { resolveCredentialsForLead, type ResolvedCredentials } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +41,8 @@ type BookingForReminder = {
   phone: string | null;
   bookingDate: Date | null;
   bookingService: string | null;
+  /** المنسق الذي أُرسل الترحيب من رقمه — نستخدم نفس الرقم للتذكير (اتّساق) */
+  welcomeSentByUserId: string | null;
 };
 
 type WhatsappConfigRow = {
@@ -53,15 +55,19 @@ type WhatsappConfigRow = {
 
 type SendOutcome = "sent" | "failed" | "retryable";
 
-/** أرسل تذكير واحد — يُرجع "retryable" على 429/5xx ليعيد cron في المرة التالية */
+/**
+ * أرسل تذكير واحد — يُرجع "retryable" على 429/5xx ليعيد cron في المرة التالية.
+ * يستخدم credentials المنسق (welcomeSentByUserId) لاتّساق الرقم مع رسالة الترحيب،
+ * ويسقط للـ tenant default لو لم يكن للمنسق credentials.
+ */
 async function sendReminder(args: {
   booking: BookingForReminder;
   config: WhatsappConfigRow;
-  accessToken: string;
+  creds: ResolvedCredentials;
   type: "morning" | "evening";
 }): Promise<SendOutcome> {
-  const { booking, config, accessToken, type } = args;
-  if (!booking.phone || !config.phoneNumber || !config.reminderTemplateName) return "failed";
+  const { booking, config, creds, type } = args;
+  if (!booking.phone || !config.reminderTemplateName) return "failed";
 
   // تنسيق الرقم بـ libphonenumber — يضيف country code للأرقام المحلية ويرفض غير الصالحة
   const phoneCheck = validateAndNormalizePhone(booking.phone);
@@ -100,12 +106,12 @@ async function sendReminder(args: {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     const response = await fetch(
-      `https://graph.facebook.com/v21.0/${config.phoneNumber}/messages`,
+      `https://graph.facebook.com/v21.0/${creds.phoneNumberId}/messages`,
       {
         method: "POST",
         signal: controller.signal,
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${creds.accessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -114,7 +120,7 @@ async function sendReminder(args: {
           type: "template",
           template: {
             name: config.reminderTemplateName,
-            language: { code: config.templateLanguage || "ar" },
+            language: { code: creds.templateLanguage },
             components: [
               {
                 type: "body",
@@ -151,6 +157,9 @@ async function sendReminder(args: {
           leadName: booking.name,
           bookingDate: bookingTime,
           templateName: config.reminderTemplateName,
+          credSource: creds.source, // "user" أو "tenant" — للتدقيق
+          sentByUserId: creds.userId || undefined,
+          phoneNumberId: creds.phoneNumberId,
           messageId: data?.messages?.[0]?.id,
         },
       });
@@ -263,6 +272,7 @@ export async function GET(request: NextRequest) {
       }
 
       // حجوزات في النطاق + في المستقبل فقط (لا تُذكّر بمواعيد فائتة)
+      // welcomeSentByUserId = نفس المنسق الذي أرسل الترحيب → نستخدم رقمه (اتّساق)
       const bookings = await db
         .select({
           id: leads.id,
@@ -270,6 +280,7 @@ export async function GET(request: NextRequest) {
           phone: leads.phone,
           bookingDate: leads.bookingDate,
           bookingService: leads.bookingService,
+          welcomeSentByUserId: leads.welcomeSentByUserId,
         })
         .from(leads)
         .where(
@@ -302,41 +313,42 @@ export async function GET(request: NextRequest) {
         );
       const sentIds = new Set(alreadySent.map((r) => r.entityId));
 
-      // decrypt مرة واحدة
-      let accessToken: string;
-      try {
-        accessToken = decrypt(config.apiKeyEncrypted, `whatsapp:${config.tenantId}`);
-      } catch (err) {
-        // سجّل فشلاً واضحاً ليرى المالك في UI
-        await db.insert(activityLog).values({
-          tenantId: config.tenantId,
-          action: "WHATSAPP_FAILED",
-          entityType: "whatsapp_config",
-          details: {
-            type: `booking_reminder_${type}`,
-            reason: "decryption_failed",
-            error: err instanceof Error ? err.message : "unknown",
-          },
-        });
-        stats.failed += bookings.length;
-        return stats;
-      }
-
       // أرسل في chunks متوازية
+      // cache resolved credentials per-userId لتفادي re-decrypt متكرر في نفس run
+      const credsCache = new Map<string, ResolvedCredentials | null>();
+      const resolveCached = async (userId: string | null): Promise<ResolvedCredentials | null> => {
+        const key = userId ?? "__tenant__";
+        if (credsCache.has(key)) return credsCache.get(key) ?? null;
+        const c = await resolveCredentialsForLead(config.tenantId, userId);
+        credsCache.set(key, c);
+        return c;
+      };
+
       const pending = bookings.filter((b) => b.phone && !sentIds.has(b.id));
       stats.skipped += bookings.length - pending.length;
 
       for (let i = 0; i < pending.length; i += BOOKING_CONCURRENCY) {
         const chunk = pending.slice(i, i + BOOKING_CONCURRENCY);
         const results = await Promise.allSettled(
-          chunk.map((booking) =>
-            sendReminder({
-              booking,
-              config,
-              accessToken,
-              type,
-            }),
-          ),
+          chunk.map(async (booking) => {
+            const creds = await resolveCached(booking.welcomeSentByUserId);
+            if (!creds) {
+              // لا credentials متاحة (لا للمنسق ولا tenant default)
+              await db.insert(activityLog).values({
+                tenantId: config.tenantId,
+                action: "WHATSAPP_FAILED",
+                entityType: "lead",
+                entityId: booking.id,
+                details: {
+                  type: `booking_reminder_${type}`,
+                  reason: "no_credentials_available",
+                  preferredUserId: booking.welcomeSentByUserId,
+                },
+              });
+              return "failed" as SendOutcome;
+            }
+            return sendReminder({ booking, config, creds, type });
+          }),
         );
         for (const r of results) {
           if (r.status === "fulfilled") {

@@ -32,6 +32,7 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { getWhatsappConfig, saveWhatsappConfig, saveWhatsappApiKey, testWhatsappConnectionAction } from "@/app/actions/settings";
+import TeamWhatsappStatus from "./team-wa-status";
 
 // Meta WhatsApp تطلب أسماء snake_case للمتغيرات في القوالب الجديدة
 // (لا {{1}}, {{2}} بعد الآن — يُرفض في template editor)
@@ -927,6 +928,9 @@ export default function WhatsAppSettingsPage() {
           </CardContent>
         )}
       </Card>
+
+      {/* حالة واتساب الفريق — مَن من المنسقين ربط رقمه؟ */}
+      <TeamWhatsappStatus />
 
       {/* استكشاف أخطاء Meta الشائعة */}
       <Card className="border-warning-200">

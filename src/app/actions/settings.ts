@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { tenants, webhookEndpoints, whatsappConfigs, activityLog, webhookCoordinators, users } from "@/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { tenants, webhookEndpoints, whatsappConfigs, activityLog, webhookCoordinators, users, userWhatsappCredentials } from "@/db/schema";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
@@ -460,4 +460,228 @@ export async function testWhatsappConnectionAction(testPhone: string) {
   const result = await testWhatsappConnection(tenantId, testPhone.trim());
 
   return result;
+}
+
+// =============================================
+// Per-User WhatsApp Credentials
+// كل منسق يربط رقمه الخاص في Meta — يستخدمه للترحيب والتذكيرات
+// =============================================
+
+/**
+ * يقرأ credentials المنسق المسجَّل دخوله (أو منسق محدّد لو OWNER/ADMIN يتفقّد).
+ * لا يُرجع apiKey نفسه — فقط hasApiKey: boolean (السر لا يُكشَف للـ UI).
+ */
+export async function getMyWhatsappCredentials(targetUserId?: string) {
+  const ctx = await requireTenant();
+  // OWNER/ADMIN يستطيع تفقّد منسق آخر؛ غيرهم يقرأ نفسه فقط
+  const userId = targetUserId && ["OWNER", "ADMIN"].includes(ctx.role) ? targetUserId : ctx.userId;
+
+  const [creds] = await db
+    .select({
+      id: userWhatsappCredentials.id,
+      userId: userWhatsappCredentials.userId,
+      phoneNumberId: userWhatsappCredentials.phoneNumberId,
+      templateLanguage: userWhatsappCredentials.templateLanguage,
+      isActive: userWhatsappCredentials.isActive,
+      lastTestedAt: userWhatsappCredentials.lastTestedAt,
+      lastTestSuccess: userWhatsappCredentials.lastTestSuccess,
+      apiKeyEncrypted: userWhatsappCredentials.apiKeyEncrypted, // نقرأ للحساب فقط
+    })
+    .from(userWhatsappCredentials)
+    .where(
+      and(
+        eq(userWhatsappCredentials.userId, userId),
+        eq(userWhatsappCredentials.tenantId, ctx.tenantId),
+      ),
+    )
+    .limit(1);
+
+  if (!creds) return null;
+
+  // ❌ لا نُرجع السر للـ UI — فقط hasApiKey للعرض
+  return {
+    id: creds.id,
+    userId: creds.userId,
+    phoneNumberId: creds.phoneNumberId,
+    templateLanguage: creds.templateLanguage,
+    isActive: creds.isActive,
+    lastTestedAt: creds.lastTestedAt,
+    lastTestSuccess: creds.lastTestSuccess,
+    hasApiKey: !!creds.apiKeyEncrypted,
+  };
+}
+
+/**
+ * يحفظ phoneNumberId + isActive + language لـ user creds.
+ * apiKey منفصل (saveMyWhatsappApiKey) لتجنّب إعادة الإرسال.
+ */
+export async function saveMyWhatsappCredentials(input: {
+  phoneNumberId?: string;
+  templateLanguage?: string;
+  isActive?: boolean;
+  targetUserId?: string;
+}) {
+  const ctx = await requireTenant();
+  const userId =
+    input.targetUserId && ["OWNER", "ADMIN"].includes(ctx.role)
+      ? input.targetUserId
+      : ctx.userId;
+
+  // تحقّق صلاحية isActive — لا تُفعّل بدون apiKey + phoneNumberId
+  if (input.isActive) {
+    const [existing] = await db
+      .select({ apiKeyEncrypted: userWhatsappCredentials.apiKeyEncrypted, phoneNumberId: userWhatsappCredentials.phoneNumberId })
+      .from(userWhatsappCredentials)
+      .where(
+        and(
+          eq(userWhatsappCredentials.userId, userId),
+          eq(userWhatsappCredentials.tenantId, ctx.tenantId),
+        ),
+      )
+      .limit(1);
+    const hasKey = !!existing?.apiKeyEncrypted;
+    const hasPhone = !!(input.phoneNumberId?.trim() || existing?.phoneNumberId);
+    if (!hasKey || !hasPhone) {
+      throw new Error("لا يمكن التفعيل بدون Access Token + Phone Number ID");
+    }
+  }
+
+  const update: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.phoneNumberId !== undefined) update.phoneNumberId = input.phoneNumberId.trim() || null;
+  if (input.templateLanguage !== undefined) update.templateLanguage = input.templateLanguage;
+  if (input.isActive !== undefined) update.isActive = input.isActive;
+
+  const [existing] = await db
+    .select({ id: userWhatsappCredentials.id })
+    .from(userWhatsappCredentials)
+    .where(eq(userWhatsappCredentials.userId, userId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(userWhatsappCredentials)
+      .set(update)
+      .where(eq(userWhatsappCredentials.id, existing.id));
+  } else {
+    await db.insert(userWhatsappCredentials).values({
+      userId,
+      tenantId: ctx.tenantId,
+      phoneNumberId: input.phoneNumberId?.trim() || null,
+      templateLanguage: input.templateLanguage || "ar",
+      isActive: input.isActive ?? false,
+    });
+  }
+
+  revalidatePath("/settings/whatsapp");
+  return { success: true };
+}
+
+/**
+ * يحفظ apiKey مشفَّراً بـ AAD منفصل (whatsapp:user:{userId})
+ * — منفصل عن saveMyWhatsappCredentials لتجنّب إعادة الإرسال في كل تعديل.
+ */
+export async function saveMyWhatsappApiKey(apiKey: string, targetUserId?: string) {
+  const ctx = await requireTenant();
+  const userId =
+    targetUserId && ["OWNER", "ADMIN"].includes(ctx.role) ? targetUserId : ctx.userId;
+
+  const trimmed = apiKey.trim();
+  if (trimmed.length < 50) {
+    throw new Error("Access Token غير صالح — يجب أن يكون 50+ حرف");
+  }
+
+  // AAD منفصل لكل user — يربط السر بـ userId (يمنع swap بين users)
+  const encryptedKey = encrypt(trimmed, `whatsapp:user:${userId}`);
+
+  const [existing] = await db
+    .select({ id: userWhatsappCredentials.id })
+    .from(userWhatsappCredentials)
+    .where(eq(userWhatsappCredentials.userId, userId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(userWhatsappCredentials)
+      .set({ apiKeyEncrypted: encryptedKey, updatedAt: new Date() })
+      .where(eq(userWhatsappCredentials.id, existing.id));
+  } else {
+    await db.insert(userWhatsappCredentials).values({
+      userId,
+      tenantId: ctx.tenantId,
+      apiKeyEncrypted: encryptedKey,
+    });
+  }
+
+  revalidatePath("/settings/whatsapp");
+  return { success: true };
+}
+
+/**
+ * اختبر credentials المنسق بإرسال قالب لرقم تجريبي.
+ * يستخدم نفس testWhatsappConnection مع testUserId.
+ */
+export async function testMyWhatsappCredentialsAction(input: {
+  testPhone: string;
+  targetUserId?: string;
+}) {
+  const ctx = await requireTenant();
+  const userId =
+    input.targetUserId && ["OWNER", "ADMIN"].includes(ctx.role)
+      ? input.targetUserId
+      : ctx.userId;
+
+  if (!input.testPhone || input.testPhone.trim().length < 4) {
+    return { success: false, error: "أدخل رقم هاتف للاختبار" };
+  }
+
+  const { testWhatsappConnection } = await import("@/lib/whatsapp");
+  return testWhatsappConnection(ctx.tenantId, input.testPhone.trim(), userId);
+}
+
+/**
+ * احذف credentials المنسق (يعود لـ tenant default).
+ */
+export async function deleteMyWhatsappCredentials(targetUserId?: string) {
+  const ctx = await requireTenant();
+  const userId =
+    targetUserId && ["OWNER", "ADMIN"].includes(ctx.role) ? targetUserId : ctx.userId;
+
+  await db
+    .delete(userWhatsappCredentials)
+    .where(
+      and(
+        eq(userWhatsappCredentials.userId, userId),
+        eq(userWhatsappCredentials.tenantId, ctx.tenantId),
+      ),
+    );
+
+  revalidatePath("/settings/whatsapp");
+  return { success: true };
+}
+
+/**
+ * قائمة المنسقين في الـ tenant مع حالة WhatsApp لكل واحد — لـ OWNER/ADMIN.
+ * تُستخدم في صفحة /team أو /settings/whatsapp لرؤية حالة الفريق ككل.
+ */
+export async function getTeamWhatsappStatus() {
+  const { tenantId } = await requireOwnerOrAdmin();
+
+  // join users (COORDINATORs) مع userWhatsappCredentials
+  const rows = await db
+    .select({
+      userId: users.id,
+      userName: users.name,
+      userRole: users.role,
+      isActive: users.isActive,
+      hasCredentials: sql<boolean>`${userWhatsappCredentials.id} IS NOT NULL`,
+      whatsappActive: userWhatsappCredentials.isActive,
+      phoneNumberId: userWhatsappCredentials.phoneNumberId,
+      lastTestedAt: userWhatsappCredentials.lastTestedAt,
+      lastTestSuccess: userWhatsappCredentials.lastTestSuccess,
+    })
+    .from(users)
+    .leftJoin(userWhatsappCredentials, eq(userWhatsappCredentials.userId, users.id))
+    .where(and(eq(users.tenantId, tenantId), eq(users.isActive, true)));
+
+  return rows;
 }

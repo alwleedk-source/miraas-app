@@ -50,6 +50,13 @@ const EXEMPTIONS = new Set([
   "getTenantSettings",
   "getWebhookKeys",
   "getWhatsappConfig",
+  // per-user WhatsApp creds: المنسق يدير اعتماده الخاص (requireTenant + targetUserId logic)
+  // OWNER/ADMIN يدير منسقاً آخر عبر targetUserId — التحقّق الصريح داخل الـ action
+  "getMyWhatsappCredentials",
+  "saveMyWhatsappCredentials",
+  "saveMyWhatsappApiKey",
+  "testMyWhatsappCredentialsAction",
+  "deleteMyWhatsappCredentials",
 ]);
 
 // regex to find exported async functions

@@ -328,6 +328,9 @@ export const leads = pgTable("leads", {
   customFields: jsonb("custom_fields").default({}).$type<Record<string, string>>(),
   isDeleted: boolean("is_deleted").default(false).notNull(),
   welcomeSentAt: timestamp("welcome_sent_at", { withTimezone: true }),
+  // المنسق الذي أُرسل الترحيب من رقمه — يُستخدم لاتّساق التذكيرات اللاحقة
+  // null = أُرسل من tenant default (أو لم يُرسل بعد)
+  welcomeSentByUserId: uuid("welcome_sent_by_user_id"),
   // حقول الحجز
   bookingStatus: bookingStatusEnum("booking_status"),
   bookingDate: timestamp("booking_date", { withTimezone: true }),
@@ -424,6 +427,32 @@ export const whatsappConfigs = pgTable("whatsapp_configs", {
 });
 
 // ============================================
+// 7b. Per-User WhatsApp Credentials
+// كل منسق يربط رقمه الخاص في Meta — العميل يستلم رسائل من رقم منسقه
+// fallback chain: lead.welcomeSentByUserId → assignedTo → tenant default
+// ============================================
+
+export const userWhatsappCredentials = pgTable("user_whatsapp_credentials", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  // مشفَّر بـ AAD منفصل: "whatsapp:user:{userId}" (لا يتعارض مع tenant key)
+  apiKeyEncrypted: text("api_key_encrypted"),
+  phoneNumberId: varchar("phone_number_id", { length: 50 }),
+  templateLanguage: varchar("template_language", { length: 10 }).default("ar"),
+  isActive: boolean("is_active").default(false).notNull(),
+  // متابعة آخر اختبار من UI — يساعد المالك يعرف أيّ منسق إعداده يعمل
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+  lastTestSuccess: boolean("last_test_success"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  tenantActiveIdx: index("user_wa_creds_tenant_active_idx")
+    .on(t.tenantId, t.isActive)
+    .where(sql`${t.isActive} = true`),
+}));
+
+// ============================================
 // 8. Webhook Endpoints (نقاط الاستقبال)
 // ============================================
 
@@ -442,6 +471,9 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   // null = استخدم whatsappConfigs.templateName (الافتراضي العام)
   // مفيد لمن يدير حملات/تخصصات مختلفة، كل واحدة برسالة مناسبة لجمهورها
   welcomeTemplateName: varchar("welcome_template_name", { length: 255 }),
+  // round-robin pointer: id آخر منسق أُسنِد له lead من هذا webhook
+  // مستخدَم لتوزيع leads بالتساوي بين المنسقين المربوطين بالحملة
+  lastAssignedToUserId: uuid("last_assigned_to_user_id"),
   lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

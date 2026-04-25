@@ -47,10 +47,12 @@ const mainNav: NavItem[] = [
   { label: "قمع التحويل", href: "/analytics/funnel", icon: <BarChart3 className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
 ];
 
-// كل عناصر الإعدادات محصورة في OWNER/ADMIN
+// كل عناصر الإعدادات محصورة في OWNER/ADMIN — باستثناء "واتسابي" متاح للمنسق أيضاً
 const settingsNav: NavItem[] = [
   { label: "الإعدادات", href: "/settings", icon: <Settings className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "واتساب", href: "/settings/whatsapp", icon: <MessageSquare className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
+  // واتسابي الشخصي — كل منسق يربط رقمه الخاص لإرسال رسائل عملائه من رقمه
+  { label: "واتسابي (الشخصي)", href: "/account/whatsapp", icon: <MessageSquare className="h-5 w-5" /> },
   { label: "الويب هوك", href: "/settings/webhooks", icon: <Webhook className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },
   { label: "أرشيف العملاء", href: "/leads/archive", icon: <Archive className="h-5 w-5" /> },
   { label: "نسخة احتياطية", href: "/settings/backup", icon: <Database className="h-5 w-5" />, roles: ["OWNER", "ADMIN"] },

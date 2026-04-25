@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog } from "@/db/schema";
+import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog, webhookCoordinators } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { sendWelcomeMessage } from "@/lib/whatsapp";
 import { validateAndNormalizePhone } from "@/lib/utils";
@@ -223,27 +223,62 @@ export async function POST(request: NextRequest) {
         (e) => !activeSet.has(e.phone) && !deletedSet.has(e.phone) && !dncSet.has(e.phone),
       );
 
-      const createdLeads: { id: string; name: string; phone: string }[] = [];
+      // ===== Auto-assign: round-robin بين منسقي الحملة =====
+      // 1 منسق → كل leads له
+      // 2+ → نوّع: نبدأ بعد آخر منسق أُسنِد له lead سابق
+      // 0 → no auto-assign (السلوك الحالي قبل هذه الميزة)
+      const coords = await tx
+        .select({ userId: webhookCoordinators.userId })
+        .from(webhookCoordinators)
+        .where(eq(webhookCoordinators.webhookId, webhook.id))
+        .orderBy(webhookCoordinators.createdAt);
+      const coordIds = coords.map((c) => c.userId);
+
+      // round-robin: حدّد نقطة البداية
+      let nextIdx = 0;
+      if (coordIds.length > 1 && webhook.lastAssignedToUserId) {
+        const lastIdx = coordIds.indexOf(webhook.lastAssignedToUserId);
+        nextIdx = lastIdx >= 0 ? (lastIdx + 1) % coordIds.length : 0;
+      }
+
+      const createdLeads: { id: string; name: string; phone: string; assignedTo: string | null }[] = [];
+      let lastAssignedInBatch: string | null = null;
       if (toInsert.length > 0) {
         const inserted = await tx
           .insert(leads)
           .values(
-            toInsert.map((e) => ({
-              tenantId: webhook.tenantId,
-              name: e.name,
-              phone: e.phone,
-              email: e.email,
-              priority: "MEDIUM" as const,
-              stageId: defaultStage?.id ?? null,
-              sourceId: e.campaign ? campaignToSourceId.get(e.campaign) ?? null : null,
-              // ربط مباشر بالـ webhook لتقييد رؤية المنسقين على حملاتهم فقط
-              webhookEndpointId: webhook.id,
-            })),
+            toInsert.map((e) => {
+              // أسنِد لـ coordinator التالي في الدورة (لو فيه coordinators)
+              const assignedTo = coordIds.length > 0 ? coordIds[nextIdx] : null;
+              if (assignedTo) {
+                lastAssignedInBatch = assignedTo;
+                nextIdx = (nextIdx + 1) % coordIds.length;
+              }
+              return {
+                tenantId: webhook.tenantId,
+                name: e.name,
+                phone: e.phone,
+                email: e.email,
+                priority: "MEDIUM" as const,
+                stageId: defaultStage?.id ?? null,
+                sourceId: e.campaign ? campaignToSourceId.get(e.campaign) ?? null : null,
+                webhookEndpointId: webhook.id,
+                assignedTo,
+              };
+            }),
           )
-          .returning({ id: leads.id, name: leads.name, phone: leads.phone });
+          .returning({ id: leads.id, name: leads.name, phone: leads.phone, assignedTo: leads.assignedTo });
 
         for (const l of inserted) {
-          if (l.phone) createdLeads.push({ id: l.id, name: l.name, phone: l.phone });
+          if (l.phone) createdLeads.push({ id: l.id, name: l.name, phone: l.phone, assignedTo: l.assignedTo });
+        }
+
+        // حدّث round-robin pointer لـ next request
+        if (lastAssignedInBatch) {
+          await tx
+            .update(webhookEndpoints)
+            .set({ lastAssignedToUserId: lastAssignedInBatch })
+            .where(eq(webhookEndpoints.id, webhook.id));
         }
 
         // activity log مجمّع (إدخال واحد)
@@ -273,6 +308,7 @@ export async function POST(request: NextRequest) {
 
     // 8. ترحيب تلقائي — فقط لدفعة من عميل واحد حقيقي
     // يمرّر welcomeTemplateName من الـ webhook (override) — null = استخدم الافتراضي
+    // ويمرّر assignedTo (المنسق المُختار round-robin) لاستخدام رقمه إن كان له credentials
     const isSingleRealTime = rawEntries.length === 1 && result.createdLeads.length === 1;
     const shouldSendWelcome = webhook.sendWelcome && isSingleRealTime;
     if (shouldSendWelcome && result.createdLeads[0]) {
@@ -282,7 +318,8 @@ export async function POST(request: NextRequest) {
         l.phone,
         l.name,
         l.id,
-        webhook.welcomeTemplateName, // ← قالب مخصّص لهذه الحملة، إن وُجد
+        webhook.welcomeTemplateName, // قالب مخصّص لهذه الحملة، إن وُجد
+        l.assignedTo, // ← رقم المنسق المُسنَد له (fallback لـ tenant default إن لم يكن له creds)
       ).catch((err) => {
         logger.error("welcome message failed", err, {
           leadId: l.id,
