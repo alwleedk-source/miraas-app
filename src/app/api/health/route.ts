@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { db, isDatabaseConfigured } from "@/db";
 import { sql } from "drizzle-orm";
 import { validateEnv } from "@/lib/env";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +18,11 @@ export const dynamic = "force-dynamic";
  *
  * إذا أردت probe تحقق DB حقيقي، استخدم /api/health?strict=1 → يُرجع 503
  * عندما أي subsystem فاشل.
+ *
+ * checks.migration: نتيجة آخر تشغيل للمهاجر عند الإقلاع (من ملف حالة يكتبه
+ * scripts/migrate.mjs في tmpdir). تفاصيل الفشل (ملف/كود/رسالة) تُعرض في strict
+ * فقط — تشخيص إنتاجي مقصود رغم سياسة إخفاء التفاصيل، لأن بديلها الوصول لسجلات
+ * الحاوية. لا تحوي أسراراً — أسماء جداول/أعمدة فقط.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -46,6 +54,21 @@ export async function GET(req: Request) {
   checks.env = envResult.ok ? "ok" : "fail";
   if (!envResult.ok) errors.push(...envResult.errors.map((m) => "env: " + m));
 
+  // 3. آخر تشغيل للمهاجر (ملف حالة من tmpdir — قد لا يوجد قبل أول إقلاع)
+  let migrationDetails: unknown;
+  try {
+    const raw = readFileSync(join(tmpdir(), "meras-migration-status.json"), "utf-8");
+    const status = JSON.parse(raw) as { ok: boolean; at?: string; failures?: unknown[] };
+    checks.migration = status.ok ? "ok" : "fail";
+    if (!status.ok) {
+      errors.push(`migration: ${(status.failures?.length ?? 0)} statement(s) failed at boot`);
+      // strict فقط: التفاصيل الكاملة للعبارات الفاشلة (تشخيص إنتاجي مقصود)
+      if (strict) migrationDetails = status.failures;
+    }
+  } catch {
+    checks.migration = "ok"; // لا ملف = لم يعمل المهاجر في هذه العملية (تطوير مثلاً)
+  }
+
   const allOk = Object.values(checks).every((v) => v === "ok");
 
   const body = {
@@ -53,8 +76,9 @@ export async function GET(req: Request) {
     timestamp: new Date().toISOString(),
     checks,
     // في الإنتاج لا نكشف تفاصيل الأخطاء (أسماء متغيّرات بيئة/رسائل DB) لمتصل غير موثّق.
-    // الـ checks تُظهر أيّ نظام فرعي فشل (database/env)، وstrict mode يعيد 503 للمراقبة.
+    // الـ checks تُظهر أيّ نظام فرعي فشل (database/env/migration)، وstrict mode يعيد 503 للمراقبة.
     ...(isProd ? {} : { errors }),
+    ...(migrationDetails ? { migrationFailures: migrationDetails } : {}),
   };
 
   // strict mode: 503 عند أي failure (للمراقبة الدقيقة)

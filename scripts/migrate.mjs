@@ -1,12 +1,16 @@
 // Production-safe migrator. Runs at container start in Coolify.
 // - No tsx dep (plain Node ESM) → works with prod-only installs.
 // - Idempotent: matches "already exists" / "duplicate" SQL state and continues.
-// - Fails the process on any other error so Coolify aborts the deploy.
+// - Fails the process on any other error so Coolify aborts the deploy
+//   (start.sh يتسامح عمداً — انظر التعليق هناك — والحالة تُكشف عبر /api/health).
 // - Advisory lock: concurrent replicas (rolling deploy) can't race the same DB.
+// - يكتب نتيجة التشغيل إلى $TMPDIR/meras-migration-status.json حتى تعرضها
+//   /api/health — تشخيص فشل الهجرات في الإنتاج دون الوصول لسجلات الحاوية.
 
 import postgres from "postgres";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -16,6 +20,7 @@ if (!connectionString) {
 
 const client = postgres(connectionString, { max: 1, idle_timeout: 10 });
 const migrationsDir = join(process.cwd(), "drizzle/migrations");
+const STATUS_FILE = join(tmpdir(), "meras-migration-status.json");
 
 // قفل ثابت مشتق من "MERAS" (0x4D45524153) — session-level lock يمنع نسختين
 // متوازيتين (rolling deploy) من تطبيق migrations في آنٍ واحد. يُحرَّر تلقائياً
@@ -23,7 +28,7 @@ const migrationsDir = join(process.cwd(), "drizzle/migrations");
 const MIGRATION_LOCK_ID = 331875500371;
 
 let lockHeld = false;
-let hadHardFailure = false;
+const failures = [];
 
 try {
   await client.unsafe(`SELECT pg_advisory_lock(${MIGRATION_LOCK_ID})`);
@@ -69,7 +74,12 @@ try {
           } else {
             console.error(`  ❌ FAIL: ${msg}`);
             console.error(`     stmt: ${preview}`);
-            hadHardFailure = true;
+            failures.push({
+              file,
+              code: err?.code ?? "unknown",
+              message: msg.split("\n")[0].slice(0, 200),
+              statement: preview,
+            });
           }
         }
       }
@@ -84,8 +94,27 @@ try {
   await client.end();
 }
 
-if (hadHardFailure) {
-  console.error("\n❌ Migrations completed with errors — aborting boot.");
+// سجّل الحالة دائماً — /api/health?strict=1 يعرضها حتى نعرف بالضبط أي عبارة
+// فشلت في الإنتاج دون الحاجة لسجلات الحاوية.
+try {
+  writeFileSync(
+    STATUS_FILE,
+    JSON.stringify(
+      {
+        ok: failures.length === 0,
+        at: new Date().toISOString(),
+        failures,
+      },
+      null,
+      2,
+    ),
+  );
+} catch {
+  // لا نفشل الإقلاع بسبب سجل الحالة
+}
+
+if (failures.length > 0) {
+  console.error("\n❌ Migrations completed with errors — see status file.");
   process.exit(1);
 }
 
