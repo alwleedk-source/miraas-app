@@ -40,15 +40,9 @@ const CHECKS: EnvCheck[] = [
     name: "ENCRYPTION_KEY",
     value: sanitize(process.env.ENCRYPTION_KEY),
     requiredInProd: true,
-    validator: (v) => {
-      if (!/^[0-9a-fA-F]+$/.test(v)) {
-        return `contains invalid characters (must be hex). Got ${v.length} chars: "${v.slice(0, 8)}..."`;
-      }
-      if (v.length !== 64) {
-        return `must be exactly 64 hex chars. Got ${v.length} chars.`;
-      }
-      return null;
-    },
+    minLength: 16,
+    // أي سلسلة ≥16 مقبولة (غير الـ 64-hex تُشتق عبر SHA-256 في encryption.ts) —
+    // التفضيل لـ 64 hex يُسجَّل كتحذير أدناه، لا كخطأ مانع.
   },
   {
     name: "CRON_SECRET",
@@ -107,6 +101,14 @@ export function validateEnv(): { ok: boolean; errors: string[]; warnings: string
   if (isProd && dbUrl && !dbUrl.includes("sslmode=")) {
     warnings.push(
       "DATABASE_URL: بدون sslmode= — مقبول داخل شبكة docker الداخلية، لكن فعّل SSL لو قاعدة البيانات خارجية",
+    );
+  }
+
+  // ENCRYPTION_KEY: يُفضَّل 64 hex — غير ذلك يعمل عبر اشتقاق SHA-256 (تحذير فقط)
+  const encKey = sanitize(process.env.ENCRYPTION_KEY);
+  if (encKey && !/^[0-9a-fA-F]{64}$/.test(encKey)) {
+    warnings.push(
+      "ENCRYPTION_KEY: ليس 64 hex — سيُشتق عبر SHA-256 (يعمل، لكن يُفضَّل مفتاح hex عشوائي 64 حرفاً)",
     );
   }
 

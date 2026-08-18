@@ -3,7 +3,7 @@
  * Uses a server-side secret key from environment
  */
 
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -31,17 +31,14 @@ function getEncryptionKey(): Buffer {
     console.warn("⚠️ ENCRYPTION_KEY not set — using dev fallback");
     return Buffer.from("0".repeat(64), "hex");
   }
-  if (!/^[0-9a-fA-F]+$/.test(key)) {
-    throw new Error(
-      `ENCRYPTION_KEY contains invalid characters (must be hex 0-9, a-f). Length received: ${key.length}`,
-    );
+  // المسار المفضّل: 64 hex chars = 32 bytes مباشرة.
+  if (/^[0-9a-fA-F]{64}$/.test(key)) {
+    return Buffer.from(key, "hex");
   }
-  if (key.length !== 64) {
-    throw new Error(
-      `ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes). Got ${key.length} chars.`,
-    );
-  }
-  return Buffer.from(key, "hex");
+  // أي سلسلة أخرى (مثل 32 حرف ASCII): اشتقاق حتمي عبر SHA-256 بدل الرفض —
+  // رفض الصيغ غير الـ hex كان يعطّل تشفير أسرار واتساب كلياً في الإنتاج.
+  // لا يكسر بيانات قديمة: ما شُفّر بمفتاح 64-hex يسلك المسار الأول دائماً.
+  return createHash("sha256").update(key, "utf8").digest();
 }
 
 /**
