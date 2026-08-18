@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: Dependencies
 # ============================================
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Force development mode to install devDependencies (typescript, tailwind, etc.)
@@ -18,7 +18,7 @@ RUN npm ci --include=dev --no-audit --no-fund --ignore-scripts
 # ============================================
 # Stage 2: Build
 # ============================================
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Production mode for the actual `next build` (optimized output)
@@ -51,7 +51,7 @@ RUN npm run build
 # ============================================
 # Stage 3: Production Runner
 # ============================================
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
