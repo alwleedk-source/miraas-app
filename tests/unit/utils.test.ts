@@ -5,7 +5,49 @@ import {
   toTelUrl,
   generateSlug,
   generateSecretKey,
+  parseRiyadhDateTime,
 } from "@/lib/utils";
+
+describe("parseRiyadhDateTime — booking wall-clock is Riyadh (UTC+3), server-TZ independent", () => {
+  it("treats a bare datetime as Riyadh (14:00 Riyadh -> 11:00 UTC)", () => {
+    expect(parseRiyadhDateTime("2026-06-14T14:00").toISOString()).toBe(
+      "2026-06-14T11:00:00.000Z",
+    );
+  });
+  it("treats a bare datetime with seconds as Riyadh", () => {
+    expect(parseRiyadhDateTime("2026-06-14T14:00:00").toISOString()).toBe(
+      "2026-06-14T11:00:00.000Z",
+    );
+  });
+  it("treats a bare datetime with milliseconds as Riyadh (no server-tz fallback)", () => {
+    expect(parseRiyadhDateTime("2026-06-14T14:00:00.123").toISOString()).toBe(
+      "2026-06-14T11:00:00.123Z",
+    );
+  });
+  it("treats a bare datetime with 1-2 ms digits as Riyadh", () => {
+    expect(parseRiyadhDateTime("2026-06-14T14:00:00.5").toISOString()).toBe(
+      "2026-06-14T11:00:00.500Z",
+    );
+    expect(parseRiyadhDateTime("2026-06-14T14:00:00.05").toISOString()).toBe(
+      "2026-06-14T11:00:00.050Z",
+    );
+  });
+  it("treats a date-only string as Riyadh midnight", () => {
+    expect(parseRiyadhDateTime("2026-06-14").toISOString()).toBe(
+      "2026-06-13T21:00:00.000Z",
+    );
+  });
+  it("respects an explicit Z offset (does not double-shift)", () => {
+    expect(parseRiyadhDateTime("2026-06-14T11:00:00.000Z").toISOString()).toBe(
+      "2026-06-14T11:00:00.000Z",
+    );
+  });
+  it("respects an explicit +03:00 offset", () => {
+    expect(parseRiyadhDateTime("2026-06-14T14:00:00+03:00").toISOString()).toBe(
+      "2026-06-14T11:00:00.000Z",
+    );
+  });
+});
 
 describe("phone normalization", () => {
   it("normalizes Saudi 05 numbers to +966", () => {

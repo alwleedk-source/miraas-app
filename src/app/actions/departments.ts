@@ -42,10 +42,12 @@ export async function addDepartment(input: {
   const { tenantId, userId, role } = await requireTenant();
   assertRole(role, ROLE.OWNER_ADMIN);
   const trimmed = input.name.trim();
-  if (!trimmed || trimmed.length > 255) throw new Error("اسم القسم غير صالح");
-  if (input.color && !/^#[0-9A-Fa-f]{6}$/.test(input.color)) throw new Error("لون غير صالح");
+  if (!trimmed || trimmed.length > 255) return { success: false as const, error: "اسم القسم غير صالح" };
+  if (input.color && !/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
+    return { success: false as const, error: "لون غير صالح" };
+  }
   if (input.defaultGapMinutes !== undefined && (input.defaultGapMinutes < 0 || input.defaultGapMinutes > 120)) {
-    throw new Error("فارق زمني غير صالح");
+    return { success: false as const, error: "فارق زمني غير صالح" };
   }
 
   // منع التكرار
@@ -54,7 +56,7 @@ export async function addDepartment(input: {
     .from(departments)
     .where(and(eq(departments.tenantId, tenantId), eq(departments.name, trimmed)))
     .limit(1);
-  if (existing) throw new Error("هذا القسم موجود بالفعل");
+  if (existing) return { success: false as const, error: "هذا القسم موجود بالفعل" };
 
   // الترتيب التلقائي
   const allDeps = await db
@@ -84,7 +86,7 @@ export async function addDepartment(input: {
   });
 
   revalidatePath("/settings");
-  return dep;
+  return { success: true as const, id: dep.id };
 }
 
 // =============================================
@@ -99,10 +101,29 @@ export async function updateDepartment(
   assertRole(role, ROLE.OWNER_ADMIN);
   await assertDepartmentInTenant(departmentId, tenantId);
 
+  // نفس تحقّقات addDepartment — كان updateDepartment بلا أي validation:
+  // فارق سالب يجعل bookingEndTime < bookingDate فيكسر قيد tstzrange
+  // فيُقتل كل حجوزات هذا القسم بخطأ PG خام.
   const updateData: Record<string, unknown> = {};
-  if (input.name !== undefined) updateData.name = input.name.trim();
-  if (input.color !== undefined) updateData.color = input.color;
-  if (input.defaultGapMinutes !== undefined) updateData.defaultGapMinutes = input.defaultGapMinutes;
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim();
+    if (!trimmed || trimmed.length > 255) {
+      return { success: false as const, error: "اسم القسم غير صالح" };
+    }
+    updateData.name = trimmed;
+  }
+  if (input.color !== undefined) {
+    if (!/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
+      return { success: false as const, error: "لون غير صالح" };
+    }
+    updateData.color = input.color;
+  }
+  if (input.defaultGapMinutes !== undefined) {
+    if (input.defaultGapMinutes < 0 || input.defaultGapMinutes > 120) {
+      return { success: false as const, error: "فارق زمني غير صالح" };
+    }
+    updateData.defaultGapMinutes = input.defaultGapMinutes;
+  }
   if (input.isActive !== undefined) updateData.isActive = input.isActive;
 
   await db
@@ -120,6 +141,7 @@ export async function updateDepartment(
   });
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -194,14 +216,14 @@ export async function linkProviderToDepartment(departmentId: string, userId: str
     .select({ id: departments.id })
     .from(departments)
     .where(and(eq(departments.id, departmentId), eq(departments.tenantId, tenantId)));
-  if (!dep) throw new Error("القسم غير موجود");
+  if (!dep) return { success: false as const, error: "القسم غير موجود" };
 
   // تحقق أن المستخدم PROVIDER وتابع للشركة
   const [provider] = await db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.id, userId), eq(users.tenantId, tenantId), eq(users.role, "PROVIDER")));
-  if (!provider) throw new Error("مقدم الخدمة غير موجود");
+  if (!provider) return { success: false as const, error: "مقدم الخدمة غير موجود" };
 
   // منع التكرار
   const [existing] = await db
@@ -211,10 +233,11 @@ export async function linkProviderToDepartment(departmentId: string, userId: str
       and(eq(departmentProviders.departmentId, departmentId), eq(departmentProviders.userId, userId))
     )
     .limit(1);
-  if (existing) throw new Error("مقدم الخدمة مرتبط بهذا القسم بالفعل");
+  if (existing) return { success: false as const, error: "مقدم الخدمة مرتبط بهذا القسم بالفعل" };
 
   await db.insert(departmentProviders).values({ departmentId, userId });
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -232,10 +255,11 @@ export async function unlinkProviderFromDepartment(linkId: string) {
     .innerJoin(departments, eq(departmentProviders.departmentId, departments.id))
     .where(and(eq(departmentProviders.id, linkId), eq(departments.tenantId, tenantId)))
     .limit(1);
-  if (!link) throw new Error("الرابط غير موجود");
+  if (!link) return { success: false as const, error: "الرابط غير موجود" };
 
   await db.delete(departmentProviders).where(eq(departmentProviders.id, linkId));
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -280,17 +304,37 @@ export async function saveProviderSchedule(
   await assertUserInTenant(userId, tenantId);
 
   // validate inputs
-  if (schedule.length > 7) throw new Error("أيام أكثر من اللازم");
+  if (schedule.length > 7) return { success: false as const, error: "أيام أكثر من اللازم" };
   const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
   for (const s of schedule) {
     if (!Number.isInteger(s.dayOfWeek) || s.dayOfWeek < 0 || s.dayOfWeek > 6) {
-      throw new Error("يوم غير صالح");
+      return { success: false as const, error: "يوم غير صالح" };
     }
     if (!TIME_REGEX.test(s.startTime) || !TIME_REGEX.test(s.endTime)) {
-      throw new Error("وقت غير صالح");
+      return { success: false as const, error: "وقت غير صالح" };
     }
-    if (s.breakStart && !TIME_REGEX.test(s.breakStart)) throw new Error("وقت استراحة غير صالح");
-    if (s.breakEnd && !TIME_REGEX.test(s.breakEnd)) throw new Error("وقت استراحة غير صالح");
+    // مقارنة نصّية على "HH:MM" المُصفَّرة = ترتيب زمني صحيح
+    if (s.startTime >= s.endTime) {
+      return { success: false as const, error: "وقت النهاية يجب أن يكون بعد وقت البداية" };
+    }
+    if (s.breakStart && !TIME_REGEX.test(s.breakStart)) {
+      return { success: false as const, error: "وقت استراحة غير صالح" };
+    }
+    if (s.breakEnd && !TIME_REGEX.test(s.breakEnd)) {
+      return { success: false as const, error: "وقت استراحة غير صالح" };
+    }
+    // الاستراحة: إمّا الطرفان معاً أو لا شيء (لا استراحة معلّقة بطرف واحد يكسر حساب التوفّر)
+    if (Boolean(s.breakStart) !== Boolean(s.breakEnd)) {
+      return { success: false as const, error: "حدّد بداية ونهاية الاستراحة معاً" };
+    }
+    if (s.breakStart && s.breakEnd) {
+      if (s.breakStart >= s.breakEnd) {
+        return { success: false as const, error: "نهاية الاستراحة يجب أن تكون بعد بدايتها" };
+      }
+      if (s.breakStart < s.startTime || s.breakEnd > s.endTime) {
+        return { success: false as const, error: "الاستراحة يجب أن تكون ضمن ساعات العمل" };
+      }
+    }
   }
 
   await db.transaction(async (tx) => {
@@ -315,6 +359,7 @@ export async function saveProviderSchedule(
   });
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -345,8 +390,8 @@ export async function addProviderDayOff(userId: string, date: string, reason?: s
   await assertUserInTenant(userId, tenantId);
 
   const parsedDate = new Date(date);
-  if (isNaN(parsedDate.getTime())) throw new Error("تاريخ غير صالح");
-  if (reason && reason.length > 255) throw new Error("سبب طويل جداً");
+  if (isNaN(parsedDate.getTime())) return { success: false as const, error: "تاريخ غير صالح" };
+  if (reason && reason.length > 255) return { success: false as const, error: "سبب طويل جداً" };
 
   await db.insert(providerDayOffs).values({
     tenantId,
@@ -356,6 +401,7 @@ export async function addProviderDayOff(userId: string, date: string, reason?: s
   });
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================

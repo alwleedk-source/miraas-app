@@ -84,8 +84,8 @@ assertRole(role, ROLE.OWNER_ADMIN_COORDINATOR);  // ← يمنع PROVIDER من �
 
 ### إذا قُرّر يوماً الانتقال لـ db-per-tenant:
 
-**الخطوة 1: تحضير (مكتمل ✓)**
-- ✅ tenant-context.ts جاهز (AsyncLocalStorage layer)
+**الخطوة 1: تحضير (جاهز لكن غير مفعّل)**
+- ⚠️ `tenant-context.ts` موجود (AsyncLocalStorage layer) لكنه **غير موصول**: لا يوجد أيّ مستدعٍ لـ `withTenantContext` خارج ملفه. هو بنية مُعدّة للمستقبل فقط ولا يقدّم أيّ عزل فعلي اليوم — العزل الحالي مفروض يدوياً عبر `tenantId` filter في كل query + اختبارات RBAC.
 - ✅ كل query تحوي tenantId scoping (مفروض بـ test)
 - ✅ لا cross-tenant queries في الكود
 
@@ -144,6 +144,7 @@ AAD يمنع swap attack: لو attacker سرق encrypted blob من tenant A وح
 4. `getCurrentTenantId()` يُستدعى من webhook public route → إشارة سيئة
 5. أي JOIN بين `tenants` table مباشرة → cross-tenant query
 6. `process.env.DATABASE_URL` يُقرأ في أكثر من مكان → centralize في `db/index.ts`
+7. الافتراض أن `tenants.status = 'SUSPENDED'` يوقف وصول المستأجر → **مُنفَّذ** في `requireTenant` (يوجّه لـ `/suspended`؛ استقبال webhook يستمر عمداً حتى لا تضيع leads أثناء الإيقاف). لا توجد واجهة إيقاف — التغيير يدوي عبر DB فقط
 
 ---
 

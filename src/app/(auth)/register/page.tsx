@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { signUp } from "@/lib/auth-client";
+import { useRouter } from "next/navigation";
+import { signUp, useSession } from "@/lib/auth-client";
 import { createTenantForUser } from "@/app/actions/tenant";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Building2, User, Mail, Lock, Loader2, Rocket, ArrowLeft } from "lucide-react";
 
 export default function RegisterPage() {
+  const router = useRouter();
+  // جلسة حالية؟ — حساب يتيم (سجّل سابقاً لكن إنشاء الشركة فشل) يُكمل الإعداد من هنا
+  const { data: session } = useSession();
   const [formData, setFormData] = useState({
     companyName: "",
     name: "",
@@ -34,14 +38,30 @@ export default function RegisterPage() {
       return;
     }
 
-    if (formData.password.length < 8) {
-      setError("كلمة المرور يجب أن تكون 8 أحرف على الأقل");
+    if (formData.password.length < 10) {
+      setError("كلمة المرور يجب أن تكون 10 أحرف على الأقل");
       return;
     }
 
     setLoading(true);
 
     try {
+      // 0. حساب يتيم: جلسة فعّالة بلا شركة — لا نعيد signUp (سيفشل بـ "مسجل مسبقاً")
+      // بل ننشئ الشركة مباشرة ليكمل المستخدم الإعداد.
+      const sessionUser = session?.user as Record<string, unknown> | undefined;
+      if (sessionUser?.id && !sessionUser.tenantId) {
+        try {
+          await createTenantForUser(formData.companyName);
+        } catch (tenantErr) {
+          const msg = tenantErr instanceof Error ? tenantErr.message : "";
+          setError(msg || "تعذّر إنشاء الشركة. حاول مرة أخرى.");
+          return;
+        }
+        router.push("/");
+        router.refresh();
+        return;
+      }
+
       // 1. إنشاء حساب المستخدم
       const result = await signUp.email({
         email: formData.email,
@@ -60,11 +80,27 @@ export default function RegisterPage() {
 
       // 2. إنشاء الشركة — userId يأخذه server من الـ session (لا يُمرَّر)
       if (result.data?.user?.id) {
-        await createTenantForUser(formData.companyName);
+        try {
+          await createTenantForUser(formData.companyName);
+        } catch (tenantErr) {
+          // عند تفعيل التحقق بالبريد (RESEND مُهيّأ) لا تُنشأ جلسة عند التسجيل،
+          // فيفشل إنشاء الشركة بـ "unauthorized". نُبلّغ المستخدم بوضوح بدل ترك
+          // حساب يتيم برسالة خطأ عامة. (ملاحظة: دعم التحقق بالبريد الكامل يحتاج
+          // إنشاء الشركة بعد التفعيل — راجع ملاحظات الصيانة.)
+          const msg = tenantErr instanceof Error ? tenantErr.message : "";
+          if (msg.includes("unauthorized")) {
+            setError("تم إنشاء حسابك. فعّل بريدك الإلكتروني ثم سجّل الدخول.");
+            return;
+          }
+          // أخطاء أخرى (اسم شركة غير صالح، إلخ) تُعرض كما هي
+          setError(msg || "تعذّر إنشاء الشركة. حاول مرة أخرى.");
+          return;
+        }
       }
 
-      // Full page redirect to ensure session cookies are properly sent
-      window.location.href = "/";
+      // الجلسة أُنشئت والكوكي محفوظ — ننتقل ونحدّث الـ router لتُقرأ من الخادم
+      router.push("/");
+      router.refresh();
     } catch {
       setError("حدث خطأ. يرجى المحاولة مرة أخرى.");
     } finally {
@@ -109,6 +145,7 @@ export default function RegisterPage() {
                   value={formData.companyName}
                   onChange={handleChange}
                   required
+                  minLength={2}
                   autoFocus
                 />
               </div>
@@ -163,7 +200,7 @@ export default function RegisterPage() {
                     value={formData.password}
                     onChange={handleChange}
                     required
-                    minLength={8}
+                    minLength={10}
                   />
                 </div>
               </div>
@@ -179,7 +216,7 @@ export default function RegisterPage() {
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   required
-                  minLength={8}
+                  minLength={10}
                 />
               </div>
             </div>

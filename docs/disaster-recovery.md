@@ -34,7 +34,7 @@ curl https://miraas.app/api/health
 ## السيناريو 2: Coolify كله تعطّل (الخادم سقط)
 
 ### الإجراء (30-60 دقيقة)
-1. **لا تذعر** — backup خارجي (Backblaze) محفوظ
+1. **لا تذعر** — لكن كن واقعياً: النسخ الحالية **داخلية فقط** (Coolify على نفس الخادم)، يضاف إليها لقطات leads شبه اللحظية المدفوعة إلى Google Sheet كل عميل عبر `backup-push`. لو الخادم ضاع كلياً ضاعت معه النسخ الداخلية، وتبقى بيانات leads الأساسية قابلة للاسترجاع من Sheets العملاء. النسخ الخارجي (Backblaze B2) **TODO مطلوب قبل الإنتاج الحقيقي** — راجع قسم «واقع النسخ الاحتياطي» أسفل.
 2. أنشئ خادم جديد (Hetzner/DigitalOcean) — Ubuntu 22.04
 3. ثبّت Coolify الجديد:
    ```bash
@@ -46,7 +46,7 @@ curl https://miraas.app/api/health
 7. أعد deploy من GitHub
 
 **RTO هدف**: ساعتان (Recovery Time Objective)
-**RPO هدف**: 24 ساعة (آخر backup يومي)
+**RPO واقعي حالياً**: حتى 24 ساعة (نسخ Coolify اليومية الداخلية)؛ وبيانات leads شبه لحظية عبر Google Sheets العملاء. الهدف بعد إنجاز النسخ الخارجي: <12 ساعة مع نسخة محفوظة خارج الخادم.
 
 ---
 
@@ -59,7 +59,11 @@ curl https://miraas.app/api/health
 # 3. بعد الانتهاء، أعد تشغيل التطبيق
 ```
 
-### إذا backup في Backblaze (خارجي)
+### إذا backup خارجي (Backblaze B2) — ⚠️ TODO: غير مُفعَّل بعد
+
+> **لا يوجد حالياً أي نسخة خارج الخادم.** الخطوات أدناه موثّقة مسبقاً لتصبح
+> جاهزة فور إعداد B2، وهي **مطلوبة قبل الإنتاج الحقيقي** (خادم واحد = نقطة فشل واحدة).
+
 ```bash
 # 1. نزّل الـ backup من Backblaze
 b2 file download b2://meras-backups/2026-04-22.sql.gz ./backup.sql.gz
@@ -90,16 +94,22 @@ docker exec <postgres-container> psql -U USER -d DBNAME -c "SELECT COUNT(*) FROM
 
 ### الإجراء
 ```bash
-# 1. تحقّق من حالة migrations
-docker exec <postgres-container> psql -U USER -d DBNAME \
-  -c "SELECT * FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 5;"
+# ⚠️ المُهاجر المخصص (scripts/migrate.mjs) لا يكتب journal —
+#    لا يوجد جدول drizzle.__drizzle_migrations للاستعلام عنه.
 
-# 2. لو آخر migration جزئية، rollback يدوي:
-#    افحص drizzle/migrations/XXXX_*.sql
-#    اعكس الـ ALTER/CREATE statements
-#    احذف الصف من __drizzle_migrations
+# 1. حدّد آخر migration نجح من سجل الإقلاع في Coolify logs:
+#    المُهاجر يطبع ✅/⏭️/❌ لكل عبارة مع اسم الملف، فآخر ❌ هو موضع الفشل.
 
-# 3. أعد deploy
+# 2. قارن حالة DB يدوياً بملفات drizzle/migrations/*.sql:
+docker exec <postgres-container> psql -U USER -d DBNAME -c "\dt"
+docker exec <postgres-container> psql -U USER -d DBNAME -c "\d+ leads"
+
+# 3. لو migration جزئية، rollback يدوي:
+#    افحص drizzle/migrations/XXXX_*.sql واعكس الـ ALTER/CREATE statements.
+#    أو أصلح السبب الجذري ثم أعد التشغيل — إعادة التطبيق آمنة لأن العبارات
+#    idempotent (IF NOT EXISTS + المُهاجر يتجاهل أخطاء already exists/duplicate).
+
+# 4. أعد deploy
 ```
 
 **درس مستفاد**: راجع كل migration قبل تطبيقه على production.
@@ -110,29 +120,28 @@ docker exec <postgres-container> psql -U USER -d DBNAME \
 
 ### الإجراء
 ```sql
--- 1. سجّل الطلب
-INSERT INTO activity_log (tenant_id, action, details)
-VALUES ('<tenant_id>', 'TENANT_DELETION_REQUEST', '{"reason": "GDPR"}');
+-- 1. سجّل الطلب (action يجب أن تكون قيمة صالحة من activity_action enum)
+INSERT INTO activity_log (tenant_id, action, entity_type, details)
+VALUES ('<tenant_id>', 'SETTINGS_UPDATED', 'tenant', '{"reason": "GDPR deletion request"}');
 
--- 2. حذف البيانات بالترتيب (احترام FKs)
+-- 2. (قبل الحذف) نظّف verifications — جدول better-auth بلا tenant_id ولا FK،
+--    مفتاحه البريد الإلكتروني، فلا يتتالى مع tenants:
+DELETE FROM verifications
+WHERE identifier IN (SELECT email FROM users WHERE tenant_id = '<tenant_id>');
+
+-- 3. الحذف الرئيسي — لا حاجة لقائمة جداول يدوية:
+--    كل جدول له tenant_id في schema.ts مربوط بـ FK ON DELETE CASCADE،
+--    والجداول الوسيطة بلا tenant_id (sessions, accounts, tag_assignments,
+--    webhook_coordinators, department_providers) تتتالى عبر آبائها.
+--    سجل الطلب من الخطوة 1 يتتالى هو أيضاً مع activity_log.
+--    (rate_limits لا يحوي بيانات مستأجر — مفاتيحه webhook:<id> فقط.)
 BEGIN;
-DELETE FROM follow_ups WHERE tenant_id = '<tenant_id>';
-DELETE FROM activity_log WHERE tenant_id = '<tenant_id>';
-DELETE FROM notifications WHERE tenant_id = '<tenant_id>';
-DELETE FROM leads WHERE tenant_id = '<tenant_id>';
-DELETE FROM lead_sources WHERE tenant_id = '<tenant_id>';
-DELETE FROM pipeline_stages WHERE tenant_id = '<tenant_id>';
-DELETE FROM whatsapp_configs WHERE tenant_id = '<tenant_id>';
-DELETE FROM webhook_endpoints WHERE tenant_id = '<tenant_id>';
-DELETE FROM tags WHERE tenant_id = '<tenant_id>';
-DELETE FROM departments WHERE tenant_id = '<tenant_id>';
-DELETE FROM services WHERE tenant_id = '<tenant_id>';
-DELETE FROM users WHERE tenant_id = '<tenant_id>';
 DELETE FROM tenants WHERE id = '<tenant_id>';
 COMMIT;
 
--- 3. اطلب من backups الخارجية حذف نسخ المستأجر (لو يحتفظ provider)
--- 4. أبلغ المستأجر بالاكتمال
+-- 4. Google Sheet الخاص بالعميل ملكٌ له — أبلغه أن يحذفه بنفسه (أو احذف
+--    النسخة المدفوعة إن كنت تديرها). لا توجد نسخ خارجية أخرى حالياً (B2 TODO).
+-- 5. أبلغ المستأجر بالاكتمال
 ```
 
 > 💡 ملاحظة: في db-per-tenant المستقبلي، هذه عملية واحدة (`DROP DATABASE tenant_x`).
@@ -180,10 +189,21 @@ UPDATE webhook_endpoints SET is_active = false WHERE secret_prefix = 'PREFIX';
 
 ---
 
+## واقع النسخ الاحتياطي (اقرأ قبل الاعتماد عليه)
+
+**الموجود فعلاً اليوم:**
+- نسخ Coolify الداخلية المجدولة (يومياً) — لكنها تُخزَّن **على نفس الخادم**، فلا تحمي من فقدان الخادم كاملاً.
+- دفع تلقائي للقطات leads إلى Google Sheet الخاص بكل عميل عبر `backup-push` (fire-and-forget، شبه لحظي) — يغطي بيانات العملاء الأساسية فقط، لا الإعدادات ولا المستخدمين.
+
+**غير موجود (TODO مطلوب قبل الإنتاج الحقيقي):**
+- [ ] نسخة خارجية: `pg_dump` مجدول يُرفع إلى Backblaze B2 (أو ما يعادلها) مع retention واختبار restore دوري. حتى يُنجَز هذا، RPO الحقيقي لفقدان الخادم الكامل = «ما وصل إلى Google Sheets»، لا 24 ساعة.
+
+---
+
 ## فحوصات صحية دورية
 
 ### يومياً (تلقائي)
-- ✅ Backup يجري الساعة 2 صباحاً
+- ✅ Backup داخلي في Coolify يجري الساعة 2 صباحاً (على نفس الخادم — راجع «واقع النسخ الاحتياطي»)
 - ✅ Cleanup cron يحذف rate_limits المنتهية
 - ✅ `/api/health` يُرجع OK
 
@@ -204,10 +224,10 @@ UPDATE webhook_endpoints SET is_active = false WHERE secret_prefix = 'PREFIX';
 
 | القياس | القيمة الحالية | الهدف |
 |--------|----------------|-------|
-| Backup frequency | يومي | يومي ✓ |
+| Backup frequency | يومي (Coolify، داخلي على نفس الخادم) | يومي + نسخة خارجية B2 (TODO) |
 | Backup retention | 30 يوم | 30 يوم |
 | RTO (وقت الاستعادة) | <2 ساعة | <1 ساعة |
-| RPO (أقصى فقدان بيانات) | 24 ساعة | <12 ساعة |
+| RPO (أقصى فقدان بيانات) | 24 ساعة لفقدان DB وحده؛ فقدان الخادم كاملاً = آخر لقطة Google Sheet | <12 ساعة مع نسخة خارجية |
 | Connection pool | 20 | 20 ✓ |
 | Statement timeout | 30s | 30s ✓ |
 

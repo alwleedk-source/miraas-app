@@ -6,7 +6,18 @@ import { pipelineStages, users, tags, services, departments } from "@/db/schema"
 import { eq, asc, and, isNull } from "drizzle-orm";
 import LeadsClient from "./leads-client";
 
-export default async function LeadsPage() {
+type LeadsListData = Extract<
+  Awaited<ReturnType<typeof getLeads>>,
+  { success: true }
+>["data"];
+
+type SearchParams = Promise<{ search?: string }>;
+
+export default async function LeadsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   const { tenantId, role: userRole, userId } = await requireTenant();
 
   if (!tenantId) {
@@ -16,17 +27,23 @@ export default async function LeadsPage() {
     redirect("/provider");
   }
 
+  // روابط مثل /leads?search=<name> قادمة من لوحة التحكم/المهام/الحجوزات
+  const { search } = await searchParams;
+  const initialSearch = search?.trim() || "";
+
   // جلب العملاء
   // المنسق: يرى كل العملاء ما عدا المعيّنين لغيره في مراحل حصرية
-  let leadsData;
+  // limit=200 هو سقف الخادم — بلا pagination حالياً (البحث يصل للبقية)
+  let leadsData: { data: LeadsListData; total: number } = { data: [], total: 0 };
   try {
-    leadsData = await getLeads(
-      userRole === "COORDINATOR"
-        ? { excludeExclusiveForUser: userId }
-        : undefined
-    );
+    const res = await getLeads({
+      ...(userRole === "COORDINATOR" ? { excludeExclusiveForUser: userId } : {}),
+      ...(initialSearch ? { search: initialSearch } : {}),
+      limit: 200,
+    });
+    if (res.success) leadsData = { data: res.data, total: res.total };
   } catch {
-    leadsData = { data: [], total: 0 };
+    // صفحة قراءة — تُعرض القائمة الفارغة
   }
 
   // جلب المراحل
@@ -110,7 +127,7 @@ export default async function LeadsPage() {
 
   return (
     <LeadsClient
-      initialLeads={leadsData.data as Parameters<typeof LeadsClient>[0]["initialLeads"]}
+      initialLeads={leadsData.data}
       stages={stagesData}
       total={leadsData.total}
       teamMembers={teamMembers}
@@ -118,6 +135,7 @@ export default async function LeadsPage() {
       currentUserRole={userRole}
       availableServices={servicesData}
       availableDepartments={departmentsData}
+      initialSearch={initialSearch}
     />
   );
 }

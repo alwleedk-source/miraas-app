@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Clock } from "lucide-react";
+import { useNow } from "@/lib/hooks";
 
 interface Activity {
   id: string;
@@ -21,10 +22,12 @@ const ACTION_LABELS: Record<string, string> = {
   LEAD_DELETED: "حذف عميل",
   FOLLOW_UP_CREATED: "أضاف متابعة",
   FOLLOW_UP_COMPLETED: "أنجز مهمة",
+  FOLLOW_UP_CANCELLED: "ألغى متابعة",
   USER_CREATED: "أضاف عضو جديد",
   SETTINGS_UPDATED: "حدّث الإعدادات",
   WEBHOOK_RECEIVED: "عميل جديد من Google Sheets",
   WHATSAPP_SENT: "أرسل رسالة واتساب",
+  WHATSAPP_FAILED: "فشل إرسال واتساب",
 };
 
 const ACTION_FILTERS: { value: string; label: string }[] = [
@@ -37,23 +40,26 @@ const ACTION_FILTERS: { value: string; label: string }[] = [
   { value: "WEBHOOK_RECEIVED", label: "ويب هوك" },
 ];
 
-function timeAgo(date: Date): string {
-  const diff = Date.now() - new Date(date).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "الآن";
-  if (mins < 60) return `منذ ${mins} دقيقة`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `منذ ${hours} ساعة`;
-  const days = Math.floor(hours / 24);
-  return `منذ ${days} يوم`;
-}
-
 export default function ActivityLog({ activities }: { activities: Activity[] }) {
   const [filter, setFilter] = useState("");
+  // ساعة hydration-آمنة — Date.now() مباشرة أثناء الـ render يكسر تطابق SSR/العميل
+  const now = useNow();
 
   const filtered = filter
     ? activities.filter((a) => a.action === filter)
     : activities;
+
+  function timeAgo(date: Date): string {
+    if (now === 0) return "";
+    const diff = now - new Date(date).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "الآن";
+    if (mins < 60) return `منذ ${mins} دقيقة`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `منذ ${hours} ساعة`;
+    const days = Math.floor(hours / 24);
+    return `منذ ${days} يوم`;
+  }
 
   return (
     <Card className="lg:col-span-2">
@@ -78,7 +84,7 @@ export default function ActivityLog({ activities }: { activities: Activity[] }) 
             </div>
             <Badge variant="secondary">
               <Clock className="h-3 w-3 me-1" />
-              مباشر
+              آخر 15 نشاطاً
             </Badge>
           </div>
         </div>

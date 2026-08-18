@@ -4,11 +4,13 @@ import { db } from "@/db";
 import { tenants, webhookEndpoints, whatsappConfigs, activityLog, webhookCoordinators, users, userWhatsappCredentials } from "@/db/schema";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
+import { assertUserInTenant } from "@/lib/tenant-guards";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { encrypt } from "@/lib/encryption";
 import { hashSecret, secretPrefix } from "@/lib/secret-hash";
 import { setWebhookCoordinatorsSchema, webhookLabelSchema } from "@/lib/schemas";
+import { rateLimit } from "@/lib/rate-limit";
 
 async function requireOwnerOrAdmin() {
   const ctx = await requireTenant();
@@ -24,13 +26,30 @@ async function requireOwnerOrAdmin() {
 
 export async function getTenantSettings() {
   // قراءة اسم الشركة مسموحة لكل المستخدمين المصادَقين (تظهر في الـ UI)
+  // (صفحة /settings نفسها محميّة لـ OWNER/ADMIN عبر settings/layout.tsx)
   const { tenantId } = await requireTenant();
 
+  // نختار فقط الأعمدة التي تعرضها واجهة الإعدادات — كان findFirst يُرجع صف
+  // tenants الكامل لأي دور مصادَق، بما فيه أسرار النسخ الاحتياطي.
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.id, tenantId),
+    columns: {
+      id: true,
+      name: true,
+      plan: true,
+      status: true,
+      settings: true,
+    },
   });
+  if (!tenant) return tenant;
 
-  return tenant;
+  // 🔒 backupSheetSecret/backupSheetUrl لا تغادر السيرفر أبداً —
+  // getBackupStatus يكشف hasSecret فقط عمداً، ونطابق ذلك هنا.
+  const safeSettings = { ...((tenant.settings ?? {}) as Record<string, unknown>) };
+  delete safeSettings.backupSheetSecret;
+  delete safeSettings.backupSheetUrl;
+
+  return { ...tenant, settings: safeSettings };
 }
 
 // =============================================
@@ -47,7 +66,7 @@ export async function updateTenantSettings(input: {
   if (input.name !== undefined) {
     const trimmed = input.name.trim();
     if (!trimmed || trimmed.length > 255) {
-      throw new Error("اسم الشركة غير صالح");
+      return { success: false as const, error: "اسم الشركة غير صالح" };
     }
   }
 
@@ -84,6 +103,7 @@ export async function updateTenantSettings(input: {
   });
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -94,9 +114,14 @@ export async function createWebhookKey(label?: string) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
   // تحقّق صارم من اسم الحملة (1-60 حرف) — يطابق حدّ DB + يمنع أسماء فارغة
-  const validatedLabel = label
-    ? webhookLabelSchema.parse(label)
-    : "Google Sheets";
+  let validatedLabel = "Google Sheets";
+  if (label) {
+    const p = webhookLabelSchema.safeParse(label);
+    if (!p.success) {
+      return { success: false as const, error: "اسم الحملة غير صالح (1-60 حرف)" };
+    }
+    validatedLabel = p.data;
+  }
 
   // نولّد السر plaintext (يُعاد للمستخدم مرة واحدة فقط)
   const secretKey = randomBytes(32).toString("hex");
@@ -125,7 +150,7 @@ export async function createWebhookKey(label?: string) {
   });
 
   revalidatePath("/settings/webhooks");
-  return { id: webhook.id, secretKey, label: webhook.label };
+  return { success: true as const, id: webhook.id, secretKey, label: webhook.label };
 }
 
 // =============================================
@@ -135,8 +160,21 @@ export async function createWebhookKey(label?: string) {
 export async function getWebhookKeys() {
   const { tenantId } = await requireOwnerOrAdmin();
 
+  // نستثني secretHash عمداً — لا حاجة له في العميل ولا يجب أن يغادر الخادم
   return db
-    .select()
+    .select({
+      id: webhookEndpoints.id,
+      tenantId: webhookEndpoints.tenantId,
+      secretKey: webhookEndpoints.secretKey,
+      secretPrefix: webhookEndpoints.secretPrefix,
+      label: webhookEndpoints.label,
+      isActive: webhookEndpoints.isActive,
+      sendWelcome: webhookEndpoints.sendWelcome,
+      welcomeTemplateName: webhookEndpoints.welcomeTemplateName,
+      lastAssignedToUserId: webhookEndpoints.lastAssignedToUserId,
+      lastReceivedAt: webhookEndpoints.lastReceivedAt,
+      createdAt: webhookEndpoints.createdAt,
+    })
     .from(webhookEndpoints)
     .where(eq(webhookEndpoints.tenantId, tenantId));
 }
@@ -155,7 +193,7 @@ export async function toggleWebhook(webhookId: string) {
       and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId))
     );
 
-  if (!webhook) throw new Error("الويب هوك غير موجود");
+  if (!webhook) return { success: false as const, error: "الويب هوك غير موجود" };
 
   await db
     .update(webhookEndpoints)
@@ -165,6 +203,7 @@ export async function toggleWebhook(webhookId: string) {
     );
 
   revalidatePath("/settings/webhooks");
+  return { success: true as const };
 }
 
 // =============================================
@@ -181,7 +220,7 @@ export async function toggleWebhookWelcome(webhookId: string) {
       and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId))
     );
 
-  if (!webhook) throw new Error("الويب هوك غير موجود");
+  if (!webhook) return { success: false as const, error: "الويب هوك غير موجود" };
 
   await db
     .update(webhookEndpoints)
@@ -191,6 +230,7 @@ export async function toggleWebhookWelcome(webhookId: string) {
     );
 
   revalidatePath("/settings/webhooks");
+  return { success: true as const };
 }
 
 // =============================================
@@ -211,7 +251,7 @@ export async function updateWebhookWelcomeTemplate(
 
   const cleaned = templateName?.trim() || null;
   if (cleaned && (cleaned.length > 255 || cleaned.length < 1)) {
-    throw new Error("اسم القالب يجب أن يكون بين 1 و 255 حرف");
+    return { success: false as const, error: "اسم القالب يجب أن يكون بين 1 و 255 حرف" };
   }
 
   const [webhook] = await db
@@ -220,7 +260,7 @@ export async function updateWebhookWelcomeTemplate(
     .where(
       and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId)),
     );
-  if (!webhook) throw new Error("الويب هوك غير موجود");
+  if (!webhook) return { success: false as const, error: "الويب هوك غير موجود" };
 
   await db
     .update(webhookEndpoints)
@@ -230,7 +270,7 @@ export async function updateWebhookWelcomeTemplate(
     );
 
   revalidatePath("/settings/webhooks");
-  return { success: true, templateName: cleaned };
+  return { success: true as const, templateName: cleaned };
 }
 
 // =============================================
@@ -250,7 +290,7 @@ export async function getWebhookCoordinators(webhookId: string) {
     .from(webhookEndpoints)
     .where(and(eq(webhookEndpoints.id, webhookId), eq(webhookEndpoints.tenantId, tenantId)))
     .limit(1);
-  if (!wh) throw new Error("الويب هوك غير موجود");
+  if (!wh) return { success: false as const, error: "الويب هوك غير موجود" };
 
   return db
     .select({ userId: webhookCoordinators.userId })
@@ -266,7 +306,11 @@ export async function getWebhookCoordinators(webhookId: string) {
  */
 export async function setWebhookCoordinators(input: { webhookId: string; userIds: string[] }) {
   const { tenantId, userId: actorId } = await requireOwnerOrAdmin();
-  const parsed = setWebhookCoordinatorsSchema.parse(input);
+  const parsedResult = setWebhookCoordinatorsSchema.safeParse(input);
+  if (!parsedResult.success) {
+    return { success: false as const, error: "بيانات غير صالحة — تحقق من المدخلات" };
+  }
+  const parsed = parsedResult.data;
 
   // 1. تحقّق ملكية webhook
   const [wh] = await db
@@ -274,7 +318,7 @@ export async function setWebhookCoordinators(input: { webhookId: string; userIds
     .from(webhookEndpoints)
     .where(and(eq(webhookEndpoints.id, parsed.webhookId), eq(webhookEndpoints.tenantId, tenantId)))
     .limit(1);
-  if (!wh) throw new Error("الويب هوك غير موجود");
+  if (!wh) return { success: false as const, error: "الويب هوك غير موجود" };
 
   // 2. تحقّق أن كل userIds في نفس tenant + نشطون
   if (parsed.userIds.length > 0) {
@@ -289,7 +333,7 @@ export async function setWebhookCoordinators(input: { webhookId: string; userIds
         ),
       );
     if (validUsers.length !== parsed.userIds.length) {
-      throw new Error("بعض المنسقين غير موجودين أو معطّلون");
+      return { success: false as const, error: "بعض المنسقين غير موجودين أو معطّلون" };
     }
   }
 
@@ -324,7 +368,7 @@ export async function setWebhookCoordinators(input: { webhookId: string; userIds
   });
 
   revalidatePath("/settings/webhooks");
-  return { success: true, count: parsed.userIds.length };
+  return { success: true as const, count: parsed.userIds.length };
 }
 
 // =============================================
@@ -368,6 +412,13 @@ export async function saveWhatsappConfig(input: {
 }) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
+  // تطبيع الحقول النصّية: "" → null حتى لا يحجب قالباً صالحاً عبر سلاسل ??
+  // (سابقاً كان يُخزَّن اسم قالب فارغ، فيُعامَل لاحقاً كأنه "محدَّد" ويفشل الإرسال).
+  const cleanStr = (v: string | undefined) => (v === undefined ? undefined : v.trim() || null);
+  const phoneNumber = cleanStr(input.phoneNumber);
+  const templateName = cleanStr(input.templateName);
+  const reminderTemplateName = cleanStr(input.reminderTemplateName);
+
   // Check if config exists
   const existing = await db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
@@ -377,12 +428,12 @@ export async function saveWhatsappConfig(input: {
     await db
       .update(whatsappConfigs)
       .set({
-        ...(input.phoneNumber !== undefined && { phoneNumber: input.phoneNumber }),
+        ...(phoneNumber !== undefined && { phoneNumber }),
         ...(input.provider !== undefined && { provider: input.provider }),
-        ...(input.templateName !== undefined && { templateName: input.templateName }),
+        ...(templateName !== undefined && { templateName }),
         ...(input.templateLanguage !== undefined && { templateLanguage: input.templateLanguage }),
         ...(input.templateParams !== undefined && { templateParams: input.templateParams }),
-        ...(input.reminderTemplateName !== undefined && { reminderTemplateName: input.reminderTemplateName }),
+        ...(reminderTemplateName !== undefined && { reminderTemplateName }),
         ...(input.reminderEvening !== undefined && { reminderEvening: input.reminderEvening }),
         ...(input.reminderMorning !== undefined && { reminderMorning: input.reminderMorning }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
@@ -392,12 +443,12 @@ export async function saveWhatsappConfig(input: {
   } else {
     await db.insert(whatsappConfigs).values({
       tenantId,
-      phoneNumber: input.phoneNumber,
+      phoneNumber: phoneNumber ?? null,
       provider: input.provider || "meta",
-      templateName: input.templateName,
+      templateName: templateName ?? null,
       templateLanguage: input.templateLanguage || "ar",
       templateParams: input.templateParams || ["customer_name"],
-      reminderTemplateName: input.reminderTemplateName,
+      reminderTemplateName: reminderTemplateName ?? null,
       reminderEvening: input.reminderEvening ?? true,
       reminderMorning: input.reminderMorning ?? true,
       isActive: input.isActive || false,
@@ -453,7 +504,7 @@ export async function testWhatsappConnectionAction(testPhone: string) {
   const { tenantId } = await requireOwnerOrAdmin();
 
   if (!testPhone || testPhone.trim().length < 4) {
-    return { success: false, error: "أدخل رقم هاتف للاختبار" };
+    return { success: false as const, error: "أدخل رقم هاتف للاختبار" };
   }
 
   const { testWhatsappConnection } = await import("@/lib/whatsapp");
@@ -482,6 +533,8 @@ export async function getMyWhatsappCredentials(targetUserId?: string) {
       userId: userWhatsappCredentials.userId,
       phoneNumberId: userWhatsappCredentials.phoneNumberId,
       templateLanguage: userWhatsappCredentials.templateLanguage,
+      welcomeTemplateName: userWhatsappCredentials.welcomeTemplateName,
+      reminderTemplateName: userWhatsappCredentials.reminderTemplateName,
       isActive: userWhatsappCredentials.isActive,
       lastTestedAt: userWhatsappCredentials.lastTestedAt,
       lastTestSuccess: userWhatsappCredentials.lastTestSuccess,
@@ -504,6 +557,8 @@ export async function getMyWhatsappCredentials(targetUserId?: string) {
     userId: creds.userId,
     phoneNumberId: creds.phoneNumberId,
     templateLanguage: creds.templateLanguage,
+    welcomeTemplateName: creds.welcomeTemplateName,
+    reminderTemplateName: creds.reminderTemplateName,
     isActive: creds.isActive,
     lastTestedAt: creds.lastTestedAt,
     lastTestSuccess: creds.lastTestSuccess,
@@ -518,6 +573,8 @@ export async function getMyWhatsappCredentials(targetUserId?: string) {
 export async function saveMyWhatsappCredentials(input: {
   phoneNumberId?: string;
   templateLanguage?: string;
+  welcomeTemplateName?: string | null;
+  reminderTemplateName?: string | null;
   isActive?: boolean;
   targetUserId?: string;
 }) {
@@ -526,6 +583,13 @@ export async function saveMyWhatsappCredentials(input: {
     input.targetUserId && ["OWNER", "ADMIN"].includes(ctx.role)
       ? input.targetUserId
       : ctx.userId;
+
+  // 🔒 منع الكتابة عبر الشركات: لو نستهدف مستخدماً آخر، تأكّد أنه ضمن نفس الشركة.
+  // (userId فريد عالمياً في user_whatsapp_credentials، فبدون هذا الفحص يمكن لمالك
+  // شركة A الكتابة فوق بيانات مستخدم في شركة B بتمرير معرّفه.)
+  if (userId !== ctx.userId) {
+    await assertUserInTenant(userId, ctx.tenantId);
+  }
 
   // تحقّق صلاحية isActive — لا تُفعّل بدون apiKey + phoneNumberId
   if (input.isActive) {
@@ -542,19 +606,42 @@ export async function saveMyWhatsappCredentials(input: {
     const hasKey = !!existing?.apiKeyEncrypted;
     const hasPhone = !!(input.phoneNumberId?.trim() || existing?.phoneNumberId);
     if (!hasKey || !hasPhone) {
-      throw new Error("لا يمكن التفعيل بدون Access Token + Phone Number ID");
+      return { success: false as const, error: "لا يمكن التفعيل بدون Access Token + Phone Number ID" };
     }
   }
+
+  // تحقّق طول أسماء القوالب مقدّماً — نُرجع خطأً عربياً بدل الرمي (يُخفى في الإنتاج)
+  for (const v of [input.welcomeTemplateName, input.reminderTemplateName]) {
+    if (v && v.trim().length > 255) {
+      return { success: false as const, error: "اسم القالب طويل جداً (أقصى 255 حرف)" };
+    }
+  }
+
+  // helper: trim + null لو فارغ
+  const cleanTemplate = (v: string | null | undefined): string | null | undefined => {
+    if (v === undefined) return undefined;
+    if (v === null) return null;
+    return v.trim() || null;
+  };
 
   const update: Record<string, unknown> = { updatedAt: new Date() };
   if (input.phoneNumberId !== undefined) update.phoneNumberId = input.phoneNumberId.trim() || null;
   if (input.templateLanguage !== undefined) update.templateLanguage = input.templateLanguage;
+  const welcomeTpl = cleanTemplate(input.welcomeTemplateName);
+  if (welcomeTpl !== undefined) update.welcomeTemplateName = welcomeTpl;
+  const reminderTpl = cleanTemplate(input.reminderTemplateName);
+  if (reminderTpl !== undefined) update.reminderTemplateName = reminderTpl;
   if (input.isActive !== undefined) update.isActive = input.isActive;
 
   const [existing] = await db
     .select({ id: userWhatsappCredentials.id })
     .from(userWhatsappCredentials)
-    .where(eq(userWhatsappCredentials.userId, userId))
+    .where(
+      and(
+        eq(userWhatsappCredentials.userId, userId),
+        eq(userWhatsappCredentials.tenantId, ctx.tenantId),
+      ),
+    )
     .limit(1);
 
   if (existing) {
@@ -568,12 +655,14 @@ export async function saveMyWhatsappCredentials(input: {
       tenantId: ctx.tenantId,
       phoneNumberId: input.phoneNumberId?.trim() || null,
       templateLanguage: input.templateLanguage || "ar",
+      welcomeTemplateName: welcomeTpl ?? null,
+      reminderTemplateName: reminderTpl ?? null,
       isActive: input.isActive ?? false,
     });
   }
 
   revalidatePath("/settings/whatsapp");
-  return { success: true };
+  return { success: true as const };
 }
 
 /**
@@ -585,9 +674,14 @@ export async function saveMyWhatsappApiKey(apiKey: string, targetUserId?: string
   const userId =
     targetUserId && ["OWNER", "ADMIN"].includes(ctx.role) ? targetUserId : ctx.userId;
 
+  // 🔒 منع الكتابة عبر الشركات (انظر saveMyWhatsappCredentials).
+  if (userId !== ctx.userId) {
+    await assertUserInTenant(userId, ctx.tenantId);
+  }
+
   const trimmed = apiKey.trim();
   if (trimmed.length < 50) {
-    throw new Error("Access Token غير صالح — يجب أن يكون 50+ حرف");
+    return { success: false as const, error: "Access Token غير صالح — يجب أن يكون 50+ حرف" };
   }
 
   // AAD منفصل لكل user — يربط السر بـ userId (يمنع swap بين users)
@@ -596,7 +690,12 @@ export async function saveMyWhatsappApiKey(apiKey: string, targetUserId?: string
   const [existing] = await db
     .select({ id: userWhatsappCredentials.id })
     .from(userWhatsappCredentials)
-    .where(eq(userWhatsappCredentials.userId, userId))
+    .where(
+      and(
+        eq(userWhatsappCredentials.userId, userId),
+        eq(userWhatsappCredentials.tenantId, ctx.tenantId),
+      ),
+    )
     .limit(1);
 
   if (existing) {
@@ -613,7 +712,7 @@ export async function saveMyWhatsappApiKey(apiKey: string, targetUserId?: string
   }
 
   revalidatePath("/settings/whatsapp");
-  return { success: true };
+  return { success: true as const };
 }
 
 /**
@@ -631,7 +730,14 @@ export async function testMyWhatsappCredentialsAction(input: {
       : ctx.userId;
 
   if (!input.testPhone || input.testPhone.trim().length < 4) {
-    return { success: false, error: "أدخل رقم هاتف للاختبار" };
+    return { success: false as const, error: "أدخل رقم هاتف للاختبار" };
+  }
+
+  // 🔒 rate limit — الاختبار يُرسل رسالة WhatsApp حقيقية مدفوعة لأي رقم يُدخَله
+  // المستخدم. 5 محاولات/ساعة لكل مستخدم تمنع الإساءة (spam عبر creds المنشأة/المنسق).
+  const rl = await rateLimit(`wa-test:${ctx.userId}`, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return { success: false as const, error: "تجاوزت حد الاختبارات (5 في الساعة) — حاول بعد قليل" };
   }
 
   const { testWhatsappConnection } = await import("@/lib/whatsapp");
@@ -656,7 +762,7 @@ export async function deleteMyWhatsappCredentials(targetUserId?: string) {
     );
 
   revalidatePath("/settings/whatsapp");
-  return { success: true };
+  return { success: true as const };
 }
 
 /**

@@ -275,18 +275,10 @@ export function validateAndNormalizePhone(
     }
   }
 
-  // 10 أرقام تبدأ بـ 5 (بدون 0) → نجرب كسعودي مع +966
-  if (digitsOnly.length === 10 && digitsOnly.startsWith("5")) {
-    const withCode = parsePhoneNumberFromString("+966" + digitsOnly.slice(0, 9));
-    if (withCode && withCode.isValid()) {
-      return {
-        valid: true,
-        phone: withCode.format("E.164"),
-        country: withCode.country || null,
-        error: null,
-      };
-    }
-  }
+  // ملاحظة: لا نتعامل مع "10 أرقام تبدأ بـ5 بدون صفر" — الجوال السعودي الصحيح
+  // إمّا 9 أرقام (5XXXXXXXX) أو 10 بـ"05". رقم من 10 خانات يبدأ بـ5 (وليس 05)
+  // تالف؛ كان الكود يقصّ الخانة العاشرة (slice(0,9)) فيفبرك رقماً مختلفاً عمّا أدخله
+  // المستخدم ويحفظه كأنه صحيح. الأنظف: نرفضه ليصحّحه المستخدم بنفسه.
 
   // ⚠️ رقم غامض بدون مفتاح دولي ولا يطابق أي نمط سعودي
   // نحفظه كأرقام خام بدلاً من تخمين الدولة (التخمين يسبب أخطاء)
@@ -307,7 +299,39 @@ export function validateAndNormalizePhone(
 }
 
 /**
- * بناء رابط WhatsApp آمن من رقم — يقبل فقط الأرقام، يرفض query params مدسوسة
+ * يفسّر سلسلة موعد كـ "وقت جدار" بتوقيت الرياض (UTC+3) ما لم تتضمّن منطقة زمنية.
+ *
+ * المشكلة: الخادم يعمل UTC، فـ new Date("2026-06-14T14:00") المجرّدة (من
+ * <input type="datetime-local"> أو شريحة وقت) تُفسَّر بتوقيت الخادم لا الرياض،
+ * فيُخزَّن الموعد بفارق 3 ساعات عن نيّة المستخدم — بينما العرض وتوليد الشرائح
+ * يستخدمان الرياض، فتظهر شبكة الأوقات الشريحة الخطأ مشغولة.
+ *
+ * - بها Z أو ±HH:MM (ISO كامل) → تُحترَم كما هي.
+ * - "YYYY-MM-DDTHH:MM[:SS[.SSS]]" مجرّدة → تُعامَل كرياض (+03:00).
+ *   (المللي ثانية اختيارية — بدون دعمها كان "…T14:00:00.123" يفوت الـ regex
+ *   ويُفسَّر بتوقيت السيرفر فينزاح 3 ساعات.)
+ * - "YYYY-MM-DD" فقط → بداية اليوم بالرياض.
+ * - غير ذلك → fallback آمن (new Date) دون كسر.
+ */
+export function parseRiyadhDateTime(input: string): Date {
+  const s = input.trim();
+  if (/[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/.test(s)) return new Date(`${s}+03:00`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T00:00:00+03:00`);
+  return new Date(s);
+}
+
+/**
+ * تحقق شكلي من UUID — يمنع تمرير نصوص خام لـ PG (خطأ 22P02 أو حقن تعبير).
+ * شكلي فقط؛ لا يضمن الوجود (ذلك دور assert*InTenant).
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isUuid(v: unknown): v is string {
+  return typeof v === "string" && UUID_RE.test(v);
+}
+
+/**
+ * بناء رابط WhatsApp آمن من رقم — يقبل فقط الأرقام, يرفض query params مدسوسة
  * يمنع phishing عبر phone يحوي `?text=Spam`
  */
 export function toWhatsappUrl(phone: string | null | undefined): string | null {

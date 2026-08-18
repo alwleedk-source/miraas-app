@@ -2,12 +2,13 @@
 
 import { useEffect } from "react";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
+import { logClientError } from "@/app/actions/log-client-error";
 
 /**
  * Global Error Boundary — Next.js App Router
  *
  * يمسك أي exception غير معالج في الصفحات ويعرض UI لطيف بدل الشاشة البيضاء.
- * الخطأ يُرسَل للـ console تلقائياً — Next.js يربط digest ID بالخطأ السيرفري.
+ * يُبلّغ السيرفر (error_log) مثل error.tsx الخاص بمجموعة (dashboard).
  */
 export default function GlobalError({
   error,
@@ -18,6 +19,14 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error("unhandled client error", error);
+    // أرسل للسيرفر ليُسجَّل في error_log — fire-and-forget (الأكشن يعيد
+    // { success } | Fail، ولا شيء نفعله هنا عند فشل الإبلاغ نفسه)
+    logClientError({
+      message: error.message,
+      digest: error.digest,
+      stack: error.stack,
+      url: typeof window !== "undefined" ? window.location.href : undefined,
+    }).catch(() => {});
   }, [error]);
 
   return (

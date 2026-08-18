@@ -23,10 +23,26 @@ const BOOKING_STATUS_LABELS: Record<string, string> = {
   POSTPONED: "مؤجّل",
 };
 
+type Fail = { success: false; error: string };
+
+/**
+ * عقد الأخطاء الموحّد: الأخطاء المتوقَّعة (صلاحية/تحقق) تُعاد كـ
+ * { success: false, error: "عربي" } — Next.js يُخفي رسائل المرمية في production.
+ */
+function expectedError(err: unknown): string | null {
+  if (err instanceof Error && /[؀-ۿ]/.test(err.message)) return err.message;
+  return null;
+}
+
 /** يُهرب قيمة CSV: لو فيها , أو " أو newline → اقتباس مزدوج */
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = String(v);
+  let s = String(v);
+  // CSV formula injection: Excel/Sheets تنفّذ الخلايا التي تبدأ بـ = + - @ أو tab
+  // كصيغ — بادئة ' تجبرها كنص (أسماء العملاء تأتي من webhook عام).
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
   if (/[",\n\r]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -59,9 +75,10 @@ export async function exportLeadsCSV(options?: {
   priority?: string;
   assignedTo?: string;
   includeArchived?: boolean;
-}): Promise<{ filename: string; csv: string; count: number }> {
-  const { tenantId, role } = await requireTenant();
-  assertRole(role, ROLE.OWNER_ADMIN);
+}): Promise<{ success: true; filename: string; csv: string; count: number } | Fail> {
+  try {
+    const { tenantId, role } = await requireTenant();
+    assertRole(role, ROLE.OWNER_ADMIN);
 
   const conditions = [
     eq(leads.tenantId, tenantId),
@@ -161,10 +178,16 @@ export async function exportLeadsCSV(options?: {
   const suffix = options?.includeArchived ? "-with-archive" : "";
 
   return {
+    success: true as const,
     filename: `meras-leads-${today}${suffix}.csv`,
     csv,
     count: rows.length,
   };
+  } catch (err) {
+    const msg = expectedError(err);
+    if (msg) return { success: false as const, error: msg } satisfies Fail;
+    throw err;
+  }
 }
 
 /**
@@ -178,9 +201,10 @@ export async function exportLeadsCSV(options?: {
 export async function exportArchivedLeadsCSV(options?: {
   reason?: string;
   search?: string;
-}): Promise<{ filename: string; csv: string; count: number }> {
-  const { tenantId, role } = await requireTenant();
-  assertRole(role, ROLE.OWNER_ADMIN);
+}): Promise<{ success: true; filename: string; csv: string; count: number } | Fail> {
+  try {
+    const { tenantId, role } = await requireTenant();
+    assertRole(role, ROLE.OWNER_ADMIN);
 
   const conditions = [
     eq(leads.tenantId, tenantId),
@@ -269,8 +293,14 @@ export async function exportArchivedLeadsCSV(options?: {
   const reasonSuffix = options?.reason ? `-${options.reason.toLowerCase()}` : "";
 
   return {
+    success: true as const,
     filename: `meras-archive-${today}${reasonSuffix}.csv`,
     csv,
     count: rows.length,
   };
+  } catch (err) {
+    const msg = expectedError(err);
+    if (msg) return { success: false as const, error: msg } satisfies Fail;
+    throw err;
+  }
 }

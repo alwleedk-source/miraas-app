@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,20 +76,30 @@ export function PipelineManager({
   const [error, setError] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
+  // الترتيب قبل بدء السحب — للتراجع لو فشل حفظ الترتيب
+  const orderBeforeDragRef = useRef<Stage[]>(initialStages);
 
   // إضافة مرحلة
   const handleAdd = () => {
     if (!newName.trim()) return;
     setError(null);
     startTransition(async () => {
-      const stage = await createStage({
-        name: newName.trim(),
-        color: newColor,
-      });
-      setStages((prev) => [...prev, { ...stage, count: 0 }]);
-      setNewName("");
-      setNewColor(PRESET_COLORS[0]);
-      setShowAdd(false);
+      try {
+        const result = await createStage({
+          name: newName.trim(),
+          color: newColor,
+        });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setStages((prev) => [...prev, { ...result.stage, count: 0 }]);
+        setNewName("");
+        setNewColor(PRESET_COLORS[0]);
+        setShowAdd(false);
+      } catch {
+        setError("تعذّر إنشاء المرحلة — حاول مجدداً");
+      }
     });
   };
 
@@ -106,17 +116,25 @@ export function PipelineManager({
     if (!editingId || !editName.trim()) return;
     setError(null);
     startTransition(async () => {
-      await updateStage({
-        stageId: editingId,
-        name: editName.trim(),
-        color: editColor,
-      });
-      setStages((prev) =>
-        prev.map((s) =>
-          s.id === editingId ? { ...s, name: editName.trim(), color: editColor } : s
-        )
-      );
-      setEditingId(null);
+      try {
+        const result = await updateStage({
+          stageId: editingId,
+          name: editName.trim(),
+          color: editColor,
+        });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setStages((prev) =>
+          prev.map((s) =>
+            s.id === editingId ? { ...s, name: editName.trim(), color: editColor } : s
+          )
+        );
+        setEditingId(null);
+      } catch {
+        setError("تعذّر حفظ التعديل — حاول مجدداً");
+      }
     });
   };
 
@@ -141,17 +159,21 @@ export function PipelineManager({
 
     setError(null);
     startTransition(async () => {
-      const result = await archiveStage({ stageId });
-      if ("error" in result) {
-        setError(result.error ?? "حدث خطأ");
-        return;
+      try {
+        const result = await archiveStage({ stageId });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        // انقلها للأرشيف بصرياً
+        setArchivedStages((prev) => [
+          { id: stage.id, name: stage.name, color: stage.color, archivedAt: new Date() },
+          ...prev,
+        ]);
+        setStages((prev) => prev.filter((s) => s.id !== stageId));
+      } catch {
+        setError("تعذّرت أرشفة المرحلة — حاول مجدداً");
       }
-      // انقلها للأرشيف بصرياً
-      setArchivedStages((prev) => [
-        { id: stage.id, name: stage.name, color: stage.color, archivedAt: new Date() },
-        ...prev,
-      ]);
-      setStages((prev) => prev.filter((s) => s.id !== stageId));
     });
   };
 
@@ -161,25 +183,29 @@ export function PipelineManager({
     if (!archived) return;
     setError(null);
     startTransition(async () => {
-      const result = await unarchiveStage({ stageId });
-      if ("error" in result) {
-        setError(result.error ?? "حدث خطأ");
-        return;
+      try {
+        const result = await unarchiveStage({ stageId });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        // أعدها للقائمة النشطة
+        setArchivedStages((prev) => prev.filter((s) => s.id !== stageId));
+        setStages((prev) => [
+          ...prev,
+          {
+            id: archived.id,
+            name: archived.name,
+            color: archived.color,
+            position: prev.length,
+            isDefault: false,
+            isExclusive: false,
+            count: 0,
+          },
+        ]);
+      } catch {
+        setError("تعذّر استرجاع المرحلة — حاول مجدداً");
       }
-      // أعدها للقائمة النشطة
-      setArchivedStages((prev) => prev.filter((s) => s.id !== stageId));
-      setStages((prev) => [
-        ...prev,
-        {
-          id: archived.id,
-          name: archived.name,
-          color: archived.color,
-          position: prev.length,
-          isDefault: false,
-          isExclusive: false,
-          count: 0,
-        },
-      ]);
     });
   };
 
@@ -187,10 +213,18 @@ export function PipelineManager({
   const handleSetDefault = (stageId: string) => {
     setError(null);
     startTransition(async () => {
-      await setDefaultStage({ stageId });
-      setStages((prev) =>
-        prev.map((s) => ({ ...s, isDefault: s.id === stageId }))
-      );
+      try {
+        const result = await setDefaultStage({ stageId });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setStages((prev) =>
+          prev.map((s) => ({ ...s, isDefault: s.id === stageId }))
+        );
+      } catch {
+        setError("تعذّر تعيين المرحلة الافتراضية — حاول مجدداً");
+      }
     });
   };
 
@@ -198,15 +232,26 @@ export function PipelineManager({
   const handleToggleExclusive = (stageId: string) => {
     setError(null);
     startTransition(async () => {
-      await toggleExclusive({ stageId });
-      setStages((prev) =>
-        prev.map((s) => s.id === stageId ? { ...s, isExclusive: !s.isExclusive } : s)
-      );
+      try {
+        const result = await toggleExclusive({ stageId });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setStages((prev) =>
+          prev.map((s) => s.id === stageId ? { ...s, isExclusive: !s.isExclusive } : s)
+        );
+      } catch {
+        setError("تعذّر تبديل حصرية المرحلة — حاول مجدداً");
+      }
     });
   };
 
   // السحب والإفلات
-  const handleDragStart = (id: string) => setDraggedId(id);
+  const handleDragStart = (id: string) => {
+    orderBeforeDragRef.current = stages; // التقاط الترتيب قبل أي تعديل تفاؤلي
+    setDraggedId(id);
+  };
 
   const handleDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
@@ -227,10 +272,21 @@ export function PipelineManager({
   const handleDragEnd = () => {
     if (!draggedId) return;
     setDraggedId(null);
+    setError(null);
+    const newOrder = stages.map((s) => s.id);
     startTransition(async () => {
-      await reorderStages({
-        stageIds: stages.map((s) => s.id),
-      });
+      // تراجع — لم يُحفَظ الترتيب، نُعيد ما قبل السحب ونُظهر الخطأ (لا desync صامت)
+      const rollback = () => setStages(orderBeforeDragRef.current);
+      try {
+        const result = await reorderStages({ stageIds: newOrder });
+        if (!result.success) {
+          rollback();
+          setError(result.error);
+        }
+      } catch {
+        rollback();
+        setError("تعذّر حفظ ترتيب المراحل");
+      }
     });
   };
 

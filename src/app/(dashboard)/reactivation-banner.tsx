@@ -16,6 +16,8 @@ export default async function ReactivationBanner() {
     return null;
   }
 
+  // فشل متوقَّع — لا نعرض شيئاً (ولا رقماً فارغاً)
+  if (!stats.success) return null;
   if (stats.dueForReactivation === 0) return null;
 
   return (

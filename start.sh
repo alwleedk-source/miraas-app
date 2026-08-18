@@ -2,7 +2,7 @@
 set -e
 
 echo "🔄 Running database migrations..."
-node migrate.mjs || echo "⚠️ Migration warning (tables may already exist)"
+node scripts/migrate.mjs
 
 echo "🚀 Starting مِراس..."
 exec node server.js

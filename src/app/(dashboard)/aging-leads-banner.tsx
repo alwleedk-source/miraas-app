@@ -20,6 +20,8 @@ export default async function AgingLeadsBanner() {
     return null;
   }
 
+  // فشل متوقَّع (صلاحية/تحقق) — لا banner ولا ضوضاء
+  if (!stats.success) return null;
   if (stats.total === 0) return null;
 
   const isCritical = stats.critical >= 5 || stats.total >= 15;

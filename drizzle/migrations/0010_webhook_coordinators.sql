@@ -33,6 +33,8 @@ CREATE INDEX IF NOT EXISTS webhook_coordinators_user_idx
   ON webhook_coordinators(user_id);
 
 -- 3. تخفيض حدّ label لتصميم منظّم (آمن: UI يحدّه بـ 50 حالياً)
--- تحقّق قبل الإطلاق على production:
---   SELECT id, length(label) FROM webhook_endpoints WHERE length(label) > 60;
+-- ⚠️ المهاجر يعيد تشغيل هذا الملف في كل إقلاع. لو وُجدت أي تسمية أطول من 60 حرفاً
+-- (بيانات قديمة)، فإن ALTER TYPE يفشل بخطأ "value too long" غير المُتسامَح معه →
+-- يمنع التطبيق من البدء. لذا نقصّ البيانات الطويلة أولاً (idempotent — بعد القصّ يصبح no-op).
+UPDATE webhook_endpoints SET label = left(label, 60) WHERE length(label) > 60;
 ALTER TABLE webhook_endpoints ALTER COLUMN label TYPE VARCHAR(60);

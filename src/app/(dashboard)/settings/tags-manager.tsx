@@ -29,19 +29,28 @@ export default function TagsManager({ initialTags }: { initialTags: TagData[] })
     startTransition(async () => {
       try {
         const tag = await createTag({ name: newName.trim(), color: newColor });
-        setTags((prev) => [...prev, tag]);
+        if (!tag.success) {
+          alert(tag.error);
+          return;
+        }
+        setTags((prev) => [...prev, { id: tag.id, name: tag.name, color: tag.color }]);
         setNewName("");
         setShowForm(false);
       } catch {
-        // ignore
+        alert("تعذّر إنشاء التصنيف — حاول مرة أخرى");
       }
     });
   };
 
   const handleDelete = (tagId: string) => {
+    if (!confirm("حذف هذا التصنيف؟ سيُزال عن كل العملاء المرتبطين به.")) return;
     startTransition(async () => {
-      await deleteTag(tagId);
-      setTags((prev) => prev.filter((t) => t.id !== tagId));
+      try {
+        await deleteTag(tagId);
+        setTags((prev) => prev.filter((t) => t.id !== tagId));
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "تعذّر حذف التصنيف");
+      }
     });
   };
 

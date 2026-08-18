@@ -61,6 +61,24 @@ export type BackupPayload = {
 const FETCH_TIMEOUT_MS = 8_000;
 
 /**
+ * حارس SSRF: الهدف الوحيد المشروع هو Google Apps Script Web App. نقصر الوجهة
+ * على https + مضيفات Google فقط، فلا يمكن توجيه الـ fetch (الذي يعمل من الخادم)
+ * إلى عناوين داخلية/شبكة خاصة أو endpoint بيانات السحابة (169.254.169.254).
+ * Apps Script يعيد توجيهاً إلى script.googleusercontent.com (ضمن قائمة السماح).
+ */
+export function isAllowedBackupUrl(raw: string | undefined | null): boolean {
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return host === "script.google.com" || host === "script.googleusercontent.com";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * يدفع event للـ Sheet — async، يُستدعى بعد كل DB write.
  * استخدم void backupPush(...) لتجنّب await.
  */
@@ -85,6 +103,21 @@ export async function backupPush(
 
     if (!settings.backupSheetEnabled || !settings.backupSheetUrl) {
       return; // backup غير مفعّل — تخطّى صامتاً
+    }
+
+    // 🔒 SSRF guard — لا تُرسل إلا لمضيف Google Apps Script
+    if (!isAllowedBackupUrl(settings.backupSheetUrl)) {
+      logger.warn("backup push blocked: disallowed url host", { tenantId });
+      void db
+        .update(tenants)
+        .set({
+          settings: sql`COALESCE(settings, '{}'::jsonb) || ${JSON.stringify({
+            backupLastError: "رابط النسخ غير مسموح — يجب أن يكون رابط Google Apps Script (https://script.google.com/...)",
+          })}::jsonb`,
+        })
+        .where(eq(tenants.id, tenantId))
+        .catch(() => {});
+      return;
     }
 
     let success = await sendOnce(settings.backupSheetUrl, settings.backupSheetSecret ?? "", payload);
@@ -155,8 +188,11 @@ export async function testBackupConnection(args: {
   url: string;
   secret: string;
 }): Promise<{ ok: boolean; message: string; latencyMs?: number }> {
-  if (!args.url || !args.url.startsWith("https://")) {
-    return { ok: false, message: "URL يجب أن يبدأ بـ https://" };
+  if (!isAllowedBackupUrl(args.url)) {
+    return {
+      ok: false,
+      message: "الرابط يجب أن يكون رابط Google Apps Script (https://script.google.com/...)",
+    };
   }
   if (!args.secret || args.secret.length < 8) {
     return { ok: false, message: "السر يجب أن يكون 8 حروف على الأقل" };

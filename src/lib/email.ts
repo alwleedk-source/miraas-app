@@ -11,7 +11,8 @@ import { Resend } from "resend";
 import { logger } from "@/lib/logger";
 
 const apiKey = process.env.RESEND_API_KEY;
-const from = process.env.EMAIL_FROM || "noreply@example.com";
+const emailFrom = process.env.EMAIL_FROM;
+const from = emailFrom || "noreply@example.com";
 const resend = apiKey ? new Resend(apiKey) : null;
 
 export async function sendEmail(args: {
@@ -23,6 +24,14 @@ export async function sendEmail(args: {
   if (!resend) {
     logger.warn("sendEmail called but RESEND_API_KEY not set", { to: args.to, subject: args.subject });
     return { ok: false, error: "email not configured" };
+  }
+  if (!emailFrom) {
+    // env.ts يفرض EMAIL_FROM عند وجود RESEND_API_KEY — هذا fallback دفاعي فقط.
+    // الإرسال من عنوان placeholder يرتدّ غالباً — warn صريح بدل فشل صامت.
+    logger.warn("EMAIL_FROM not set — sending with placeholder from-address (likely rejected)", {
+      to: args.to,
+      subject: args.subject,
+    });
   }
   try {
     const { error } = await resend.emails.send({

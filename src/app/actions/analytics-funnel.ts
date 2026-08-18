@@ -13,8 +13,11 @@ function periodToDateRange(period: FunnelPeriod): { from?: Date; to?: Date } {
   const to = now;
   switch (period) {
     case "today": {
-      const from = new Date();
-      from.setHours(0, 0, 0, 0);
+      // بداية اليوم بتوقيت الرياض (UTC+3) — setHours المحلي كان يعطي منتصف ليل
+      // UTC (=3ص الرياض) فينزاح يوم "اليوم" 3 ساعات.
+      const riyadhStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Riyadh" });
+      const [y, m, d] = riyadhStr.split("-").map(Number);
+      const from = new Date(Date.UTC(y, m - 1, d, -3, 0, 0));
       return { from, to };
     }
     case "7d":
@@ -71,19 +74,25 @@ export async function getFunnelData(period: FunnelPeriod = "30d"): Promise<Funne
     .where(and(...baseConditions));
   const total = totalLeadsRow?.c ?? 0;
 
-  // 2. Contacted (has at least one follow-up)
+  // 2. Contacted (تواصل فعلي حدث: follow-up مكتمل — completedAt IS NOT NULL.
+  //    المتابعات المجدولة مستقبلاً والمعلّقة لا تُحسب، فهي نيّة تواصل لا تواصل)
   const [contactedRow] = await db
     .select({ c: count() })
     .from(leads)
     .where(
       and(
         ...baseConditions,
-        sql`EXISTS (SELECT 1 FROM ${followUps} WHERE ${followUps.leadId} = ${leads.id})`,
+        sql`EXISTS (
+          SELECT 1 FROM ${followUps}
+          WHERE ${followUps.leadId} = ${leads.id}
+            AND ${followUps.completedAt} IS NOT NULL
+        )`,
       ),
     );
   const contacted = contactedRow?.c ?? 0;
 
-  // 3. Responded (has follow-up with type other than NOTE — note = silent observation)
+  // 3. Responded (تواصل مكتمل بغير NOTE — note = رصد صامت لا يعني ردّاً من العميل.
+  //    type-based لا notes-based: notes قد تكون NULL فتُقصى ظلماً بفحص LIKE)
   const [respondedRow] = await db
     .select({ c: count() })
     .from(leads)
@@ -93,8 +102,8 @@ export async function getFunnelData(period: FunnelPeriod = "30d"): Promise<Funne
         sql`EXISTS (
           SELECT 1 FROM ${followUps}
           WHERE ${followUps.leadId} = ${leads.id}
-            AND ${followUps.notes} NOT LIKE '%لم يرد%'
-            AND ${followUps.notes} NOT LIKE '%no response%'
+            AND ${followUps.completedAt} IS NOT NULL
+            AND ${followUps.type} != 'NOTE'
         )`,
       ),
     );
@@ -417,9 +426,15 @@ export async function getFunnelComparison(
     },
     changes: {
       total: prevTotal > 0 ? Math.round(((currentData.total - prevTotal) / prevTotal) * 100) : 0,
+      // العدد المُحوَّل الحالي = مرحلة "converted" في الـ funnel (كان رقماً ثابتاً 6 خاطئاً)
       converted:
         prevConverted > 0
-          ? Math.round(((6 - prevConverted) / prevConverted) * 100)
+          ? Math.round(
+              (((currentData.stages.find((s) => s.key === "converted")?.count ?? 0) -
+                prevConverted) /
+                prevConverted) *
+                100,
+            )
           : 0,
       conversionRate: currentData.conversionRate - prevConversionRate,
     },

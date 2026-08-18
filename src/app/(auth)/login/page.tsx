@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { LogIn, Mail, Lock, Loader2, ArrowLeft } from "lucide-react";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -29,7 +31,13 @@ export default function LoginPage() {
       if (result.error) {
         setError("البريد الإلكتروني أو كلمة المرور غير صحيحة");
       } else {
-        window.location.href = "/";
+        // proxy.ts يوجّه لـ /login?next=<المسار الأصلي> — نعود إليه بعد الدخول.
+        // نقرأه من الـ URL هنا (event handler، لا حاجة لـ useSearchParams + Suspense)
+        // ونقيّده بمسارات داخلية فقط ("/..." لا "//...") لمنع open redirect.
+        const next = new URLSearchParams(window.location.search).get("next");
+        const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+        router.push(dest);
+        router.refresh();
       }
     } catch {
       setError("حدث خطأ. يرجى المحاولة مرة أخرى.");

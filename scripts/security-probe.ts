@@ -4,6 +4,10 @@
  * الاستخدام:
  *   BASE_URL=https://yourapp.com npx tsx scripts/security-probe.ts
  *
+ *   اختبار signup معطّل افتراضياً لأنه ينشئ مستخدماً حقيقياً في قاعدة البيانات.
+ *   فعّله صراحةً فقط على بيئة staging:
+ *   PROBE_ALLOW_SIGNUP=1 BASE_URL=https://staging.example.com npx tsx scripts/security-probe.ts
+ *
  * يتحقق أن:
  *   1. /api/migrate مفقود (404)
  *   2. /api/health يعمل ويُرجع ok
@@ -42,19 +46,21 @@ async function run() {
     check("migrate route removed (404)", res?.status === 404);
   }
 
-  // 2. health endpoint
+  // 2. health endpoint — 503 يعني degraded، وهذا فشل لا نجاح
   {
     const res = await safe(() => fetch(`${BASE_URL}/api/health`));
     const body = res ? await safe(() => res.json()) : null;
     check(
-      "health endpoint responds",
-      res?.status === 200 || res?.status === 503,
+      "health endpoint healthy (200)",
+      res?.status === 200,
       `status=${res?.status}, body=${JSON.stringify(body).slice(0, 100)}`,
     );
   }
 
-  // 3. signup لا يقبل role
-  {
+  // 3. signup لا يقبل role — ⚠️ ينشئ مستخدماً حقيقياً في DB!
+  //    معطّل افتراضياً؛ فعّله بـ PROBE_ALLOW_SIGNUP=1 على staging فقط.
+  if (process.env.PROBE_ALLOW_SIGNUP === "1") {
+    console.log("   ⚠️  PROBE_ALLOW_SIGNUP=1 — سيتم إنشاء مستخدم حقيقي في قاعدة البيانات!");
     const randomEmail = `probe-${Date.now()}@example.test`;
     // test-only random placeholder — NOT a real credential
     const testPw = Array.from({ length: 16 }, () =>
@@ -81,7 +87,9 @@ async function run() {
       `status=${res?.status}`,
     );
     console.log(`   ⚠️  تحقّق يدوياً: SELECT role, tenant_id FROM users WHERE email='${randomEmail}'`);
-    console.log(`      يجب أن يكون role='COORDINATOR' و tenant_id=NULL`);
+    console.log(`      يجب أن يكون role='COORDINATOR' و tenant_id=NULL — ثم احذف المستخدم التجريبي`);
+  } else {
+    console.log("⏭️  signup role-injection test skipped (PROBE_ALLOW_SIGNUP غير مضبوط — ينشئ مستخدماً حقيقياً)");
   }
 
   // 4. cron secret enforcement
@@ -89,7 +97,8 @@ async function run() {
     const res = await safe(() =>
       fetch(`${BASE_URL}/api/cron/booking-reminders?type=morning`),
     );
-    check("cron rejects request without secret", res?.status === 401 || res?.status === 500);
+    // 401 فقط — 500 يعني خطأ داخلياً (ربما CRON_SECRET غير مضبوط) وليس رفضاً أمنياً سليماً
+    check("cron rejects request without secret", res?.status === 401, `status=${res?.status}`);
 
     const resBad = await safe(() =>
       fetch(`${BASE_URL}/api/cron/booking-reminders?type=morning&secret=wrong`),

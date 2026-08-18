@@ -30,7 +30,8 @@ import {
  * قسم "الواتساب الخاص بي" — كل منسق يربط رقمه في Meta هنا.
  *
  * عند ربط: العميل الذي أُسنِد لهذا المنسق يستلم ترحيب وتذكيرات من رقمه (لا رقم العيادة العام).
- * عند عدم ربط: fallback لـ tenant default — التطبيق يعمل دون كسر.
+ * عند عدم ربط: الترحيب يتوقّف (لا fallback — حتى لا يردّ العميل على رقم العيادة فيضيع
+ * ردّه على المنسق)، بينما تذكيرات المواعيد تُرسَل من رقم العيادة الموحّد (tenant default).
  */
 export default function PersonalWhatsApp() {
   const [isPending, startTransition] = useTransition();
@@ -40,6 +41,8 @@ export default function PersonalWhatsApp() {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [language, setLanguage] = useState("ar");
+  const [welcomeTpl, setWelcomeTpl] = useState("");
+  const [reminderTpl, setReminderTpl] = useState("");
   const [isActive, setIsActive] = useState(false);
   const [lastTestedAt, setLastTestedAt] = useState<Date | null>(null);
   const [lastTestSuccess, setLastTestSuccess] = useState<boolean | null>(null);
@@ -57,6 +60,8 @@ export default function PersonalWhatsApp() {
           setHasApiKey(c.hasApiKey);
           setPhoneNumberId(c.phoneNumberId || "");
           setLanguage(c.templateLanguage || "ar");
+          setWelcomeTpl(c.welcomeTemplateName || "");
+          setReminderTpl(c.reminderTemplateName || "");
           setIsActive(c.isActive);
           setLastTestedAt(c.lastTestedAt);
           setLastTestSuccess(c.lastTestSuccess);
@@ -80,14 +85,24 @@ export default function PersonalWhatsApp() {
     startTransition(async () => {
       try {
         if (hasNewKey) {
-          await saveMyWhatsappApiKey(accessToken);
+          const keyResult = await saveMyWhatsappApiKey(accessToken);
+          if (!keyResult.success) {
+            setError(keyResult.error);
+            return;
+          }
           setHasApiKey(true);
         }
-        await saveMyWhatsappCredentials({
+        const result = await saveMyWhatsappCredentials({
           phoneNumberId,
           templateLanguage: language,
+          welcomeTemplateName: welcomeTpl.trim() || null,
+          reminderTemplateName: reminderTpl.trim() || null,
           isActive: true,
         });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setIsActive(true);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
@@ -98,9 +113,14 @@ export default function PersonalWhatsApp() {
   };
 
   const handleToggle = () => {
+    setError("");
     startTransition(async () => {
       try {
-        await saveMyWhatsappCredentials({ isActive: !isActive });
+        const result = await saveMyWhatsappCredentials({ isActive: !isActive });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setIsActive(!isActive);
       } catch (e) {
         setError(e instanceof Error ? e.message : "فشل التغيير");
@@ -143,6 +163,8 @@ export default function PersonalWhatsApp() {
         setHasApiKey(false);
         setPhoneNumberId("");
         setAccessToken("");
+        setWelcomeTpl("");
+        setReminderTpl("");
         setIsActive(false);
         setLastTestedAt(null);
         setLastTestSuccess(null);
@@ -252,6 +274,50 @@ export default function PersonalWhatsApp() {
           </p>
         </div>
 
+        {/* قوالب خاصة بهذا الرقم — لمن WABA الخاص به في Meta منفصل عن WABA الشركة */}
+        <details className="rounded-lg border border-surface-200 bg-surface-50/50 p-2.5">
+          <summary className="cursor-pointer text-xs font-semibold text-surface-700 select-none">
+            قوالب خاصة بحسابك في Meta (اختياري — للحالات المتقدّمة)
+          </summary>
+          <div className="space-y-3 mt-3">
+            <div className="text-[11px] text-surface-600 leading-relaxed bg-white border border-surface-200 rounded-lg p-2">
+              <strong>متى تحتاج هذا؟</strong> إذا أنشأت حسابك الخاص في Meta (WABA منفصل عن حساب الشركة)،
+              فالقوالب التي وافقت عليها Meta توجد في حسابك أنت — لا في حساب الشركة. أدخل أسماء قوالبك هنا.
+              <br />
+              <strong>اتركها فارغة</strong> إذا رقمك مضاف تحت WABA الشركة (تستخدم القوالب المشتركة تلقائياً).
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">اسم قالب الترحيب الخاص بك</Label>
+              <Input
+                value={welcomeTpl}
+                onChange={(e) => setWelcomeTpl(e.target.value)}
+                placeholder="مثال: welcome_lead"
+                dir="ltr"
+                className="text-left font-mono"
+                maxLength={50}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">اسم قالب التذكير الخاص بك</Label>
+              <Input
+                value={reminderTpl}
+                onChange={(e) => setReminderTpl(e.target.value)}
+                placeholder="مثال: booking_reminder"
+                dir="ltr"
+                className="text-left font-mono"
+                maxLength={50}
+              />
+            </div>
+
+            <p className="text-[10px] text-surface-500 leading-relaxed">
+              ⚠️ الأسماء يجب أن تطابق بالضبط القوالب المعتمدة في حسابك على Meta (case-sensitive).
+              لو أحدها فارغ، يُستخدم الاسم الافتراضي للمنشأة.
+            </p>
+          </div>
+        </details>
+
         <div className="flex flex-wrap gap-2 pt-2">
           <Button onClick={handleSave} disabled={isPending}>
             {isPending ? <Loader2 className="h-4 w-4 animate-spin me-1" /> : saved ? <Check className="h-4 w-4 me-1" /> : null}
@@ -320,7 +386,9 @@ export default function PersonalWhatsApp() {
           ⚠️ <strong>مهم:</strong> عندما يُسنَد لك عميل من حملاتك، الترحيب والتذكيرات تُرسَل من <strong>رقمك أنت</strong>.
           العميل يردّ على رقمك مباشرةً → يصلك الردّ على هاتفك.
           <br />
-          <strong>لو لم تربط رقمك، عملاؤك لن يستلموا أي ترحيب أو تذكير</strong> (لتجنّب inbox مختلط مع رقم العيادة).
+          <strong>لو لم تربط رقمك:</strong> الترحيب بعملائك <strong>يتوقّف</strong> حتى تربطه
+          (حتى لا يردّ العميل على رقم العيادة فيضيع ردّه عنك)، أما تذكيرات المواعيد فتُرسَل
+          من رقم العيادة الموحّد — وقد يردّ العميل عليه بدلاً من رقمك.
         </div>
       </CardContent>
     </Card>

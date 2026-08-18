@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { leads, whatsappConfigs, activityLog } from "@/db/schema";
+import { leads, whatsappConfigs, userWhatsappCredentials, activityLog } from "@/db/schema";
 import { eq, and, gte, lte, isNotNull, sql } from "drizzle-orm";
 import { timingSafeEqual } from "crypto";
 import { logger } from "@/lib/logger";
@@ -43,6 +43,8 @@ type BookingForReminder = {
   bookingService: string | null;
   /** المنسق الذي أُرسل الترحيب من رقمه — نستخدم نفس الرقم للتذكير (اتّساق) */
   welcomeSentByUserId: string | null;
+  /** المنسق المسؤول — fallback لو welcomeSentByUserId غير موجود (يحفظ سياسة لا-fallback) */
+  assignedTo: string | null;
 };
 
 type WhatsappConfigRow = {
@@ -56,7 +58,13 @@ type WhatsappConfigRow = {
 type SendOutcome = "sent" | "failed" | "retryable";
 
 /**
- * أرسل تذكير واحد — يُرجع "retryable" على 429/5xx ليعيد cron في المرة التالية.
+ * أرسل تذكير واحد — يُرجع "retryable" على 429/5xx (لا يُسجَّل كفشل نهائي).
+ *
+ * بصدق عن "الإعادة": لا يوجد retry تلقائي لنفس النوع — الـ run التالي من evening
+ * يستهدف اليوم التالي (حجوزات مختلفة تماماً). الـ fallback الحقيقي الوحيد:
+ * فشل تذكير المساء يلتقطه تذكير الصباح (نفس يوم الموعد). أما فشل تذكير الصباح
+ * نفسه فلا يلتقطه أي run لاحق.
+ *
  * يستخدم credentials المنسق (welcomeSentByUserId) لاتّساق الرقم مع رسالة الترحيب،
  * ويسقط للـ tenant default لو لم يكن للمنسق credentials.
  */
@@ -67,7 +75,9 @@ async function sendReminder(args: {
   type: "morning" | "evening";
 }): Promise<SendOutcome> {
   const { booking, config, creds, type } = args;
-  if (!booking.phone || !config.reminderTemplateName) return "failed";
+  // اختيار اسم قالب التذكير: قالب المنسق الشخصي أولاً (لو WABA منفصل)، ثم tenant default
+  const reminderTemplateName = creds.userReminderTemplate ?? config.reminderTemplateName;
+  if (!booking.phone || !reminderTemplateName) return "failed";
 
   // تنسيق الرقم بـ libphonenumber — يضيف country code للأرقام المحلية ويرفض غير الصالحة
   const phoneCheck = validateAndNormalizePhone(booking.phone);
@@ -119,7 +129,7 @@ async function sendReminder(args: {
           to: toPhone,
           type: "template",
           template: {
-            name: config.reminderTemplateName,
+            name: reminderTemplateName,
             language: { code: creds.templateLanguage },
             components: [
               {
@@ -140,7 +150,8 @@ async function sendReminder(args: {
 
     const data = await response.json().catch(() => ({}));
 
-    // على 429/5xx: لا تسجّل — اتركها تُعاد في run تالٍ
+    // على 429/5xx: لا تسجّل كفشل نهائي — الـ fallback الوحيد هو تذكير الصباح
+    // (لأخطاء المساء)؛ لا يوجد retry تلقائي لنفس النوع في run لاحق.
     if (response.status === 429 || response.status >= 500) {
       return "retryable";
     }
@@ -156,7 +167,8 @@ async function sendReminder(args: {
           to: toPhone,
           leadName: booking.name,
           bookingDate: bookingTime,
-          templateName: config.reminderTemplateName,
+          templateName: reminderTemplateName,
+          templateSource: creds.userReminderTemplate ? "user" : "tenant",
           credSource: creds.source, // "user" أو "tenant" — للتدقيق
           sentByUserId: creds.userId || undefined,
           phoneNumberId: creds.phoneNumberId,
@@ -233,19 +245,60 @@ export async function GET(request: NextRequest) {
       type === "evening" ? getRiyadhDate(1) : getRiyadhDate(0);
     const now = new Date();
 
-    const configs = await db
-      .select({
-        tenantId: whatsappConfigs.tenantId,
-        apiKeyEncrypted: whatsappConfigs.apiKeyEncrypted,
-        phoneNumber: whatsappConfigs.phoneNumber,
-        reminderTemplateName: whatsappConfigs.reminderTemplateName,
-        templateLanguage: whatsappConfigs.templateLanguage,
-        isActive: whatsappConfigs.isActive,
-        reminderEvening: whatsappConfigs.reminderEvening,
-        reminderMorning: whatsappConfigs.reminderMorning,
-      })
-      .from(whatsappConfigs)
-      .where(eq(whatsappConfigs.isActive, true));
+    // نحمّل tenants من مصدرين:
+    //   1) whatsappConfigs (active أو inactive) — لقراءة toggles + tenant template
+    //   2) tenants فيهم على الأقل user واحد له active credentials (per-user only setup)
+    // الدمج يضمن: tenant بدون config tenant-level لكن منسقوه ربطوا أرقامهم → يحصل على تذكيرات
+    const [tenantConfigs, tenantsWithUserCreds] = await Promise.all([
+      db
+        .select({
+          tenantId: whatsappConfigs.tenantId,
+          apiKeyEncrypted: whatsappConfigs.apiKeyEncrypted,
+          phoneNumber: whatsappConfigs.phoneNumber,
+          reminderTemplateName: whatsappConfigs.reminderTemplateName,
+          templateLanguage: whatsappConfigs.templateLanguage,
+          isActive: whatsappConfigs.isActive,
+          reminderEvening: whatsappConfigs.reminderEvening,
+          reminderMorning: whatsappConfigs.reminderMorning,
+        })
+        .from(whatsappConfigs),
+      db
+        .selectDistinct({ tenantId: userWhatsappCredentials.tenantId })
+        .from(userWhatsappCredentials)
+        .where(eq(userWhatsappCredentials.isActive, true)),
+    ]);
+
+    type ConfigRow = (typeof tenantConfigs)[number];
+    const byTenant = new Map<string, ConfigRow>();
+    for (const c of tenantConfigs) byTenant.set(c.tenantId, c);
+    // لـ tenants بدون whatsappConfigs لكن لديهم user creds — نضيف صفّاً افتراضياً (toggles ON)
+    for (const u of tenantsWithUserCreds) {
+      if (!byTenant.has(u.tenantId)) {
+        byTenant.set(u.tenantId, {
+          tenantId: u.tenantId,
+          apiKeyEncrypted: null,
+          phoneNumber: null,
+          reminderTemplateName: null,
+          templateLanguage: null,
+          isActive: false,
+          reminderEvening: true,
+          reminderMorning: true,
+        });
+      }
+    }
+
+    // أهلية المعالجة: إمّا tenant config active، أو يوجد على الأقل user creds active.
+    //
+    // سياسة مقصودة (لا تغيّرها دون قرار منتج): whatsappConfigs.isActive=false على
+    // مستوى المنشأة لا يوقف الإرسال من credentials المنسقين الشخصية — تعطيل
+    // المنشأة يوقف رقمها الموحّد فقط، وكل منسق يتحكم برقمه عبر isActive الخاص به.
+    // وبالعكس: التذكيرات ترجع لرقم المنشأة لو المنسق بلا creds (fallback)، بينما
+    // رسالة الترحيب لا ترجع أبداً عند وجود منسق (سياسة "لا fallback" لمنع inbox
+    // مختلط) — الاختلاف مقصود: التذكير يقلل تغيّب العميل فلا يجب حجبه أبداً.
+    const userCredsTenants = new Set(tenantsWithUserCreds.map((r) => r.tenantId));
+    const configs = Array.from(byTenant.values()).filter(
+      (c) => c.isActive === true || userCredsTenants.has(c.tenantId),
+    );
 
     // معالجة كل tenant بالتوازي (في حدود العقل)
     const TENANT_CONCURRENCY = 3;
@@ -258,10 +311,8 @@ export async function GET(request: NextRequest) {
     ): Promise<TenantStats> => {
       const stats: TenantStats = { sent: 0, failed: 0, skipped: 0 };
 
-      if (!config.reminderTemplateName || !config.apiKeyEncrypted || !config.phoneNumber) {
-        stats.skipped++;
-        return stats;
-      }
+      // ملاحظة: لم نعد نتطلّب tenant credentials/template هنا — مع per-user creds،
+      // كل booking قد تستخدم creds + قالب المنسق المسؤول. الفلترة الفعلية في sendReminder.
       if (type === "evening" && !config.reminderEvening) {
         stats.skipped++;
         return stats;
@@ -272,7 +323,10 @@ export async function GET(request: NextRequest) {
       }
 
       // حجوزات في النطاق + في المستقبل فقط (لا تُذكّر بمواعيد فائتة)
-      // welcomeSentByUserId = نفس المنسق الذي أرسل الترحيب → نستخدم رقمه (اتّساق)
+      // أولوية اختيار رقم المرسِل:
+      //   1) welcomeSentByUserId — نفس من أرسل الترحيب (اتّساق محادثة)
+      //   2) assignedTo — لو الترحيب فشل/لم يُحاوَل، نتمسّك بالمنسق المسؤول
+      //   3) null — يسقط لرقم tenant (للـ leads المُنشأة يدوياً بلا منسق)
       const bookings = await db
         .select({
           id: leads.id,
@@ -281,6 +335,7 @@ export async function GET(request: NextRequest) {
           bookingDate: leads.bookingDate,
           bookingService: leads.bookingService,
           welcomeSentByUserId: leads.welcomeSentByUserId,
+          assignedTo: leads.assignedTo,
         })
         .from(leads)
         .where(
@@ -288,6 +343,9 @@ export async function GET(request: NextRequest) {
             eq(leads.tenantId, config.tenantId),
             eq(leads.isDeleted, false),
             eq(leads.bookingStatus, "PENDING"),
+            // لا نُرسل لعملاء مؤرشفين ولا لمن طلب عدم التواصل (DNC) — احترام القرار + امتثال
+            sql`${leads.archivedAt} IS NULL`,
+            eq(leads.canRecontact, true),
             isNotNull(leads.phone),
             gte(leads.bookingDate, rangeStart),
             lte(leads.bookingDate, rangeEnd),
@@ -333,7 +391,15 @@ export async function GET(request: NextRequest) {
         const chunk = pending.slice(i, i + BOOKING_CONCURRENCY);
         const results = await Promise.allSettled(
           chunk.map(async (booking) => {
-            const resolution = await resolveCached(booking.welcomeSentByUserId);
+            // preferredUserId: من أرسل الترحيب أولاً، ثم المنسق المسؤول
+            const preferredUserId = booking.welcomeSentByUserId ?? booking.assignedTo;
+            let resolution = await resolveCached(preferredUserId);
+            // قرار المنتج: التذكيرات ترجع لرقم المنشأة الافتراضي لو المنسق لم يربط
+            // رقمه بعد — العميل يجب أن يُذكَّر دائماً (تقليل التغيّب أهم من اتّساق الرقم).
+            // (يختلف عن رسالة الترحيب التي تلتزم "لا-fallback" لتجنّب inbox مختلط.)
+            if (preferredUserId && !resolution.ok && resolution.reason === "coordinator_no_creds") {
+              resolution = await resolveCached(null);
+            }
             if (!resolution.ok) {
               // لا credentials متاحة — سجّل بسبب واضح ولا ترسل
               await db.insert(activityLog).values({
@@ -344,7 +410,7 @@ export async function GET(request: NextRequest) {
                 details: {
                   type: `booking_reminder_${type}`,
                   reason: resolution.reason, // coordinator_no_creds | decrypt_failed | no_credentials_at_all
-                  preferredUserId: booking.welcomeSentByUserId,
+                  preferredUserId,
                   leadName: booking.name,
                 },
               });
@@ -356,7 +422,7 @@ export async function GET(request: NextRequest) {
         for (const r of results) {
           if (r.status === "fulfilled") {
             if (r.value === "sent") stats.sent++;
-            else if (r.value === "retryable") stats.skipped++; // سيُعاد في run تالٍ
+            else if (r.value === "retryable") stats.skipped++; // لا retry لنفس النوع — تذكير الصباح يلتقط فشل المساء فقط
             else stats.failed++;
           } else {
             stats.failed++;
@@ -391,8 +457,10 @@ export async function GET(request: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    // لا نُرجع error.message الخام — قد يحوي تفاصيل DB/بنية داخلية. التفاصيل تبقى في السجلات.
+    logger.error("booking reminders cron failed", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "unknown error" },
+      { error: "reminders processing failed" },
       { status: 500 }
     );
   }

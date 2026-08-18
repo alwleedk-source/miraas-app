@@ -32,6 +32,7 @@ export default function UpcomingFollowUps({ tasks }: { tasks: UpcomingTask[] }) 
       weekday: "long",
       day: "numeric",
       month: "short",
+      timeZone: "Asia/Riyadh",
     });
     if (!acc[dateKey]) acc[dateKey] = [];
     acc[dateKey].push(task);
@@ -83,6 +84,7 @@ export default function UpcomingFollowUps({ tasks }: { tasks: UpcomingTask[] }) 
                         {new Date(task.scheduledAt).toLocaleTimeString("ar-SA", {
                           hour: "2-digit",
                           minute: "2-digit",
+                          timeZone: "Asia/Riyadh",
                         })}
                       </span>
                     </div>

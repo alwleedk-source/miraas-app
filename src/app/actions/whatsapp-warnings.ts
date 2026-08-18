@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { leads, users, userWhatsappCredentials, webhookCoordinators } from "@/db/schema";
+import { leads, users, userWhatsappCredentials, webhookCoordinators, webhookEndpoints } from "@/db/schema";
 import { and, eq, isNotNull, isNull, count } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
@@ -70,15 +70,25 @@ export async function getMyWhatsappStatus() {
     )
     .limit(1);
 
-  // كم lead مُسنَد له بدون ترحيب (بسبب نقص creds)
+  // كم lead مُسنَد له ينتظر ترحيباً؟ نحصِر العدّ بمن استُحقّ لهم الترحيب فعلاً:
+  // جاؤوا عبر webhook (webhookEndpointId) ذلك الـ webhook مفعَّل فيه الترحيب،
+  // وغير مؤرشفين — اليدويون/المؤرشفون/حملات sendWelcome=off لم يستحقوا ترحيباً أصلاً.
   const [{ pendingCount }] = await db
     .select({ pendingCount: count() })
     .from(leads)
+    .innerJoin(
+      webhookEndpoints,
+      and(
+        eq(webhookEndpoints.id, leads.webhookEndpointId),
+        eq(webhookEndpoints.sendWelcome, true),
+      ),
+    )
     .where(
       and(
         eq(leads.tenantId, tenantId),
         eq(leads.assignedTo, userId),
         eq(leads.isDeleted, false),
+        isNull(leads.archivedAt),
         isNotNull(leads.phone),
         isNull(leads.welcomeSentAt),
       ),
@@ -100,7 +110,9 @@ export async function getStuckLeadsCount() {
   const { tenantId, role } = await requireTenant();
   assertRole(role, ROLE.OWNER_ADMIN);
 
-  // leads مُسنَدة لمنسق + بدون welcomeSentAt + المنسق ليس له creds
+  // leads مُسنَدة لمنسق + تستحق ترحيباً فعلاً (عبر webhook مفعَّل فيه الترحيب،
+  // غير مؤرشفة) + لم يُرسَل لها + المنسق ليس له creds.
+  // سابقاً كانت تُحسب leads يدوية/مؤرشفة/حملات sendWelcome=off — أرقام مضلّلة.
   const stuck = await db
     .select({
       leadId: leads.id,
@@ -109,6 +121,13 @@ export async function getStuckLeadsCount() {
     })
     .from(leads)
     .innerJoin(users, eq(users.id, leads.assignedTo))
+    .innerJoin(
+      webhookEndpoints,
+      and(
+        eq(webhookEndpoints.id, leads.webhookEndpointId),
+        eq(webhookEndpoints.sendWelcome, true),
+      ),
+    )
     .leftJoin(
       userWhatsappCredentials,
       and(
@@ -120,6 +139,7 @@ export async function getStuckLeadsCount() {
       and(
         eq(leads.tenantId, tenantId),
         eq(leads.isDeleted, false),
+        isNull(leads.archivedAt),
         isNotNull(leads.assignedTo),
         isNull(leads.welcomeSentAt),
         isNotNull(leads.phone),

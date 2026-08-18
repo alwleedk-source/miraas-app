@@ -30,8 +30,11 @@ export default async function BookingsPage() {
     // ignore
   }
 
-  let bookings: Awaited<ReturnType<typeof getBookings>> = [];
-  let summary: Awaited<ReturnType<typeof getBookingsSummary>> = {
+  // العقد الجديد للأكشنات: { success: true, ... } | { success: false, error } —
+  // عند الفشل نعرض الصفحة بقيم فارغة بدل إسقاطها بالكامل.
+  let bookings: Extract<Awaited<ReturnType<typeof getBookings>>, { success: true }>["bookings"] = [];
+  let summary: Extract<Awaited<ReturnType<typeof getBookingsSummary>>, { success: true }> = {
+    success: true,
     today: [], tomorrow: [], overdue: [],
     stats: { total: 0, pending: 0, completed: 0, noShow: 0, cancelled: 0 },
     campaignStats: [],
@@ -39,10 +42,12 @@ export default async function BookingsPage() {
   };
 
   try {
-    [bookings, summary] = await Promise.all([
+    const [bookingsRes, summaryRes] = await Promise.all([
       getBookings(),
       getBookingsSummary(),
     ]);
+    if (bookingsRes.success) bookings = bookingsRes.bookings;
+    if (summaryRes.success) summary = summaryRes;
   } catch {
     // الأعمدة لم تُنشأ بعد — نعرض صفحة فارغة
   }
@@ -81,7 +86,9 @@ export default async function BookingsPage() {
   let internalMessages: { id: string; content: string; senderRole: string; senderId: string; messageType: string; createdAt: Date; isRead: boolean }[] = [];
   try {
     const { getUnreadMessagesForCoordinator } = await import("@/app/actions/provider");
-    internalMessages = await getUnreadMessagesForCoordinator();
+    // { success: true, messages } | { success: false } — الفشل = قائمة فارغة بهدوء
+    const res = await getUnreadMessagesForCoordinator();
+    if (res.success) internalMessages = res.messages;
   } catch {}
 
   // جلب مقدمي الخدمة (PROVIDER)

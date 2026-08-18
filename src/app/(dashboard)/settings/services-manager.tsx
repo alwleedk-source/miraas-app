@@ -43,56 +43,80 @@ export default function ServicesManager({
     if (!trimmed) return;
     startTransition(async () => {
       try {
-        await addService(trimmed, newDeptId || undefined, newDuration);
+        // نستخدم الـ id الحقيقي العائد من الخادم (كان id عشوائياً فتفشل أزرار
+        // التعديل/الحذف على الصف الجديد وتُبتلَع أخطاؤها).
+        const created = await addService(trimmed, newDeptId || undefined, newDuration);
+        if (!created.success) {
+          // لا نبتلع الخطأ — نُظهره (مثلاً "هذه الخدمة موجودة بالفعل")
+          alert(created.error);
+          return;
+        }
         setServicesList((prev) => [
           ...prev,
           {
-            id: crypto.randomUUID(),
-            name: trimmed,
-            isActive: true,
-            departmentId: newDeptId || null,
-            defaultDurationMin: newDuration,
+            id: created.id,
+            name: created.name,
+            isActive: created.isActive,
+            departmentId: created.departmentId,
+            defaultDurationMin: created.defaultDurationMin,
           },
         ]);
         setNewName("");
         setNewDeptId("");
         setNewDuration(30);
         setShowAddForm(false);
-      } catch {}
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "تعذّر إضافة الخدمة");
+      }
     });
   };
 
   const handleToggle = (id: string) => {
     startTransition(async () => {
       try {
-        await toggleService(id);
+        const result = await toggleService(id);
+        if (!result.success) {
+          alert(result.error);
+          return;
+        }
         setServicesList((prev) =>
           prev.map((s) => (s.id === id ? { ...s, isActive: !s.isActive } : s))
         );
-      } catch {}
+      } catch {
+        alert("تعذّر تغيير حالة الخدمة — حاول مرة أخرى");
+      }
     });
   };
 
   const handleDelete = (id: string) => {
+    if (!confirm("حذف هذه الخدمة؟")) return;
     startTransition(async () => {
       try {
         await deleteService(id);
         setServicesList((prev) => prev.filter((s) => s.id !== id));
-      } catch {}
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "تعذّر حذف الخدمة");
+      }
     });
   };
 
   const handleUpdateDetails = (serviceId: string, data: { departmentId?: string | null; defaultDurationMin?: number }) => {
     startTransition(async () => {
       try {
-        await updateServiceDetails(serviceId, data);
+        const result = await updateServiceDetails(serviceId, data);
+        if (!result.success) {
+          alert(result.error);
+          return;
+        }
         setServicesList((prev) =>
           prev.map((s) => (s.id === serviceId ? { ...s, ...data } : s))
         );
         if (editingService?.id === serviceId) {
           setEditingService((prev) => prev ? { ...prev, ...data } : prev);
         }
-      } catch {}
+      } catch {
+        alert("تعذّر حفظ تفاصيل الخدمة — حاول مرة أخرى");
+      }
     });
   };
 

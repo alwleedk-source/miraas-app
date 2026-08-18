@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { completeFollowUp, snoozeFollowUp, getLeadRecentNotes } from "@/app/actions/followups";
 import { cn, toWhatsappUrl } from "@/lib/utils";
+import { useNow } from "@/lib/hooks";
 
 interface Task {
   id: string;
@@ -62,18 +63,6 @@ const TYPE_LABELS: Record<string, string> = {
   NOTE: "📝 ملاحظة",
 };
 
-function timeAgo(date: Date): string {
-  const diff = Date.now() - new Date(date).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "الآن";
-  if (mins < 60) return `منذ ${mins} د`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `منذ ${hrs} س`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return "أمس";
-  return `منذ ${days} يوم`;
-}
-
 export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
   const [tasks, setTasks] = useState(initialTasks);
   const [isPending, startTransition] = useTransition();
@@ -81,22 +70,56 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
   const [expandedNotes, setExpandedNotes] = useState<string | null>(null);
   const [notesCache, setNotesCache] = useState<Record<string, NoteEntry[]>>({});
   const [loadingNotes, setLoadingNotes] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const router = useRouter();
+  // ساعة hydration-آمنة — new Date() أثناء الـ render يكسر تطابق SSR/العميل
+  const nowMs = useNow();
+
+  function timeAgo(date: Date): string {
+    if (nowMs === 0) return "";
+    const diff = nowMs - new Date(date).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "الآن";
+    if (mins < 60) return `منذ ${mins} د`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `منذ ${hrs} س`;
+    const days = Math.floor(hrs / 24);
+    if (days === 1) return "أمس";
+    return `منذ ${days} يوم`;
+  }
 
   const handleComplete = (taskId: string) => {
+    setActionError(null);
     startTransition(async () => {
-      await completeFollowUp(taskId);
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
-      router.refresh();
+      try {
+        const res = await completeFollowUp(taskId);
+        if (!res.success) {
+          setActionError(res.error);
+          return;
+        }
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+        router.refresh();
+      } catch {
+        setActionError("تعذّر إكمال المهمة — حاول مجدداً");
+      }
     });
   };
 
   const handleSnooze = (taskId: string, days: number) => {
+    setActionError(null);
     startTransition(async () => {
-      await snoozeFollowUp(taskId, days);
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
-      setActiveSnooze(null);
-      router.refresh();
+      try {
+        const res = await snoozeFollowUp(taskId, days);
+        if (!res.success) {
+          setActionError(res.error);
+          return;
+        }
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+        setActiveSnooze(null);
+        router.refresh();
+      } catch {
+        setActionError("تعذّر تأجيل المهمة — حاول مجدداً");
+      }
     });
   };
 
@@ -109,8 +132,8 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
     if (!notesCache[leadId]) {
       setLoadingNotes(leadId);
       try {
-        const notes = await getLeadRecentNotes(leadId);
-        setNotesCache((prev) => ({ ...prev, [leadId]: notes }));
+        const res = await getLeadRecentNotes(leadId);
+        setNotesCache((prev) => ({ ...prev, [leadId]: res.success ? res.notes : [] }));
       } catch { /* ignore */ }
       setLoadingNotes(null);
     }
@@ -118,23 +141,30 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
 
   if (tasks.length === 0) return null;
 
-  const now = new Date();
-  const todayStr = now.toDateString();
+  const now = new Date(nowMs);
+  // تقويم الرياض (لا توقيت المتصفّح) لتصنيف "متأخر/اليوم" بشكل صحيح على أي جهاز.
+  const riyadhYmd = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh" }).format(d);
+  const todayStr = riyadhYmd(now);
 
   const overdueTasks = tasks.filter((t) => {
     const d = new Date(t.scheduledAt);
-    return d.toDateString() !== todayStr && d < now;
+    return riyadhYmd(d) !== todayStr && d < now;
   });
   const todayTasks = tasks.filter((t) => {
     const d = new Date(t.scheduledAt);
-    return d.toDateString() === todayStr || d >= now;
+    return riyadhYmd(d) === todayStr || d >= now;
   });
 
   const renderTask = (task: Task, isOverdue: boolean) => {
     const config = TYPE_CONFIG[task.type] || TYPE_CONFIG.NOTE;
     const IconComp = config.icon;
     const scheduledDate = new Date(task.scheduledAt);
-    const timeStr = scheduledDate.getHours() !== 0
+    // ساعة الرياض (لا المتصفّح) لتقرير ما إذا كان الموعد "كل اليوم" (00:00) أم له وقت
+    const riyadhHour = Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Riyadh", hour: "2-digit", hour12: false }).format(scheduledDate),
+    ) % 24;
+    const timeStr = riyadhHour !== 0
       ? scheduledDate.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" })
       : null;
     const dateStr = isOverdue
@@ -371,6 +401,17 @@ export default function TodayTasks({ tasks: initialTasks }: { tasks: Task[] }) {
             {todayTasks.map((task) => renderTask(task, false))}
           </CardContent>
         </Card>
+      )}
+
+      {/* خطأ إجراء — toast سفلي (start منطقي + إزاحة موجبة ليتمركز في RTL) */}
+      {actionError && (
+        <div
+          className="fixed bottom-4 start-1/2 translate-x-1/2 bg-danger-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50 cursor-pointer"
+          onClick={() => setActionError(null)}
+        >
+          <AlertTriangle className="h-4 w-4" />
+          {actionError}
+        </div>
       )}
     </div>
   );

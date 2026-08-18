@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
+// Security headers تُضاف مركزياً في next.config.ts — لا تكرار هنا.
 export async function proxy(req: NextRequest) {
   const cookie = getSessionCookie(req);
   if (!cookie) {
@@ -8,15 +9,11 @@ export async function proxy(req: NextRequest) {
     url.searchParams.set("next", req.nextUrl.pathname);
     return NextResponse.redirect(url);
   }
-  const res = NextResponse.next();
-  res.headers.set("X-Frame-Options", "DENY");
-  res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("Referrer-Policy", "same-origin");
-  return res;
+  return NextResponse.next();
 }
 
 export const config = {
   matcher: [
-    "/((?!login|register|api/auth|api/webhook|api/cron|api/health|_next/static|_next/image|favicon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!login|register|api/auth|api/webhook|api/cron|api/health|sw.js|_next/static|_next/image|favicon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

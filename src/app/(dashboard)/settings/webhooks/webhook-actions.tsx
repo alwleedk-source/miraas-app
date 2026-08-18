@@ -76,15 +76,29 @@ export default function WebhookActions({ webhooks, appUrl, availableCoordinators
   const [draftCoords, setDraftCoords] = useState<Set<string>>(new Set());
   // عداد الأحرف للـ label الجديد عند الإنشاء
   const [newLabelLen, setNewLabelLen] = useState(0);
+  // خطأ آخر إجراء — يُعرض أعلى القائمة ويُمسح عند المحاولة التالية
+  const [error, setError] = useState("");
+  // مفتاح أُنشئ للتوّ — السر plaintext يُعرَض في مودال مرة واحدة فقط
+  // (التخزين hash-only، فلا يمكن إظهاره بعد الإغلاق أبداً)
+  const [newlyCreated, setNewlyCreated] = useState<{ id: string; secretKey: string; label: string } | null>(null);
 
   const handleSaveCoords = (webhookId: string) => {
+    setError("");
     startTransition(async () => {
-      await setWebhookCoordinators({
-        webhookId,
-        userIds: Array.from(draftCoords),
-      });
-      setEditingCoords(null);
-      setDraftCoords(new Set());
+      try {
+        const result = await setWebhookCoordinators({
+          webhookId,
+          userIds: Array.from(draftCoords),
+        });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setEditingCoords(null);
+        setDraftCoords(new Set());
+      } catch {
+        setError("تعذّر حفظ المنسقين — حاول مرة أخرى");
+      }
     });
   };
 
@@ -110,28 +124,61 @@ export default function WebhookActions({ webhooks, appUrl, availableCoordinators
 
   const handleCreate = (formData: FormData) => {
     const label = formData.get("label") as string;
+    setError("");
     startTransition(async () => {
-      await createWebhookKey(label || undefined);
-      setShowCreate(false);
+      try {
+        const result = await createWebhookKey(label || undefined);
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        // السر يُعاد هنا مرة واحدة فقط — نعرضه في مودال فوراً لأنه يُفقد بعدها
+        setNewlyCreated({
+          id: result.id,
+          secretKey: result.secretKey,
+          label: result.label ?? "حملتي الإعلانية",
+        });
+        setShowCreate(false);
+        setNewLabelLen(0);
+      } catch {
+        setError("تعذّر إنشاء المفتاح — حاول مرة أخرى");
+      }
     });
   };
 
   const handleDelete = (id: string) => {
     if (!confirm("هل تريد حذف هذا المفتاح؟")) return;
+    setError("");
     startTransition(async () => {
-      await deleteWebhook(id);
+      try {
+        await deleteWebhook(id);
+      } catch {
+        setError("تعذّر حذف المفتاح — حاول مرة أخرى");
+      }
     });
   };
 
   const handleToggle = (id: string) => {
+    setError("");
     startTransition(async () => {
-      await toggleWebhook(id);
+      try {
+        const result = await toggleWebhook(id);
+        if (!result.success) setError(result.error);
+      } catch {
+        setError("تعذّر تغيير حالة المفتاح — حاول مرة أخرى");
+      }
     });
   };
 
   const handleToggleWelcome = (id: string) => {
+    setError("");
     startTransition(async () => {
-      await toggleWebhookWelcome(id);
+      try {
+        const result = await toggleWebhookWelcome(id);
+        if (!result.success) setError(result.error);
+      } catch {
+        setError("تعذّر تغيير رسالة الترحيب — حاول مرة أخرى");
+      }
     });
   };
 
@@ -140,20 +187,37 @@ export default function WebhookActions({ webhooks, appUrl, availableCoordinators
 
   const handleSaveTemplate = (id: string) => {
     const value = templateInput.trim();
+    setError("");
     startTransition(async () => {
-      await updateWebhookWelcomeTemplate(id, value || null);
-      setEditingTemplate(null);
-      setTemplateInput("");
+      try {
+        const result = await updateWebhookWelcomeTemplate(id, value || null);
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
+        setEditingTemplate(null);
+        setTemplateInput("");
+      } catch {
+        setError("تعذّر حفظ القالب — حاول مرة أخرى");
+      }
     });
   };
 
   return (
     <div className="space-y-4">
+      {/* خطأ آخر إجراء */}
+      {error && (
+        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-danger-50 text-danger-600 text-sm border border-danger-200 animate-fade-in">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
       {/* قائمة المفاتيح */}
       {webhooks.map((wh) => {
         const campaignName = wh.label || "حملتي الإعلانية";
-        // للـ webhooks الجديدة (hash-only) السر لا يُخزَّن plaintext
-        // يظهر فقط مرة واحدة عند الإنشاء في newlyCreated state
+        // للـ webhooks الجديدة (hash-only) السر لا يُخزَّن plaintext —
+        // يُعرَض مرة واحدة فقط في مودال newlyCreated عند الإنشاء
         const displaySecret = wh.secretKey ?? "••• السر مخفي لأمانك (احفظه عند الإنشاء) •••";
         const canCopy = !!wh.secretKey;
         const script = generateScript(appUrl, wh.secretKey ?? "", campaignName);
@@ -533,6 +597,91 @@ export default function WebhookActions({ webhooks, appUrl, availableCoordinators
           <Plus className="h-4 w-4" />
           إنشاء مفتاح جديد
         </Button>
+      )}
+
+      {/* مودال السر الجديد — يُعرَض مرة واحدة فقط بعد الإنشاء (التخزين hash-only) */}
+      {newlyCreated && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <Key className="h-5 w-5 text-success-500" />
+              <h3 className="text-base font-bold text-surface-900">
+                تم إنشاء مفتاح &quot;{newlyCreated.label}&quot;
+              </h3>
+            </div>
+
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-warning-50 border border-warning-300 text-warning-800 text-xs leading-relaxed">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <p>
+                <strong>السر يُعرَض الآن مرة واحدة فقط.</strong> انسخه والصقه في كود Apps Script
+                قبل إغلاق هذه النافذة — بعدها لا يمكن إظهاره أبداً وستضطر لإنشاء مفتاح جديد.
+              </p>
+            </div>
+
+            {/* السر */}
+            <div className="space-y-1.5">
+              <span className="text-xs font-semibold text-surface-700">سر الويب هوك</span>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 p-2.5 bg-surface-50 rounded-lg border border-surface-200 font-mono text-xs text-surface-700 overflow-x-auto" dir="ltr">
+                  {newlyCreated.secretKey}
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => handleCopy(newlyCreated.secretKey, "new-secret")}
+                  className="shrink-0"
+                  title="نسخ السر"
+                >
+                  {copied === "new-secret" ? (
+                    <Check className="h-4 w-4 text-success-500" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* الكود الجاهز والسر مضمَّن فيه */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-surface-700 flex items-center gap-1">
+                  <Code2 className="h-3.5 w-3.5" />
+                  كود Apps Script الجاهز (السر مضمَّن)
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    handleCopy(generateScript(appUrl, newlyCreated.secretKey, newlyCreated.label), "new-code")
+                  }
+                  className="text-xs h-8"
+                >
+                  {copied === "new-code" ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 me-1 text-success-500" />
+                      تم النسخ!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5 me-1" />
+                      نسخ الكود
+                    </>
+                  )}
+                </Button>
+              </div>
+              <pre className="text-xs bg-surface-900 text-surface-100 rounded-lg p-3 overflow-x-auto leading-relaxed whitespace-pre max-h-56" dir="ltr">
+                <code>{generateScript(appUrl, newlyCreated.secretKey, newlyCreated.label)}</code>
+              </pre>
+              <p className="text-[11px] text-surface-400 leading-relaxed">
+                الصقه في Google Sheet ← Extensions ← Apps Script ثم أضف trigger من نوع On form submit.
+              </p>
+            </div>
+
+            <Button onClick={() => setNewlyCreated(null)} className="w-full">
+              حفظت السر — إغلاق
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { auth, type Session } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { users, tenants } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 // =============================================
@@ -60,13 +60,21 @@ export function getSessionUser(session: Session) {
  */
 export async function requireTenant() {
   const session = await requireAuth();
-  const { tenantId, id: userId } = getSessionUser(session);
-  if (!tenantId) redirect("/register");
+  const { id: userId } = getSessionUser(session);
 
-  // Fresh check من DB — يُبطل جلسات المُعطَّلين ويعكس role changes فوراً
+  // Fresh check من DB قبل أي قرار توجيه — يُبطل جلسات المُعطَّلين، يعكس role
+  // changes فوراً، والأهم: يقرأ tenantId الطازج. الـ cookie cache (5 دقائق) قد
+  // يحمل tenantId="" بعد التسجيل مباشرة، فالتحقق من الكاش كان يرتدّ المستخدم
+  // الجديد إلى /register رغم أن شركته أُنشئت. لذا نقرأ DB أولاً ثم نقرّر.
   const [u] = await db
-    .select({ isActive: users.isActive, role: users.role, tenantId: users.tenantId })
+    .select({
+      isActive: users.isActive,
+      role: users.role,
+      tenantId: users.tenantId,
+      tenantStatus: tenants.status,
+    })
     .from(users)
+    .leftJoin(tenants, eq(users.tenantId, tenants.id))
     .where(eq(users.id, userId))
     .limit(1);
 
@@ -79,7 +87,11 @@ export async function requireTenant() {
     redirect("/login");
   }
 
-  // استخدم القيم الطازجة من DB لا من الـ cookie cache
-  const freshTenantId = u.tenantId ?? tenantId;
-  return { tenantId: freshTenantId, userId, role: u.role, session };
+  if (!u.tenantId) redirect("/register");
+
+  // شركة موقوفة (فوترة/إساءة): يُمنع دخول لوحة التحكم فقط — استقبال العملاء
+  // عبر webhook يستمر عمداً حتى لا تضيع بيانات عملاء المنشأة أثناء الإيقاف.
+  if (u.tenantStatus === "SUSPENDED") redirect("/suspended");
+
+  return { tenantId: u.tenantId, userId, role: u.role, session };
 }

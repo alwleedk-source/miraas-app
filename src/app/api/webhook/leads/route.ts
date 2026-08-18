@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog, webhookCoordinators } from "@/db/schema";
+import { webhookEndpoints, leads, pipelineStages, leadSources, activityLog, webhookCoordinators, users, notifications } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { sendWelcomeMessage } from "@/lib/whatsapp";
 import { validateAndNormalizePhone } from "@/lib/utils";
 import { webhookEntrySchema } from "@/lib/schemas";
 import { logger } from "@/lib/logger";
-import { verifySecret, secretPrefix } from "@/lib/secret-hash";
+import { verifySecret, hashSecret, secretPrefix } from "@/lib/secret-hash";
+import { timingSafeEqual } from "crypto";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -54,15 +55,36 @@ export async function POST(request: NextRequest) {
           webhook = c;
           break;
         }
-      } else if (c.secretKey && c.secretKey === secret) {
-        // legacy plaintext — نقبله مؤقتاً + نرقّيه إلى hash
-        webhook = c;
-        break;
+      } else if (c.secretKey) {
+        // legacy plaintext — مقارنة timing-safe (كانت === تسرّب قناة توقيت)
+        const a = Buffer.from(c.secretKey);
+        const b = Buffer.from(secret);
+        if (a.length === b.length && timingSafeEqual(a, b)) {
+          webhook = c;
+          break;
+        }
       }
     }
 
     if (!webhook) {
       return NextResponse.json({ error: "مفتاح ويب هوك غير صالح" }, { status: 403 });
+    }
+
+    // ترقية legacy فعلية — التعليق القديم كان يَعِد بها دون تنفيذ:
+    // عند أول نجاح plaintext نحسب hash+prefix ونمسح السر المخزَّن بوضوح.
+    if (!webhook.secretHash && webhook.secretKey) {
+      try {
+        const secretHash = await hashSecret(secret);
+        await db
+          .update(webhookEndpoints)
+          .set({ secretHash, secretPrefix: prefix, secretKey: null })
+          .where(eq(webhookEndpoints.id, webhook.id));
+      } catch (err) {
+        // فشل الترقية لا يوقف الاستقبال — تُعاد المحاولة مع الطلب القادم
+        logger.error("legacy webhook secret upgrade failed", err, {
+          webhookId: webhook.id,
+        });
+      }
     }
 
     // 3. rate limit على الـ webhook ID — Postgres-backed (يعمل عبر replicas)
@@ -84,8 +106,18 @@ export async function POST(request: NextRequest) {
       .set({ lastReceivedAt: new Date() })
       .where(eq(webhookEndpoints.id, webhook.id));
 
-    // 4. parse body
-    const body = await request.json();
+    // 4. parse body — لا نثق بـ Content-Length وحده (قد يغيب مع chunked أو يكذب).
+    //    نقرأ النص ونفرض الحدّ على البايتات الفعلية قبل JSON.parse.
+    const rawText = await request.text();
+    if (Buffer.byteLength(rawText, "utf8") > MAX_BODY_BYTES) {
+      return NextResponse.json({ error: "payload too large" }, { status: 413 });
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(rawText);
+    } catch {
+      return NextResponse.json({ error: "JSON غير صالح" }, { status: 400 });
+    }
     const rawEntries = Array.isArray(body) ? body : [body];
 
     if (rawEntries.length === 0) {
@@ -146,6 +178,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 6ب. dedupe داخل الدفعة نفسها بالرقم المُطبَّع (أول ظهور يفوز) — بدونها يتكرّر
+    // نفس الرقم في payload واحد ويمرّ فحص المكررات ضد الـ DB (لا يرى دفعة اليوم بعد).
+    const deduped = new Map<string, (typeof normalized)[number]>();
+    for (const e of normalized) {
+      if (!deduped.has(e.phone)) deduped.set(e.phone, e);
+    }
+    const batch = [...deduped.values()];
+    const batchDuplicates = normalized.length - batch.length;
+
     // 7. جميع الاستعلامات والكتابات في transaction واحد
     const result = await db.transaction(async (tx) => {
       // المرحلة الافتراضية
@@ -160,9 +201,21 @@ export async function POST(request: NextRequest) {
         )
         .limit(1);
 
+      // اقفل صفّ الـ webhook (FOR UPDATE) مبكراً — قبل فحص المكررات وقبل قراءة
+      // مؤشّر round-robin. القفل يُسلسِل الطلبات المتزامنة على نفس الـ webhook:
+      // الطلب الثاني ينتظر commit الأول فيرى leads المُدرَجة حديثاً عند فحص
+      // المكررات (كان الفحص يسبق القفل = سباق إدراج مزدوج لنفس الرقم)، ويقرأ
+      // المؤشّر المُحدَّث (كان الطلبان يقرآن نفس القيمة فيُسنِدان لنفس المنسق).
+      const [lockedWebhook] = await tx
+        .select({ lastAssignedToUserId: webhookEndpoints.lastAssignedToUserId })
+        .from(webhookEndpoints)
+        .where(eq(webhookEndpoints.id, webhook.id))
+        .for("update");
+      const lastAssigned = lockedWebhook?.lastAssignedToUserId ?? webhook.lastAssignedToUserId;
+
       // حل أسماء الحملات الفريدة إلى source IDs دفعة واحدة
       const uniqueCampaigns = [
-        ...new Set(normalized.map((e) => e.campaign).filter((c): c is string => !!c)),
+        ...new Set(batch.map((e) => e.campaign).filter((c): c is string => !!c)),
       ];
       const campaignToSourceId = new Map<string, string>();
       if (uniqueCampaigns.length > 0) {
@@ -196,19 +249,25 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // فحص المكررات + DNC دفعة واحدة
-      const phones = normalized.map((e) => e.phone);
+      // فحص المكررات + DNC + المؤرشفين دفعة واحدة — داخل المعاملة وبعد القفل
+      // (انظر أعلاه) حتى يرى الطلب المتزامن الثاني ما أدرجه الأول.
+      const phones = batch.map((e) => e.phone);
       const existing = await tx
         .select({
+          id: leads.id,
           phone: leads.phone,
           isDeleted: leads.isDeleted,
           canRecontact: leads.canRecontact,
+          archivedAt: leads.archivedAt,
         })
         .from(leads)
         .where(and(eq(leads.tenantId, webhook.tenantId), inArray(leads.phone, phones)));
 
+      // نشط (لا محذوف/مؤرشف/DNC) = مكرر حقيقي — يُتخطّى
       const activeSet = new Set(
-        existing.filter((e) => !e.isDeleted).map((e) => e.phone!),
+        existing
+          .filter((e) => !e.isDeleted && !e.archivedAt && e.canRecontact)
+          .map((e) => e.phone!),
       );
       const deletedSet = new Set(
         existing.filter((e) => e.isDeleted).map((e) => e.phone!),
@@ -217,27 +276,56 @@ export async function POST(request: NextRequest) {
       const dncSet = new Set(
         existing.filter((e) => !e.canRecontact).map((e) => e.phone!),
       );
+      // مؤرشف (لا محذوف ولا DNC) = عميل عاد بنفسه — نعيد تفعيله بدل تخطّيه صامتاً
+      // (سابقاً كان المؤرشف يُحسب "مكرراً" فيختفي ولا يعلم به أحد)
+      const archivedMap = new Map(
+        existing
+          .filter((e) => !e.isDeleted && e.canRecontact && e.archivedAt)
+          .map((e) => [e.phone!, e.id] as const),
+      );
 
-      // تصفية: جديد فعلاً + ليس DNC
-      const toInsert = normalized.filter(
-        (e) => !activeSet.has(e.phone) && !deletedSet.has(e.phone) && !dncSet.has(e.phone),
+      // تصفية: جديد فعلاً + ليس DNC/محذوف/نشط-مكرر/مؤرشف
+      const toInsert = batch.filter(
+        (e) =>
+          !activeSet.has(e.phone) &&
+          !deletedSet.has(e.phone) &&
+          !dncSet.has(e.phone) &&
+          !archivedMap.has(e.phone),
+      );
+      // العائدون من الأرشيف — فقط إن لم يوجد صف نشط/محذوف/DNC لنفس الرقم
+      // (صف مكرر قديم في الـ DB قد يجعل الرقم في مجموعتين — النشط يكسب)
+      const toReactivate = batch.filter(
+        (e) =>
+          archivedMap.has(e.phone) &&
+          !activeSet.has(e.phone) &&
+          !deletedSet.has(e.phone) &&
+          !dncSet.has(e.phone),
       );
 
       // ===== Auto-assign: round-robin بين منسقي الحملة =====
       // 1 منسق → كل leads له
       // 2+ → نوّع: نبدأ بعد آخر منسق أُسنِد له lead سابق
       // 0 → no auto-assign (السلوك الحالي قبل هذه الميزة)
+      // فلترة على المنسقين النشطين فقط — منسق معطَّل (deactivated) كان يستمرّ
+      // في استلام leads جديدة عبر round-robin رغم أنه لا يستطيع الدخول، فتضيع
+      // الـ leads (لا يراها بقية المنسقين). نربط بـ users ونشترط isActive.
       const coords = await tx
         .select({ userId: webhookCoordinators.userId })
         .from(webhookCoordinators)
-        .where(eq(webhookCoordinators.webhookId, webhook.id))
+        .innerJoin(users, eq(users.id, webhookCoordinators.userId))
+        .where(
+          and(
+            eq(webhookCoordinators.webhookId, webhook.id),
+            eq(users.isActive, true),
+          ),
+        )
         .orderBy(webhookCoordinators.createdAt);
       const coordIds = coords.map((c) => c.userId);
 
-      // round-robin: حدّد نقطة البداية
+      // round-robin: حدّد نقطة البداية (المؤشّر lastAssigned مقروء تحت قفل FOR UPDATE أعلاه)
       let nextIdx = 0;
-      if (coordIds.length > 1 && webhook.lastAssignedToUserId) {
-        const lastIdx = coordIds.indexOf(webhook.lastAssignedToUserId);
+      if (coordIds.length > 1 && lastAssigned) {
+        const lastIdx = coordIds.indexOf(lastAssigned);
         nextIdx = lastIdx >= 0 ? (lastIdx + 1) % coordIds.length : 0;
       }
 
@@ -281,7 +369,50 @@ export async function POST(request: NextRequest) {
             .where(eq(webhookEndpoints.id, webhook.id));
         }
 
-        // activity log مجمّع (إدخال واحد)
+        // أشعِر كل منسق بعميله الجديد (NEW_LEAD) — كان الإسناد round-robin صامتاً
+        // فلا ينتبه المنسق للعميل إلا إذا فتح القائمة صدفة.
+        const notifValues = createdLeads
+          .filter((l) => l.assignedTo)
+          .map((l) => ({
+            tenantId: webhook.tenantId,
+            userId: l.assignedTo!,
+            type: "NEW_LEAD" as const,
+            title: `عميل جديد: ${l.name}`,
+            message: `أُسند إليك عميل جديد "${l.name}" عبر ${webhook.label ?? "الويب هوك"}`,
+          }));
+        if (notifValues.length > 0) {
+          await tx.insert(notifications).values(notifValues);
+        }
+      }
+
+      // إعادة تفعيل المؤرشفين العائدين عبر الـ webhook: مسح حقول الأرشيف
+      // + عودة للمرحلة الافتراضية (نفس دلالات unarchiveLead في archive.ts)
+      const reactivated: { id: string; phone: string }[] = [];
+      if (toReactivate.length > 0) {
+        const reactivateUpdate: Record<string, unknown> = {
+          archivedAt: null,
+          archiveReason: null,
+          archiveNote: null,
+          reactivateAt: null,
+          updatedAt: new Date(),
+        };
+        if (defaultStage) reactivateUpdate.stageId = defaultStage.id;
+        await tx
+          .update(leads)
+          .set(reactivateUpdate)
+          .where(
+            and(
+              eq(leads.tenantId, webhook.tenantId),
+              inArray(leads.id, toReactivate.map((e) => archivedMap.get(e.phone)!)),
+            ),
+          );
+        for (const e of toReactivate) {
+          reactivated.push({ id: archivedMap.get(e.phone)!, phone: e.phone });
+        }
+      }
+
+      // activity log مجمّع (إدخال واحد) — لو أُنشئ أو أُعيد تفعيل أي lead
+      if (createdLeads.length > 0 || reactivated.length > 0) {
         await tx.insert(activityLog).values({
           tenantId: webhook.tenantId,
           action: "WEBHOOK_RECEIVED",
@@ -290,8 +421,11 @@ export async function POST(request: NextRequest) {
             source: "webhook",
             webhookId: webhook.id,
             created: createdLeads.length,
+            reactivated: reactivated.length,
+            reactivatedLeadIds: reactivated.map((r) => r.id),
             skippedDuplicate: activeSet.size,
             skippedDeleted: deletedSet.size,
+            batchDuplicates,
             invalidPhones,
             rejected: rejectedCount,
           },
@@ -300,6 +434,7 @@ export async function POST(request: NextRequest) {
 
       return {
         createdLeads,
+        reactivated,
         skippedDuplicate: activeSet.size,
         skippedDeleted: deletedSet.size,
         skippedDnc: dncSet.size,
@@ -319,7 +454,8 @@ export async function POST(request: NextRequest) {
         l.name,
         l.id,
         webhook.welcomeTemplateName, // قالب مخصّص لهذه الحملة، إن وُجد
-        l.assignedTo, // ← رقم المنسق المُسنَد له (fallback لـ tenant default إن لم يكن له creds)
+        l.assignedTo, // ← رقم المنسق المُسنَد له. سياسة الترحيب "لا fallback": لو لم يربط
+        //    المنسق رقمه، لا يُرسَل ترحيب (تجنّب inbox مختلط) — خلافاً للتذكيرات التي ترجع لرقم المنشأة.
       ).catch((err) => {
         logger.error("welcome message failed", err, {
           leadId: l.id,
@@ -332,9 +468,11 @@ export async function POST(request: NextRequest) {
       success: true,
       message: `تم إضافة ${result.createdLeads.length} عميل`,
       created: result.createdLeads.length,
+      reactivated: result.reactivated.length, // مؤرشفون عادوا — أُعيد تفعيلهم تلقائياً
       skippedDuplicate: result.skippedDuplicate,
       skippedDeleted: result.skippedDeleted,
       skippedDnc: result.skippedDnc, // عملاء طلبوا عدم التواصل — احتُرم قرارهم
+      batchDuplicates, // تكرار داخل الـ payload نفسه (أول ظهور فاز)
       invalidPhones,
       rejected: rejectedCount,
       total: rawEntries.length,

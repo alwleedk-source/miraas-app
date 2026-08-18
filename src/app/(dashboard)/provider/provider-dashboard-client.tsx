@@ -66,6 +66,7 @@ function formatTime(date: Date | null): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
+    timeZone: "Asia/Riyadh",
   });
 }
 
@@ -75,6 +76,7 @@ function formatDate(date: Date | null): string {
     weekday: "long",
     day: "numeric",
     month: "long",
+    timeZone: "Asia/Riyadh",
   });
 }
 
@@ -83,6 +85,7 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
   const [isPending, startTransition] = useTransition();
   const [customMessage, setCustomMessage] = useState("");
   const [messageSent, setMessageSent] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
   const [showTomorrow, setShowTomorrow] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -99,7 +102,12 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
     setActionError(null);
     startTransition(async () => {
       try {
-        await updateProviderBookingStatus(leadId, status);
+        const res = await updateProviderBookingStatus(leadId, status);
+        if (!res.success) {
+          setActionError(res.error);
+          setTimeout(() => setActionError(null), 5000);
+          return;
+        }
         const labelMap: Record<typeof status, string> = {
           COMPLETED: `حضر ${leadName} ✓`,
           ATTENDED_NOT_SUITABLE: `حضر ${leadName} (لم يناسبه)`,
@@ -108,8 +116,8 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
         setActionSuccess(labelMap[status]);
         setTimeout(() => setActionSuccess(null), 3000);
         router.refresh();
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : "فشل التحديث");
+      } catch {
+        setActionError("فشل التحديث — حاول مجدداً");
         setTimeout(() => setActionError(null), 5000);
       } finally {
         setActionLoadingId(null);
@@ -123,14 +131,19 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
     setActionError(null);
     startTransition(async () => {
       try {
-        await addProviderSessionNote(leadId, noteText.trim());
+        const res = await addProviderSessionNote(leadId, noteText.trim());
+        if (!res.success) {
+          setActionError(res.error);
+          setTimeout(() => setActionError(null), 5000);
+          return;
+        }
         setNoteFor(null);
         setNoteText("");
         setActionSuccess("📝 تمت إضافة الملاحظة");
         setTimeout(() => setActionSuccess(null), 3000);
         router.refresh();
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : "فشل حفظ الملاحظة");
+      } catch {
+        setActionError("فشل حفظ الملاحظة — حاول مجدداً");
         setTimeout(() => setActionError(null), 5000);
       } finally {
         setActionLoadingId(null);
@@ -139,12 +152,21 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
   };
 
   const handleQuickMessage = (msg: string, type: string) => {
+    setMessageError(null);
     startTransition(async () => {
       try {
-        await sendQuickMessage(msg, type);
+        const res = await sendQuickMessage(msg, type);
+        if (!res.success) {
+          setMessageError(res.error);
+          setTimeout(() => setMessageError(null), 5000);
+          return;
+        }
         setMessageSent(true);
         setTimeout(() => setMessageSent(false), 3000);
-      } catch {}
+      } catch {
+        setMessageError("تعذّر إرسال الرسالة — حاول مجدداً");
+        setTimeout(() => setMessageError(null), 5000);
+      }
     });
   };
 
@@ -410,6 +432,11 @@ export default function ProviderDashboardClient({ dashboard }: { dashboard: Dash
           {messageSent && (
             <div className="p-2.5 rounded-lg bg-success-50 text-success-700 text-sm text-center font-medium animate-fade-in">
               ✅ تم إرسال الرسالة للاستقبال
+            </div>
+          )}
+          {messageError && (
+            <div className="p-2.5 rounded-lg bg-danger-50 text-danger-700 text-sm text-center font-medium animate-fade-in">
+              ❌ {messageError}
             </div>
           )}
 

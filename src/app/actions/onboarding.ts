@@ -55,7 +55,8 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
     db
       .select({ c: count() })
       .from(users)
-      .where(and(eq(users.tenantId, tenantId), ne(users.role, "OWNER")))
+      // الأعضاء المعطَّلون لا يُحسبون — خطوة "أضف فريق العمل" كانت تكتمل بعضو معطَّل
+      .where(and(eq(users.tenantId, tenantId), ne(users.role, "OWNER"), eq(users.isActive, true)))
       .then((r) => Number(r[0]?.c ?? 0)),
     db
       .select({ c: count() })

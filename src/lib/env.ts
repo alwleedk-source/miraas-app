@@ -5,13 +5,12 @@
  * يتسامح مع المسافات + علامات التنصيص (Coolify يحفظ بعض القيم بـ quotes).
  */
 
-/** ينظّف القيم من المسافات/الـ quotes/الـ newlines */
+/** ينظّف القيم من المسافات الطرفية + الـ quotes المحيطة فقط — لا نلمس المسافات الداخلية (كلمات مرور DB قد تحوي مسافات) */
 function sanitize(raw: string | undefined): string | undefined {
   if (!raw) return raw;
   return raw
     .trim()
-    .replace(/^["']|["']$/g, "") // strip surrounding quotes
-    .replace(/\s+/g, ""); // strip internal whitespace
+    .replace(/^["']|["']$/g, ""); // strip surrounding quotes
 }
 
 type EnvCheck = {
@@ -32,11 +31,8 @@ const CHECKS: EnvCheck[] = [
       if (!v.startsWith("postgres://") && !v.startsWith("postgresql://")) {
         return "must start with postgres:// or postgresql://";
       }
-      // SSL ضروري في production — يحمي البيانات أثناء النقل
-      // (Coolify-managed Postgres قد يكون localhost دون SSL لكن في cluster setup ضروري)
-      if (process.env.NODE_ENV === "production" && !v.includes("sslmode=")) {
-        return "production يجب أن يحوي ?sslmode=require — يحمي البيانات أثناء النقل";
-      }
+      // sslmode=require لا يُفرض هنا — نشر Coolify الموثّق يستخدم شبكة docker
+      // داخلية بدون SSL. يُحقَّق كتحذير في validateEnv بدل منع الإقلاع.
       return null;
     },
   },
@@ -103,6 +99,23 @@ export function validateEnv(): { ok: boolean; errors: string[]; warnings: string
         else warnings.push(msg);
       }
     }
+  }
+
+  // SSL بين التطبيق و DB: تحذير فقط — نشر Coolify الموثّق يستخدم شبكة docker
+  // داخلية بدون SSL. فعّل sslmode=require لو DB على خادم/شبكة خارجية.
+  const dbUrl = sanitize(process.env.DATABASE_URL);
+  if (isProd && dbUrl && !dbUrl.includes("sslmode=")) {
+    warnings.push(
+      "DATABASE_URL: بدون sslmode= — مقبول داخل شبكة docker الداخلية، لكن فعّل SSL لو قاعدة البيانات خارجية",
+    );
+  }
+
+  // RESEND_API_KEY بدون EMAIL_FROM: البريد يفشل صامتاً عند أول محاولة إرسال
+  if (sanitize(process.env.RESEND_API_KEY) && !sanitize(process.env.EMAIL_FROM)) {
+    const msg =
+      "EMAIL_FROM: مطلوب لأن RESEND_API_KEY مضبوط — بدونه يُرسَل البريد من عنوان placeholder";
+    if (isProd) errors.push(msg);
+    else warnings.push(msg);
   }
 
   return { ok: errors.length === 0, errors, warnings };

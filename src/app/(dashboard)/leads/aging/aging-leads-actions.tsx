@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Phone, MessageCircle, Check, Loader2, Archive } from "lucide-react";
-import { quickScheduleFollowUp } from "@/app/actions/followups";
+import { markLeadContacted } from "@/app/actions/followups";
 import { toTelUrl, toWhatsappUrl } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { ArchiveModal } from "@/components/archive/archive-modal";
@@ -22,24 +22,26 @@ type Props = {
 export default function AgingLeadsActions({ leadId, leadName, phone }: Props) {
   const [isPending, startTransition] = useTransition();
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
   const router = useRouter();
 
   const handleMarkContacted = () => {
+    setError(null);
     startTransition(async () => {
       try {
-        // ننشئ follow-up مكتمل (note فقط) — هذا يُعيد lastActivity ويُخرجه من القائمة
-        await quickScheduleFollowUp({
-          leadId,
-          scheduledAt: new Date().toISOString(),
-          notes: `تم التواصل من شاشة العملاء المُهمَلين`,
-          type: "CALL",
-        });
+        // يسجّل متابعة مكتملة (بلا جدولة) — يُعيد lastActivity ويُخرجه من القائمة
+        // بلا تذكير وهمي يطلق toast "حان وقت الاتصال" بعد ثوانٍ
+        const res = await markLeadContacted(leadId);
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setDone(true);
         // refresh الصفحة بعد ثانيتين
         setTimeout(() => router.refresh(), 1500);
       } catch {
-        // ignore — show fail visually
+        setError("فشل في تسجيل التواصل");
       }
     });
   };
@@ -96,6 +98,9 @@ export default function AgingLeadsActions({ leadId, leadName, phone }: Props) {
         >
           <Archive className="h-3.5 w-3.5" />
         </button>
+        {error && (
+          <span className="text-[10px] text-danger-600">{error}</span>
+        )}
       </div>
 
       <ArchiveModal

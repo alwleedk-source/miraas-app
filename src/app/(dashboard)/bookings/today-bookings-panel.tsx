@@ -51,6 +51,8 @@ export default function TodayBookingsPanel({
   const [isPending, startTransition] = useTransition();
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  // خطأ الإجراءات — يُعرض كـ toast سفلي (الأكشنات تُعيد { success: false, error })
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // نافذة إعادة الجدولة
   const [rescheduleModal, setRescheduleModal] = useState<RescheduleData | null>(null);
@@ -58,16 +60,25 @@ export default function TodayBookingsPanel({
 
   const handleRemind = (leadId: string) => {
     setLoadingId(leadId);
+    setActionError(null);
     setRemindedIds((prev) => new Set([...prev, leadId]));
     startTransition(async () => {
-      try {
-        await markBookingReminded(leadId);
-      } catch {
+      const rollback = () =>
         setRemindedIds((prev) => {
           const next = new Set(prev);
           next.delete(leadId);
           return next;
         });
+      try {
+        const res = await markBookingReminded(leadId);
+        if (!res.success) {
+          rollback();
+          setActionError(res.error);
+          return;
+        }
+      } catch {
+        rollback();
+        setActionError("تعذّر تسجيل التذكير — حاول مجدداً");
       } finally {
         setLoadingId(null);
       }
@@ -77,16 +88,25 @@ export default function TodayBookingsPanel({
   // إجراءات المواعيد المتأخرة
   const handleOverdueAction = (leadId: string, status: string) => {
     setLoadingId(leadId);
+    setActionError(null);
     setResolvedIds((prev) => new Set([...prev, leadId]));
     startTransition(async () => {
-      try {
-        await updateBookingStatus({ leadId, status });
-      } catch {
+      const rollback = () =>
         setResolvedIds((prev) => {
           const next = new Set(prev);
           next.delete(leadId);
           return next;
         });
+      try {
+        const res = await updateBookingStatus({ leadId, status });
+        if (!res.success) {
+          rollback();
+          setActionError(res.error);
+          return;
+        }
+      } catch {
+        rollback();
+        setActionError("تعذّر تحديث الموعد — حاول مجدداً");
       } finally {
         setLoadingId(null);
       }
@@ -96,23 +116,37 @@ export default function TodayBookingsPanel({
   const handleRescheduleConfirm = () => {
     if (!rescheduleModal || !rescheduleDate) return;
     setLoadingId(rescheduleModal.leadId);
+    setActionError(null);
     setResolvedIds((prev) => new Set([...prev, rescheduleModal.leadId]));
     startTransition(async () => {
-      try {
-        await updateBookingDate({
-          leadId: rescheduleModal.leadId,
-          bookingDate: rescheduleDate,
-        });
-        // أعد لـ PENDING بالموعد الجديد
-        await updateBookingStatus({ leadId: rescheduleModal.leadId, status: "PENDING" });
-        setRescheduleModal(null);
-        setRescheduleDate("");
-      } catch {
+      const rollback = () =>
         setResolvedIds((prev) => {
           const next = new Set(prev);
           if (rescheduleModal) next.delete(rescheduleModal.leadId);
           return next;
         });
+      try {
+        const dateRes = await updateBookingDate({
+          leadId: rescheduleModal.leadId,
+          bookingDate: rescheduleDate,
+        });
+        if (!dateRes.success) {
+          rollback();
+          setActionError(dateRes.error);
+          return;
+        }
+        // أعد لـ PENDING بالموعد الجديد
+        const statusRes = await updateBookingStatus({ leadId: rescheduleModal.leadId, status: "PENDING" });
+        if (!statusRes.success) {
+          rollback();
+          setActionError(statusRes.error);
+          return;
+        }
+        setRescheduleModal(null);
+        setRescheduleDate("");
+      } catch {
+        rollback();
+        setActionError("تعذّرت إعادة الجدولة — حاول مجدداً");
       } finally {
         setLoadingId(null);
       }
@@ -199,7 +233,9 @@ export default function TodayBookingsPanel({
         >
           {b.bookingDate
             ? variant === "overdue"
-              ? new Date(b.bookingDate).toLocaleDateString("ar-SA-u-ca-gregory")
+              ? new Date(b.bookingDate).toLocaleDateString("ar-SA-u-ca-gregory", {
+                  timeZone: "Asia/Riyadh",
+                })
               : new Date(b.bookingDate).toLocaleTimeString("ar-SA-u-ca-gregory", {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -494,6 +530,17 @@ export default function TodayBookingsPanel({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* خطأ إجراء — toast سفلي يُغلق بالضغط (start منطقي + إزاحة موجبة للتمركز في RTL) */}
+      {actionError && (
+        <div
+          className="fixed bottom-4 start-1/2 translate-x-1/2 bg-danger-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50 cursor-pointer"
+          onClick={() => setActionError(null)}
+        >
+          <X className="h-4 w-4" />
+          {actionError}
         </div>
       )}
     </>

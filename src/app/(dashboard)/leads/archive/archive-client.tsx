@@ -37,6 +37,7 @@ type Props = {
   currentReason?: string;
   currentSearch?: string;
   dueOnly?: boolean;
+  currentUserRole?: string;
 };
 
 function timeAgo(date: Date | string | null, now: number): string {
@@ -60,6 +61,7 @@ export default function ArchiveClient({
   currentReason,
   currentSearch,
   dueOnly,
+  currentUserRole,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,6 +70,9 @@ export default function ArchiveClient({
   const [bulkPending, startBulkTransition] = useTransition();
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const now = useNow();
+
+  // التصدير وإعادة التفعيل الجماعية OWNER/ADMIN فقط في الخادم — نخفيها عن المنسق
+  const canManage = currentUserRole === "OWNER" || currentUserRole === "ADMIN";
 
   const updateSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,7 +106,12 @@ export default function ArchiveClient({
   const handleSingleReactivate = (id: string, name: string) => {
     startBulkTransition(async () => {
       try {
-        await unarchiveLead(id);
+        const res = await unarchiveLead(id);
+        if (!res.success) {
+          setBulkResult(`❌ ${res.error}`);
+          setTimeout(() => setBulkResult(null), 5000);
+          return;
+        }
         setBulkResult(`✅ تم إعادة تفعيل ${name}`);
         router.refresh();
         setTimeout(() => setBulkResult(null), 3000);
@@ -118,6 +128,11 @@ export default function ArchiveClient({
         reason: currentReason,
         search: currentSearch,
       });
+      if (!result.success) {
+        setBulkResult(`❌ ${result.error}`);
+        setTimeout(() => setBulkResult(null), 5000);
+        return;
+      }
       const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -145,6 +160,11 @@ export default function ArchiveClient({
           leadIds: Array.from(selected),
           resetStage: true,
         });
+        if (!result.success) {
+          setBulkResult(`❌ ${result.error}`);
+          setTimeout(() => setBulkResult(null), 5000);
+          return;
+        }
         let msg = `✅ تمت إعادة ${result.reactivated} عميل`;
         if (result.dncSkipped > 0) {
           msg += ` (تخطّينا ${result.dncSkipped} طلبوا عدم التواصل)`;
@@ -180,16 +200,18 @@ export default function ArchiveClient({
             <Button type="submit" variant="outline" size="sm">
               بحث
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleExport}
-              title="تصدير المعروض كـ CSV"
-            >
-              <Download className="h-4 w-4 me-1" />
-              تصدير
-            </Button>
+            {canManage && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                title="تصدير المعروض كـ CSV"
+              >
+                <Download className="h-4 w-4 me-1" />
+                تصدير
+              </Button>
+            )}
             {(currentSearch || currentReason || dueOnly) && (
               <Button
                 type="button"
@@ -202,7 +224,7 @@ export default function ArchiveClient({
             )}
           </form>
 
-          {selected.size > 0 && (
+          {canManage && selected.size > 0 && (
             <div className="flex items-center justify-between p-2 bg-primary-50 rounded-lg border border-primary-100 animate-fade-in">
               <span className="text-xs font-medium text-primary-700">
                 ✓ اخترت {selected.size} عميل
@@ -229,7 +251,7 @@ export default function ArchiveClient({
 
       {/* Result toast */}
       {bulkResult && (
-        <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white px-4 py-2 rounded-xl shadow-lg text-sm z-50 animate-fade-in">
+        <div className="fixed bottom-4 start-1/2 translate-x-1/2 bg-surface-900 text-white px-4 py-2 rounded-xl shadow-lg text-sm z-50 animate-fade-in">
           {bulkResult}
         </div>
       )}
@@ -241,14 +263,16 @@ export default function ArchiveClient({
             <table className="w-full text-sm">
               <thead className="border-b border-surface-200 bg-surface-50">
                 <tr>
-                  <th className="p-2 text-start w-10">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={selectAll}
-                      className="rounded border-surface-300"
-                    />
-                  </th>
+                  {canManage && (
+                    <th className="p-2 text-start w-10">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={selectAll}
+                        className="rounded border-surface-300"
+                      />
+                    </th>
+                  )}
                   <th className="p-2 text-start text-xs font-semibold text-surface-500">العميل</th>
                   <th className="p-2 text-start text-xs font-semibold text-surface-500 hidden md:table-cell">السبب</th>
                   <th className="p-2 text-start text-xs font-semibold text-surface-500 hidden lg:table-cell">الملاحظة</th>
@@ -269,16 +293,18 @@ export default function ArchiveClient({
 
                   return (
                     <tr key={lead.id} className="border-b border-surface-100 hover:bg-surface-50/50">
-                      <td className="p-2">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(lead.id)}
-                          onChange={() => toggleSelect(lead.id)}
-                          disabled={isDnc}
-                          className="rounded border-surface-300"
-                          title={isDnc ? "DNC — لا يُعاد تفعيله" : ""}
-                        />
-                      </td>
+                      {canManage && (
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(lead.id)}
+                            onChange={() => toggleSelect(lead.id)}
+                            disabled={isDnc}
+                            className="rounded border-surface-300"
+                            title={isDnc ? "DNC — لا يُعاد تفعيله" : ""}
+                          />
+                        </td>
+                      )}
                       <td className="p-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-surface-900">{lead.name}</span>

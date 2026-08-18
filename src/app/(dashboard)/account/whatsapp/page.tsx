@@ -43,7 +43,7 @@ export default async function AccountWhatsappPage() {
           <p className="font-semibold text-surface-900">📞 كيف يعمل ربط الرقم الخاص؟</p>
           <ul className="list-disc list-inside space-y-1.5">
             <li>
-              <strong className="text-danger-700">⚠️ دون ربط رقمك:</strong> عملاؤك من حملاتك <strong>لن يستلموا أيّ رسالة</strong> — لا ترحيب ولا تذكير. السبب: لو أُرسلت من رقم العيادة، العميل سيردّ هناك ولن يصلك ردّه على هاتفك (inbox مختلط = lead ضائع).
+              <strong className="text-danger-700">⚠️ دون ربط رقمك:</strong> الترحيب بعملائك الجدد <strong>يتوقّف</strong> حتى تربط رقمك — لا يُرسَل من رقم العيادة، لأن العميل سيردّ هناك ولن يصلك ردّه على هاتفك (inbox مختلط = lead ضائع). أما <strong>تذكيرات المواعيد</strong> فتُرسَل من رقم العيادة الموحّد، وقد يردّ العميل عليه بدلاً من رقمك.
             </li>
             <li>
               <strong>مع ربط رقمك:</strong> عملاء حملاتك يستلمون رسائلهم من رقمك أنت، ويردّون على رقمك مباشرةً — كل المحادثة على هاتفك بحرية كاملة.

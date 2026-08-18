@@ -13,7 +13,7 @@ import { toWhatsappUrl } from "@/lib/utils";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { activityLog, users, followUps, leads, leadSources, departments } from "@/db/schema";
-import { eq, and, desc, lte, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
+import { eq, and, desc, lt, gte, isNull, isNotNull, sql, count } from "drizzle-orm";
 import TodayTasks from "./today-tasks";
 import UpcomingFollowUps from "./upcoming-followups";
 import ActivityLog from "./activity-log";
@@ -24,6 +24,18 @@ import OwnerPulseCard from "./owner-pulse-card";
 import { getOwnerPulse, type OwnerPulse } from "@/app/actions/owner-pulse";
 import OnboardingChecklist from "./onboarding-checklist";
 import { getOnboardingStatus, type OnboardingStatus } from "@/app/actions/onboarding";
+
+// حدود اليوم بتوقيت الرياض — هذه صفحة سيرفر تعمل بـ UTC، فـ setHours المحلي
+// يحسب منتصف ليل UTC (=3ص الرياض) فتنزاح كل نوافذ اليوم/الأسبوع 3 ساعات.
+const RIYADH_TZ = "Asia/Riyadh";
+function getRiyadhDate(offsetDays = 0): { start: Date; end: Date } {
+  const now = new Date();
+  const riyadhStr = now.toLocaleDateString("en-CA", { timeZone: RIYADH_TZ });
+  const [y, m, d] = riyadhStr.split("-").map(Number);
+  const start = new Date(Date.UTC(y, m - 1, d + offsetDays, -3, 0, 0));
+  const end = new Date(start.getTime() + 86400000);
+  return { start, end };
+}
 
 export default async function DashboardPage() {
   const { tenantId, role: userRole, session, userId } = await requireTenant();
@@ -37,12 +49,25 @@ export default async function DashboardPage() {
     redirect("/provider");
   }
 
-  // جلب الإحصائيات
-  let stats;
+  // جلب الإحصائيات — العقد الجديد: { success: true, ... } | { success: false, error }
+  // عند الفشل (أو رمي غير متوقع) نعرض أصفاراً بدل إسقاط الصفحة كلها.
+  const emptyStats: {
+    totalLeads: number;
+    todayLeads: number;
+    todayFollowUps: number;
+    stageBreakdown: {
+      stageId: string | null;
+      stageName: string | null;
+      stageColor: string | null;
+      count: number;
+    }[];
+  } = { totalLeads: 0, todayLeads: 0, todayFollowUps: 0, stageBreakdown: [] };
+  let stats = emptyStats;
   try {
-    stats = await getDashboardStats();
+    const res = await getDashboardStats();
+    if (res.success) stats = res;
   } catch {
-    stats = { totalLeads: 0, todayLeads: 0, todayFollowUps: 0, stageBreakdown: [] };
+    // ignore
   }
 
   // نبض المالك — للمالك/المدير فقط
@@ -71,12 +96,12 @@ export default async function DashboardPage() {
     leadSource: string | null;
   }[] = [];
   try {
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
+    // نهاية اليوم بتوقيت الرياض (= بداية الغد، حصري)
+    const { end: endOfToday } = getRiyadhDate(0);
 
     const conditions = [
       eq(followUps.tenantId, tenantId),
-      lte(followUps.scheduledAt, endOfToday),
+      lt(followUps.scheduledAt, endOfToday),
       isNull(followUps.completedAt),
       sql`${followUps.scheduledAt} IS NOT NULL`,
     ];
@@ -119,17 +144,14 @@ export default async function DashboardPage() {
     leadPhone: string | null;
   }[] = [];
   try {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    const nextWeek = new Date();
-    nextWeek.setDate(nextWeek.getDate() + 8);
-    nextWeek.setHours(0, 0, 0, 0);
+    // بداية الغد حتى بداية اليوم الثامن — بتوقيت الرياض
+    const { start: tomorrow } = getRiyadhDate(1);
+    const { start: nextWeek } = getRiyadhDate(8);
 
     const upConditions = [
       eq(followUps.tenantId, tenantId),
       gte(followUps.scheduledAt, tomorrow),
-      lte(followUps.scheduledAt, nextWeek),
+      lt(followUps.scheduledAt, nextWeek),
       isNull(followUps.completedAt),
       isNotNull(followUps.scheduledAt),
     ];
@@ -198,15 +220,14 @@ export default async function DashboardPage() {
 
   let todayFollowUpsByType: { type: string; count: number }[] = [];
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const { start: startOfDay, end: endOfDay } = getRiyadhDate(0);
 
     const typeConditions = [
       eq(followUps.tenantId, tenantId),
-      sql`${followUps.scheduledAt} >= ${startOfDay}`,
-      sql`${followUps.scheduledAt} <= ${endOfDay}`,
+      gte(followUps.scheduledAt, startOfDay),
+      lt(followUps.scheduledAt, endOfDay),
+      // غير المكتملة فقط — ليطابق مجموع الشارات عدّاد "متابعات اليوم" الرئيسي
+      isNull(followUps.completedAt),
     ];
     if (userRole === "COORDINATOR") {
       typeConditions.push(eq(followUps.userId, userId));
@@ -239,10 +260,7 @@ export default async function DashboardPage() {
     departmentColor: string | null;
   }[] = [];
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const { start: startOfDay, end: endOfDay } = getRiyadhDate(0);
 
     todayBookingsList = await db
       .select({
@@ -264,9 +282,10 @@ export default async function DashboardPage() {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          isNull(leads.archivedAt),
           isNotNull(leads.bookingStatus),
           gte(leads.bookingDate, startOfDay),
-          lte(leads.bookingDate, endOfDay)
+          lt(leads.bookingDate, endOfDay)
         )
       )
       .orderBy(leads.bookingDate);
@@ -563,8 +582,8 @@ export default async function DashboardPage() {
           <CardContent className="space-y-3">
             {stats.stageBreakdown.length > 0 ? (
               <>
-                {stats.stageBreakdown.map((stage: { stageName: string | null; stageColor: string | null; count: number }) => (
-                  <div key={stage.stageName} className="flex items-center gap-3">
+                {stats.stageBreakdown.map((stage: { stageId: string | null; stageName: string | null; stageColor: string | null; count: number }) => (
+                  <div key={stage.stageId ?? "no-stage"} className="flex items-center gap-3">
                     <div
                       className="w-3 h-3 rounded-full shrink-0"
                       style={{ backgroundColor: stage.stageColor || "#6B7280" }}

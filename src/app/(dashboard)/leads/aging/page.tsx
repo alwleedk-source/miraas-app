@@ -1,6 +1,6 @@
 import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { getAgingLeads } from "@/app/actions/leads";
+import { getAgingLeads, type AgingLead } from "@/app/actions/leads";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, AlertOctagon, Clock, ArrowRight } from "lucide-react";
@@ -12,9 +12,11 @@ export default async function AgingLeadsPage() {
   if (!tenantId) redirect("/register");
   if (role === "PROVIDER") redirect("/provider");
 
-  let leads: Awaited<ReturnType<typeof getAgingLeads>> = [];
+  // صفحة قراءة — عند الفشل تُعرض القائمة الفارغة
+  let leads: AgingLead[] = [];
   try {
-    leads = await getAgingLeads(3);
+    const res = await getAgingLeads(3);
+    if (res.success) leads = res.leads;
   } catch {
     leads = [];
   }
@@ -125,7 +127,7 @@ export default async function AgingLeadsPage() {
   );
 }
 
-function AgingLeadRow({ lead }: { lead: Awaited<ReturnType<typeof getAgingLeads>>[number] }) {
+function AgingLeadRow({ lead }: { lead: AgingLead }) {
   const severityColor =
     lead.severity === "critical"
       ? "border-danger-200 bg-danger-50/30"

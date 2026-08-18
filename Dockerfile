@@ -9,9 +9,11 @@ WORKDIR /app
 ENV NODE_ENV=development
 
 COPY package.json package-lock.json ./
-# npm install (not ci) — tolerant of minor lock-file drift across platforms
+# xlsx مُورَّد محلياً (vendor/) — نسخة SheetJS المُصحّحة غير متاحة على npm
+COPY vendor ./vendor
+# npm ci — بناء قطعي الاستنساخ من الـ lockfile
 # Explicitly include dev deps since next build needs typescript/tailwindcss
-RUN npm install --include=dev --no-audit --no-fund --ignore-scripts
+RUN npm ci --include=dev --no-audit --no-fund --ignore-scripts
 
 # ============================================
 # Stage 2: Build
@@ -66,7 +68,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # Migration infrastructure — runs in start.sh before server
-COPY --from=builder /app/migrate.mjs ./migrate.mjs
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/start.sh ./start.sh
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/node_modules/postgres ./node_modules/postgres

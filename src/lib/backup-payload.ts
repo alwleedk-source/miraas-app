@@ -15,6 +15,9 @@ export async function buildBackupPayload(
   event: BackupEventType,
   meta?: BackupPayload["meta"],
 ): Promise<BackupPayload | null> {
+  // لا نرمي أبداً — المستدعون يطلقونها fire-and-forget (void ...then(...)) بلا catch،
+  // فأي خطأ DB عابر هنا كان سيصبح unhandled rejection. النسخ ثانوي: نرجع null عند الفشل.
+  try {
   const [row] = await db
     .select({
       id: leads.id,
@@ -69,6 +72,9 @@ export async function buildBackupPayload(
     },
     meta,
   };
+  } catch {
+    return null;
+  }
 }
 
 /**

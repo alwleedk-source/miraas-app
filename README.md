@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# مِراس (Meras CRM)
 
-## Getting Started
+نظام إدارة علاقات عملاء (CRM) **متعدد المستأجرين** موجّه للعيادات: إدارة العملاء المحتملين (leads)، مراحل البيع (pipeline)، الحجوزات الذكية مع منع الحجز المزدوج، رسائل WhatsApp الترحيبية والتذكيرية، واستقبال العملاء عبر webhooks (Google Sheets وغيرها). عزل بيانات كل مستأجر مفروض عبر `tenant_id` في كل استعلام (راجع `docs/architecture.md`).
 
-First, run the development server:
+## المتطلبات
+
+- Node.js 20+
+- PostgreSQL 14+ (يتطلب امتداد `btree_gist` — تُنشئه الهجرات تلقائياً)
+- npm
+
+## متغيرات البيئة
+
+| المتغير | مطلوب؟ | الوصف |
+|---------|--------|-------|
+| `DATABASE_URL` | ✅ | رابط Postgres (`postgres://...`). يُقبل بدون `sslmode=` داخل شبكة docker الداخلية (تحذير فقط) |
+| `BETTER_AUTH_SECRET` | ✅ | سر الجلسات (16 حرفاً على الأقل) |
+| `BETTER_AUTH_URL` | ✅ | الرابط العام للتطبيق (`https://app.example.com`) |
+| `NEXT_PUBLIC_APP_URL` | ✅ (build) | يُضمَّن في حزمة المتصفح وقت البناء |
+| `ENCRYPTION_KEY` | ✅ | 64 حرفاً hex (مفتاح AES-256 لتشفير مفاتيح WhatsApp) |
+| `CRON_SECRET` | ✅ | سر مسارات cron (32 حرفاً على الأقل) |
+| `RESEND_API_KEY` | اختياري | تفعيل إرسال البريد (تأكيد البريد الإلكتروني) |
+| `EMAIL_FROM` | مطلوب مع `RESEND_API_KEY` | عنوان المُرسِل — بدونه يفشل الإقلاع في production |
+
+التحقق يتم تلقائياً عند الإقلاع في production عبر `src/instrumentation.ts` → `assertEnv()`.
+
+## أوامر التطوير
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev              # خادم التطوير
+npm run build            # بناء الإنتاج
+npm start                # هجرات + خادم الإنتاج
+npm run lint             # ESLint
+npm test                 # اختبارات Vitest
+npm run db:migrate       # تطبيق الهجرات (يُستخدم أيضاً عند إقلاع الحاوية)
+npm run db:audit         # فحص ما قبل الهجرة
+npm run security:probe   # فحص أمني بعد النشر (BASE_URL=https://...)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## الهجرات (Migrations)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+الهجرات ملفات SQL عادية في `drizzle/migrations/` تُطبَّق **عند إقلاع الحاوية** عبر `scripts/migrate.mjs` — **لا نستخدم `drizzle-kit migrate`**. المُهاجر:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- يأخذ advisory lock لمنع تسابق النسخ المتوازية
+- يعتبر أخطاء `already exists` / `duplicate` حميدة (idempotent)
+- يفشل الإقلاع على أي خطأ آخر
+- يقسّم الملفات على `;` تقسيمًا بسيطًا — لذا يُمنع في ملفات الهجرة: كتل `$$`، الدوال، والمعاملات (عبارات مفردة فقط)
 
-## Learn More
+## النشر (Docker / Coolify)
 
-To learn more about Next.js, take a look at the following resources:
+`Dockerfile` متعدد المراحل: يبني standalone output ثم ينسخ `scripts/` و`drizzle/` و`start.sh` لصورة التشغيل. عند الإقلاع، `start.sh` يشغّل الهجرات (fail-fast) ثم `node server.js`. في Coolify: اربط المستودع، اضبط متغيرات البيئة أعلاه، ومرّر `NEXT_PUBLIC_APP_URL` كـ build argument. فحص الصحة على `/api/health`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## بنية المشروع
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `src/app/` — App Router (صفحات + API routes + server actions)
+- `src/actions/` — منطق الكتابة المحمي بالأدوار
+- `src/db/` — مخطط drizzle + سياق المستأجر
+- `src/lib/` — الحراسات، التشفير، التحقق من البيئة، الأدوات المشتركة
+- `docs/architecture.md` — قرارات العزل متعدد المستأجرين (اقرأها قبل أي تغيير في طبقة DB)
+- `docs/disaster-recovery.md` — دليل الاستعادة من الكوارث

@@ -14,6 +14,15 @@ type SearchParams = Promise<{
   page?: string;
 }>;
 
+type ArchiveStatsData = Extract<
+  Awaited<ReturnType<typeof getArchiveStats>>,
+  { success: true }
+>;
+type ArchivedLeadsData = Extract<
+  Awaited<ReturnType<typeof getArchivedLeads>>,
+  { success: true }
+>;
+
 export default async function ArchivePage({
   searchParams,
 }: {
@@ -29,17 +38,41 @@ export default async function ArchivePage({
   const due = params.due === "1";
   const page = Math.max(1, parseInt(params.page || "1", 10));
 
-  let stats: Awaited<ReturnType<typeof getArchiveStats>>;
-  let result: Awaited<ReturnType<typeof getArchivedLeads>>;
+  // صفحة قراءة — عند الفشل تُعرض قيم فارغة بدل كسر الصفحة
+  let stats: Pick<ArchiveStatsData, "byReason" | "dueForReactivation" | "total"> = {
+    byReason: [],
+    dueForReactivation: 0,
+    total: 0,
+  };
+  let result: Pick<ArchivedLeadsData, "data" | "total" | "page" | "totalPages"> = {
+    data: [],
+    total: 0,
+    page: 1,
+    totalPages: 0,
+  };
 
   try {
-    [stats, result] = await Promise.all([
+    const [statsRes, leadsRes] = await Promise.all([
       getArchiveStats(),
       getArchivedLeads({ reason, search: q, dueForReactivation: due, page, limit: 50 }),
     ]);
+    if (statsRes.success) {
+      stats = {
+        byReason: statsRes.byReason,
+        dueForReactivation: statsRes.dueForReactivation,
+        total: statsRes.total,
+      };
+    }
+    if (leadsRes.success) {
+      result = {
+        data: leadsRes.data,
+        total: leadsRes.total,
+        page: leadsRes.page,
+        totalPages: leadsRes.totalPages,
+      };
+    }
   } catch {
-    stats = { byReason: [], dueForReactivation: 0, total: 0 };
-    result = { data: [], total: 0, page: 1, limit: 50, totalPages: 0 };
+    // ignore — القيم الافتراضية تُعرض
   }
 
   return (
@@ -146,6 +179,7 @@ export default async function ArchivePage({
           currentReason={reason}
           currentSearch={q}
           dueOnly={due}
+          currentUserRole={role}
         />
       )}
     </div>

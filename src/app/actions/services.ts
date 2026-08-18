@@ -54,10 +54,10 @@ export async function addService(
   assertRole(role, ROLE.OWNER_ADMIN);
 
   const trimmed = name.trim();
-  if (!trimmed || trimmed.length > 255) throw new Error("اسم الخدمة غير صالح");
+  if (!trimmed || trimmed.length > 255) return { success: false as const, error: "اسم الخدمة غير صالح" };
   if (departmentId) await assertDepartmentInTenant(departmentId, tenantId);
   if (defaultDurationMin !== undefined && (defaultDurationMin < 5 || defaultDurationMin > 480)) {
-    throw new Error("مدة غير صالحة (5-480 دقيقة)");
+    return { success: false as const, error: "مدة غير صالحة (5-480 دقيقة)" };
   }
 
   const [existing] = await db
@@ -65,15 +65,26 @@ export async function addService(
     .from(services)
     .where(and(eq(services.tenantId, tenantId), eq(services.name, trimmed)))
     .limit(1);
-  if (existing) throw new Error("هذه الخدمة موجودة بالفعل");
+  if (existing) return { success: false as const, error: "هذه الخدمة موجودة بالفعل" };
 
-  await db.insert(services).values({
-    tenantId,
-    name: trimmed,
-    departmentId: departmentId || null,
-    defaultDurationMin: defaultDurationMin || 30,
-  });
+  const [created] = await db
+    .insert(services)
+    .values({
+      tenantId,
+      name: trimmed,
+      departmentId: departmentId || null,
+      defaultDurationMin: defaultDurationMin || 30,
+    })
+    .returning({
+      id: services.id,
+      name: services.name,
+      isActive: services.isActive,
+      departmentId: services.departmentId,
+      defaultDurationMin: services.defaultDurationMin,
+    });
   revalidatePath("/settings");
+  // نُرجع الصف الحقيقي — العميل كان يخترع id عشوائياً فتفشل أزرار التعديل/الحذف لاحقاً
+  return { success: true as const, ...created };
 }
 
 // =============================================
@@ -93,11 +104,11 @@ export async function updateServiceDetails(
     .from(services)
     .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)))
     .limit(1);
-  if (!existing) throw new Error("الخدمة غير موجودة");
+  if (!existing) return { success: false as const, error: "الخدمة غير موجودة" };
 
   if (data.departmentId) await assertDepartmentInTenant(data.departmentId, tenantId);
   if (data.defaultDurationMin !== undefined && (data.defaultDurationMin < 5 || data.defaultDurationMin > 480)) {
-    throw new Error("مدة غير صالحة");
+    return { success: false as const, error: "مدة غير صالحة" };
   }
 
   const updateData: Record<string, unknown> = {};
@@ -110,6 +121,7 @@ export async function updateServiceDetails(
     .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================
@@ -124,7 +136,7 @@ export async function toggleService(serviceId: string) {
     .select({ isActive: services.isActive })
     .from(services)
     .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
-  if (!existing) throw new Error("الخدمة غير موجودة");
+  if (!existing) return { success: false as const, error: "الخدمة غير موجودة" };
 
   await db
     .update(services)
@@ -132,6 +144,7 @@ export async function toggleService(serviceId: string) {
     .where(and(eq(services.id, serviceId), eq(services.tenantId, tenantId)));
 
   revalidatePath("/settings");
+  return { success: true as const };
 }
 
 // =============================================

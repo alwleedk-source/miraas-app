@@ -41,13 +41,10 @@ export function ArchiveModal({ leadId, leadName, open, onClose, onArchived }: Pr
   const isDnc = reason === "DO_NOT_CONTACT";
 
   const setReactivateInDays = (days: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    d.setHours(10, 0, 0, 0);
-    // datetime-local format YYYY-MM-DDTHH:mm
-    const offset = d.getTimezoneOffset();
-    const local = new Date(d.getTime() - offset * 60_000);
-    setReactivateAt(local.toISOString().slice(0, 16));
+    // 10 صباحاً بجدار الرياض بعد N يوم — تُرسل كسلسلة مجرّدة ويفسّرها الخادم
+    // كتوقيت الرياض (parseRiyadhDateTime). الرياض UTC+3 بلا تبديل صيفي.
+    const wall = new Date(new Date().getTime() + 3 * 60 * 60 * 1000 + days * 86400_000).toISOString();
+    setReactivateAt(`${wall.slice(0, 10)}T10:00`);
   };
 
   const handleConfirm = () => {
@@ -58,13 +55,18 @@ export function ArchiveModal({ leadId, leadName, open, onClose, onArchived }: Pr
     setError(null);
     startTransition(async () => {
       try {
-        await archiveLead({
+        const res = await archiveLead({
           leadId,
           reason,
           note: note.trim() || undefined,
-          reactivateAt: reactivateAt && canScheduleReturn ? new Date(reactivateAt).toISOString() : undefined,
+          // وقت جدار مجرّد — يُفسَّر رياضاً في الخادم (لا تحويل بتوقيت المتصفح)
+          reactivateAt: reactivateAt && canScheduleReturn ? reactivateAt : undefined,
           isDoNotContact: isDnc,
         });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         onArchived?.();
         // reset state
         setReason(null);
@@ -138,7 +140,7 @@ export function ArchiveModal({ leadId, leadName, open, onClose, onArchived }: Pr
                         {r.description}
                       </p>
                     </div>
-                    {!r.canRevive && (
+                    {key === "DO_NOT_CONTACT" && (
                       <span className="text-[10px] bg-surface-200 text-surface-500 px-1.5 py-0.5 rounded-full shrink-0">
                         نهائي
                       </span>
@@ -163,8 +165,8 @@ export function ArchiveModal({ leadId, leadName, open, onClose, onArchived }: Pr
             <p className="text-[10px] text-surface-400">{note.length}/2000</p>
           </div>
 
-          {/* Reactivate date — only if reason allows revival */}
-          {canScheduleReturn && reason !== "OTHER" && (
+          {/* Reactivate date — only if reason allows revival (يشمل «سبب آخر») */}
+          {canScheduleReturn && (
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5">
                 <CalendarClock className="h-3.5 w-3.5 text-surface-400" />

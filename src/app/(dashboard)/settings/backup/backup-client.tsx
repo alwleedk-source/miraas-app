@@ -77,11 +77,15 @@ export default function BackupClient({ initial }: { initial: Status }) {
     startTransition(async () => {
       try {
         // لو السر فارغ ومحفوظ سابقاً، لا نُرسله — يُبقي على القديم
-        await saveBackupSettings({
+        const result = await saveBackupSettings({
           url,
           secret: secret || undefined,
           enabled,
         });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setSaved(true);
         setSecret(""); // امسح من الـ UI بعد الحفظ
         setTimeout(() => setSaved(false), 3000);

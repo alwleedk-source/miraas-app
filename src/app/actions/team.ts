@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { users, activityLog, leads, sessions } from "@/db/schema";
-import { eq, and, count, desc } from "drizzle-orm";
+import { users, activityLog, leads, sessions, webhookCoordinators } from "@/db/schema";
+import { eq, and, count, desc, isNull } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
@@ -48,18 +48,18 @@ export async function getTeamMembers() {
     .where(eq(users.tenantId, tenantId))
     .orderBy(desc(users.createdAt));
 
-  // عدد العملاء لكل عضو
-  const membersWithStats = await Promise.all(
-    members.map(async (member) => {
-      const [{ leadsCount }] = await db
-        .select({ leadsCount: count() })
-        .from(leads)
-        .where(and(eq(leads.assignedTo, member.id), eq(leads.isDeleted, false)));
-      return { ...member, leadsCount };
-    })
-  );
+  // عدد العملاء لكل عضو — استعلام مُجمَّع واحد بدل N استعلام (كان N+1 على صفحة /team)
+  const counts = await db
+    .select({ assignedTo: leads.assignedTo, leadsCount: count() })
+    .from(leads)
+    .where(and(eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)))
+    .groupBy(leads.assignedTo);
+  const countMap = new Map(counts.map((c) => [c.assignedTo, c.leadsCount]));
 
-  return membersWithStats;
+  return members.map((member) => ({
+    ...member,
+    leadsCount: countMap.get(member.id) ?? 0,
+  }));
 }
 
 // =============================================
@@ -68,7 +68,14 @@ export async function getTeamMembers() {
 
 export async function inviteTeamMember(raw: unknown) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
-  const input = inviteTeamMemberSchema.parse(raw);
+  const parsedInput = inviteTeamMemberSchema.safeParse(raw);
+  if (!parsedInput.success) {
+    return { success: false as const, error: "بيانات غير صالحة — تحقق من المدخلات" };
+  }
+  const input = parsedInput.data;
+  // ⚠️ mismatch معروف: الـ UI (team-actions.tsx) يفرض minLength=8 بينما السيرفر
+  // يشترط 10 (inviteTeamMemberSchema في schemas.ts + minPasswordLength في auth.ts).
+  // لا نغيّر الـ schema هنا — يُصحَّح الـ UI في مرحلة الواجهة (phase B).
 
   // إنشاء المستخدم عبر Better Auth (role/tenantId الآن input:false في auth config)
   const newUser = await auth.api.signUpEmail({
@@ -81,15 +88,23 @@ export async function inviteTeamMember(raw: unknown) {
   });
 
   if (!newUser?.user?.id) {
-    throw new Error("حدث خطأ في إنشاء الحساب");
+    return { success: false as const, error: "حدث خطأ في إنشاء الحساب" };
   }
 
-  // ربط المستخدم بالشركة + تعيين الدور في transaction
-  await db.transaction(async (tx) => {
-    await tx
+  // ربط المستخدم بالشركة + تعيين الدور في transaction.
+  // 🔒 الشرط `tenantId IS NULL` يمنع الاستيلاء على حساب موجود في شركة أخرى:
+  // نربط فقط الحسابات الجديدة (غير المنتمية لأي شركة بعد).
+  const linkResult = await db.transaction(async (tx) => {
+    const linked = await tx
       .update(users)
       .set({ tenantId, role: input.role })
-      .where(eq(users.id, newUser.user.id));
+      .where(and(eq(users.id, newUser.user.id), isNull(users.tenantId)))
+      .returning({ id: users.id });
+
+    if (linked.length === 0) {
+      // لا كتابات حدثت داخل المعاملة — إرجاع فشل (commit هنا no-op)
+      return { success: false as const, error: "هذا البريد مستخدم بالفعل في حساب آخر" };
+    }
 
     await tx.insert(activityLog).values({
       tenantId,
@@ -99,10 +114,12 @@ export async function inviteTeamMember(raw: unknown) {
       entityId: newUser.user.id,
       details: { name: input.name, email: input.email, role: input.role },
     });
+    return { success: true as const };
   });
+  if (!linkResult.success) return linkResult;
 
   revalidatePath("/team");
-  return { id: newUser.user.id, name: input.name, email: input.email };
+  return { success: true as const, id: newUser.user.id, name: input.name, email: input.email };
 }
 
 // =============================================
@@ -113,18 +130,23 @@ export async function toggleTeamMember(memberId: string) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
 
   // لا يمكن تعطيل نفسك
-  if (memberId === userId) throw new Error("لا يمكنك تعطيل حسابك الخاص");
+  if (memberId === userId) return { success: false as const, error: "لا يمكنك تعطيل حسابك الخاص" };
 
   const [member] = await db
     .select({ isActive: users.isActive, role: users.role })
     .from(users)
     .where(and(eq(users.id, memberId), eq(users.tenantId, tenantId)));
 
-  if (!member) throw new Error("العضو غير موجود");
+  if (!member) return { success: false as const, error: "العضو غير موجود" };
 
   // لا يمكن تعطيل المالك
-  if (member.role === "OWNER") throw new Error("لا يمكن تعطيل حساب المالك");
+  if (member.role === "OWNER") return { success: false as const, error: "لا يمكن تعطيل حساب المالك" };
 
+  // TODO(مرحلة لاحقة): تعطيل منسق لديه leads نشطة يتركها "يتيمة" — assignedTo
+  // يظل يشير لمنسق معطَّل فلا يتابعها أحد عملياً (round-robin للـ webhooks محمي
+  // هنا بالحذف من webhook_coordinators، لكن الـ leads القائمة لا تُعاد إسنادها).
+  // الأفضل: تحذير المالك بعدد الـ leads النشطة + عرض إعادة إسنادها قبل التعطيل.
+  // لا تغيير سلوك الآن حتى يُصمَّم ذلك.
   const newIsActive = !member.isActive;
   await db.transaction(async (tx) => {
     await tx
@@ -132,9 +154,11 @@ export async function toggleTeamMember(memberId: string) {
       .set({ isActive: newIsActive, updatedAt: new Date() })
       .where(and(eq(users.id, memberId), eq(users.tenantId, tenantId)));
 
-    // عند التعطيل: أبطل كل الجلسات النشطة للمستخدم فوراً
+    // عند التعطيل: أبطل كل الجلسات النشطة + أزله من توزيع الـ webhooks
+    // (وإلا يستمرّ round-robin في إسناد leads جديدة لمنسق لا يستطيع الدخول).
     if (!newIsActive) {
       await tx.delete(sessions).where(eq(sessions.userId, memberId));
+      await tx.delete(webhookCoordinators).where(eq(webhookCoordinators.userId, memberId));
     }
 
     await tx.insert(activityLog).values({
@@ -148,6 +172,7 @@ export async function toggleTeamMember(memberId: string) {
   });
 
   revalidatePath("/team");
+  return { success: true as const };
 }
 
 // =============================================
@@ -156,17 +181,21 @@ export async function toggleTeamMember(memberId: string) {
 
 export async function updateMemberRole(memberId: string, newRole: string) {
   const { tenantId, userId } = await requireOwnerOrAdmin();
-  const input = updateMemberRoleSchema.parse({ memberId, newRole });
+  const parsedInput = updateMemberRoleSchema.safeParse({ memberId, newRole });
+  if (!parsedInput.success) {
+    return { success: false as const, error: "بيانات غير صالحة — تحقق من المدخلات" };
+  }
+  const input = parsedInput.data;
 
-  if (input.memberId === userId) throw new Error("لا يمكنك تغيير صلاحيتك الخاصة");
+  if (input.memberId === userId) return { success: false as const, error: "لا يمكنك تغيير صلاحيتك الخاصة" };
 
   const [member] = await db
     .select({ role: users.role })
     .from(users)
     .where(and(eq(users.id, input.memberId), eq(users.tenantId, tenantId)));
 
-  if (!member) throw new Error("العضو غير موجود");
-  if (member.role === "OWNER") throw new Error("لا يمكن تغيير صلاحية المالك");
+  if (!member) return { success: false as const, error: "العضو غير موجود" };
+  if (member.role === "OWNER") return { success: false as const, error: "لا يمكن تغيير صلاحية المالك" };
 
   await db.transaction(async (tx) => {
     await tx
@@ -176,6 +205,11 @@ export async function updateMemberRole(memberId: string, newRole: string) {
 
     // أبطل الجلسات ليسري الدور الجديد فوراً (يتجاوز cookieCache)
     await tx.delete(sessions).where(eq(sessions.userId, input.memberId));
+
+    // إن تحوّل لمقدّم خدمة فلم يعد يستقبل leads — أزله من توزيع الـ webhooks
+    if (input.newRole === "PROVIDER") {
+      await tx.delete(webhookCoordinators).where(eq(webhookCoordinators.userId, input.memberId));
+    }
 
     await tx.insert(activityLog).values({
       tenantId,
@@ -188,4 +222,5 @@ export async function updateMemberRole(memberId: string, newRole: string) {
   });
 
   revalidatePath("/team");
+  return { success: true as const };
 }

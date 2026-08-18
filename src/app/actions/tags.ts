@@ -20,9 +20,9 @@ export async function createTag(input: { name: string; color?: string }) {
   assertRole(role, ROLE.OWNER_ADMIN);
 
   const name = input.name.trim();
-  if (!name || name.length > 100) throw new Error("اسم التصنيف غير صالح");
+  if (!name || name.length > 100) return { success: false as const, error: "اسم التصنيف غير صالح" };
   if (input.color && !/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
-    throw new Error("لون غير صالح");
+    return { success: false as const, error: "لون غير صالح" };
   }
 
   const [tag] = await db
@@ -30,7 +30,7 @@ export async function createTag(input: { name: string; color?: string }) {
     .values({ tenantId, name, color: input.color || "#6B7280" })
     .returning();
   revalidatePath("/leads");
-  return tag;
+  return { success: true as const, ...tag };
 }
 
 // =============================================
@@ -57,7 +57,7 @@ export async function assignTag(leadId: string, tagId: string) {
     .from(tags)
     .where(and(eq(tags.id, tagId), eq(tags.tenantId, tenantId)))
     .limit(1);
-  if (!tag) throw new Error("التصنيف غير موجود");
+  if (!tag) return { success: false as const, error: "التصنيف غير موجود" };
 
   // منع التكرار
   const existing = await db
@@ -65,14 +65,14 @@ export async function assignTag(leadId: string, tagId: string) {
     .from(tagAssignments)
     .where(and(eq(tagAssignments.leadId, leadId), eq(tagAssignments.tagId, tagId)))
     .limit(1);
-  if (existing.length > 0) return existing[0];
+  if (existing.length > 0) return { success: true as const, ...existing[0] };
 
   const [assignment] = await db
     .insert(tagAssignments)
     .values({ leadId, tagId })
     .returning();
   revalidatePath("/leads");
-  return assignment;
+  return { success: true as const, ...assignment };
 }
 
 // =============================================
@@ -90,12 +90,13 @@ export async function removeTag(leadId: string, tagId: string) {
     .from(tags)
     .where(and(eq(tags.id, tagId), eq(tags.tenantId, tenantId)))
     .limit(1);
-  if (!tag) throw new Error("التصنيف غير موجود");
+  if (!tag) return { success: false as const, error: "التصنيف غير موجود" };
 
   await db
     .delete(tagAssignments)
     .where(and(eq(tagAssignments.leadId, leadId), eq(tagAssignments.tagId, tagId)));
   revalidatePath("/leads");
+  return { success: true as const };
 }
 
 // =============================================

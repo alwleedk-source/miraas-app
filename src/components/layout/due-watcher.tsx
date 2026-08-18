@@ -74,6 +74,10 @@ function playChime() {
     };
     play(880, 0, 0.18);
     play(1175, 0.18, 0.24);
+    // أغلق الـ context بعد انتهاء النغمة — بلا إغلاق يتسرّب AudioContext مع كل إشعار
+    window.setTimeout(() => {
+      void ctx.close().catch(() => {});
+    }, 800);
   } catch {
     // ignored — audio blocked before user interaction
   }
@@ -87,6 +91,8 @@ export default function DueFollowUpsWatcher() {
   const [loadingNotes, setLoadingNotes] = useState<string | null>(null);
   const sinceRef = useRef<string>(new Date().toISOString());
   const seenIdsRef = useRef<Set<string>>(new Set());
+  // true = الأكشن رفضنا (PROVIDER غير مخوّل) — أوقف الاستطلاع بصمت بلا UI
+  const stoppedRef = useRef(false);
   const originalTitleRef = useRef<string>("");
   const blinkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -99,8 +105,11 @@ export default function DueFollowUpsWatcher() {
     if (!notesCache[item.leadId]) {
       setLoadingNotes(item.leadId);
       try {
-        const notes = await getLeadRecentNotes(item.leadId);
-        setNotesCache((prev) => ({ ...prev, [item.leadId]: notes }));
+        const res = await getLeadRecentNotes(item.leadId);
+        setNotesCache((prev) => ({
+          ...prev,
+          [item.leadId]: res.success ? res.notes : [],
+        }));
       } catch {
         setNotesCache((prev) => ({ ...prev, [item.leadId]: [] }));
       } finally {
@@ -141,14 +150,23 @@ export default function DueFollowUpsWatcher() {
     let cancelled = false;
 
     const tick = async () => {
+      if (stoppedRef.current) return;
       try {
-        const rows = await getJustDueFollowUps(sinceRef.current);
+        const res = await getJustDueFollowUps(sinceRef.current);
         if (cancelled) return;
+        if (!res.success) {
+          // فشل متوقَّع (صلاحية) — لا toast spam كل 30 ثانية، أوقف الاستطلاع
+          stoppedRef.current = true;
+          return;
+        }
         sinceRef.current = new Date().toISOString();
-        const fresh = rows.filter(
+        const fresh = res.followUps.filter(
           (r) => r.scheduledAt && !seenIdsRef.current.has(r.id)
         );
         if (fresh.length === 0) return;
+        // حدّ النمو — المجموعة كانت تمسك كل id منذ فتح الصفحة. النافذة الزمنية
+        // (sinceRef) تمنع إعادة إظهار القديمة، فالمسح الكامل آمن.
+        if (seenIdsRef.current.size > 500) seenIdsRef.current.clear();
         fresh.forEach((r) => seenIdsRef.current.add(r.id));
         setToasts((prev) => [
           ...prev,
@@ -175,7 +193,9 @@ export default function DueFollowUpsWatcher() {
   const handleDone = (item: DueItem) => {
     startTransition(async () => {
       try {
-        await completeFollowUp(item.id);
+        const res = await completeFollowUp(item.id);
+        // فشل متوقَّع — أبقِ التنبيه ظاهراً ليحاول المستخدم مجدداً
+        if (!res.success) return;
         dismiss(item.id);
       } catch {
         // keep toast visible on failure
@@ -186,7 +206,8 @@ export default function DueFollowUpsWatcher() {
   const handleSnooze = (item: DueItem, minutes: number) => {
     startTransition(async () => {
       try {
-        await snoozeFollowUpMinutes(item.id, minutes);
+        const res = await snoozeFollowUpMinutes(item.id, minutes);
+        if (!res.success) return;
         seenIdsRef.current.delete(item.id);
         dismiss(item.id);
       } catch {
@@ -203,6 +224,7 @@ export default function DueFollowUpsWatcher() {
         const timeStr = t.scheduledAt.toLocaleTimeString("ar-SA", {
           hour: "2-digit",
           minute: "2-digit",
+          timeZone: "Asia/Riyadh",
         });
         return (
           <div

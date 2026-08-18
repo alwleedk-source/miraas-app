@@ -102,9 +102,13 @@ export default function BookingBoard({
     setActionError(null);
     startTransition(async () => {
       try {
-        await updateBookingStatus({ leadId, status });
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : "فشل التحديث");
+        const res = await updateBookingStatus({ leadId, status });
+        if (!res.success) {
+          setActionError(res.error);
+          return;
+        }
+      } catch {
+        setActionError("فشل التحديث — حاول مجدداً");
       }
     });
   };
@@ -133,18 +137,22 @@ export default function BookingBoard({
     setActionError(null);
     startTransition(async () => {
       try {
-        await updateBookingStatus({
+        const res = await updateBookingStatus({
           leadId: postponeModal.leadId,
           status: "POSTPONED",
           postponeDate: postponeWaitlist ? undefined : postponeDate,
           postponeReason,
         });
+        if (!res.success) {
+          setActionError(res.error);
+          return;
+        }
         setPostponeModal(null);
         setPostponeDate("");
         setPostponeReason("");
         setPostponeWaitlist(false);
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : "فشل التأجيل");
+      } catch {
+        setActionError("فشل التأجيل — حاول مجدداً");
       }
     });
   };
@@ -169,7 +177,7 @@ export default function BookingBoard({
     setActionError(null);
     startTransition(async () => {
       try {
-        await updateBookingDate({
+        const res = await updateBookingDate({
           leadId: editModal.leadId,
           bookingDate: editModal.bookingDate,
           bookingService: editModal.bookingService,
@@ -178,9 +186,13 @@ export default function BookingBoard({
           resourceId: editModal.resourceId || undefined,
           duration: editModal.duration || undefined,
         });
+        if (!res.success) {
+          setActionError(res.error);
+          return;
+        }
         setEditModal(null);
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : "فشل التحديث");
+      } catch {
+        setActionError("فشل التحديث — حاول مجدداً");
       }
     });
   };
@@ -190,29 +202,36 @@ export default function BookingBoard({
     ? services.filter((s) => s.departmentId === editModal.departmentId || !s.departmentId)
     : services;
 
-  // مقدمي الخدمة المرتبطين بالقسم المختار
-  // (حالياً نعرض الكل — يمكن تحسينه لاحقاً)
+  // مقدمي الخدمة المرتبطين بالقسم المختار — اللوحة لا تستقبل بيانات ربط
+  // المقدمين بالأقسام، لذا نعرض الكل هنا عن قصد (الاختيار الحر مسموح).
   const editFilteredProviders = providers;
 
   // فلترة متقدمة: تاريخ + بحث + إخفاء المكتمل
   const filteredBookings = useMemo(() => {
     let result = bookings;
 
-    // فلتر التاريخ
+    // فلتر التاريخ — يُقارَن بتقويم الرياض (لا توقيت المتصفّح) حتى لا تُصنَّف
+    // مواعيد المساء/الفجر في اليوم الخطأ على جهاز توقيته ليس الرياض.
     if (dateFilter !== "all") {
+      const riyadhYmd = (d: Date) =>
+        new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh" }).format(d); // "YYYY-MM-DD"
+      const addDaysYmd = (ymd: string, days: number) => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+      };
+      const todayYmd = riyadhYmd(new Date());
+      const tomorrowYmd = addDaysYmd(todayYmd, 1);
+      const dayAfterYmd = addDaysYmd(todayYmd, 2);
+      const next7Ymd = addDaysYmd(todayYmd, 7);
+
       result = result.filter((b) => {
         if (!b.bookingDate) return false;
-        const bDate = new Date(b.bookingDate);
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const tomorrowStart = new Date(todayStart.getTime() + 86400000);
-        const dayAfterTomorrowStart = new Date(tomorrowStart.getTime() + 86400000);
-        const next7End = new Date(todayStart.getTime() + 7 * 86400000);
+        const bYmd = riyadhYmd(new Date(b.bookingDate)); // سلاسل YYYY-MM-DD تُقارَن زمنياً
 
-        if (dateFilter === "past") return bDate < todayStart;
-        if (dateFilter === "today") return bDate >= todayStart && bDate < tomorrowStart;
-        if (dateFilter === "tomorrow") return bDate >= tomorrowStart && bDate < dayAfterTomorrowStart;
-        if (dateFilter === "next_7") return bDate >= todayStart && bDate < next7End;
+        if (dateFilter === "past") return bYmd < todayYmd;
+        if (dateFilter === "today") return bYmd === todayYmd;
+        if (dateFilter === "tomorrow") return bYmd >= tomorrowYmd && bYmd < dayAfterYmd;
+        if (dateFilter === "next_7") return bYmd >= todayYmd && bYmd < next7Ymd;
         return true;
       });
     }
@@ -789,7 +808,7 @@ export default function BookingBoard({
 
       {actionError && (
         <div
-          className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-danger-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50 cursor-pointer"
+          className="fixed bottom-4 start-1/2 translate-x-1/2 bg-danger-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50 cursor-pointer"
           onClick={() => setActionError(null)}
         >
           <X className="h-4 w-4" />
@@ -798,7 +817,7 @@ export default function BookingBoard({
       )}
 
       {isPending && !actionError && (
-        <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50">
+        <div className="fixed bottom-4 start-1/2 translate-x-1/2 bg-surface-900 text-white px-4 py-2 rounded-xl shadow-lg text-sm flex items-center gap-2 z-50">
           <Loader2 className="h-4 w-4 animate-spin" />
           جاري التحديث...
         </div>

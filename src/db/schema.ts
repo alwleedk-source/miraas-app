@@ -70,6 +70,8 @@ export const activityActionEnum = pgEnum("activity_action", [
   "LEAD_STAGE_CHANGED",
   "LEAD_DELETED",
   "FOLLOW_UP_CREATED",
+  "FOLLOW_UP_COMPLETED",
+  "FOLLOW_UP_CANCELLED",
   "USER_CREATED",
   "USER_UPDATED",
   "SETTINGS_UPDATED",
@@ -124,7 +126,8 @@ export const tenants = pgTable("tenants", {
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   // tenantId يبقى nullable مؤقتاً — register flow ينشئ user ثم tenant
-  // بعد إكمال signup يصبح notNull دائماً. Migration 0004 يضيف CHECK constraint.
+  // بعد إكمال signup يصبح notNull دائماً. لا يوجد CHECK constraint يفرض ذلك
+  // في DB — الفرض في طبقة التطبيق فقط (requireTenant يوجّه لـ /register لو null).
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
@@ -299,12 +302,19 @@ export const internalMessages = pgTable("internal_messages", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   senderId: uuid("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   senderRole: varchar("sender_role", { length: 20 }).notNull(), // PROVIDER | COORDINATOR
-  departmentId: uuid("department_id").references(() => departments.id, { onDelete: "cascade" }),
+  departmentId: uuid("department_id").references(() => departments.id, { onDelete: "set null" }),
   messageType: varchar("message_type", { length: 20 }).notNull().default("CUSTOM"), // QUICK_STATUS | CUSTOM
   content: text("content").notNull(),
   isRead: boolean("is_read").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // استعلامات الرسائل غير المقروءة (لوحة المزوّد + شارة المنسق) تُصفّي بـ
+  // tenant_id + sender_role + is_read وتُرتّب بـ created_at. فهرس جزئي يحوّلها
+  // من seq-scan+sort إلى index scan مُرتّب.
+  tenantUnreadIdx: index("internal_messages_tenant_unread_idx")
+    .on(t.tenantId, t.senderRole, t.createdAt)
+    .where(sql`${t.isRead} = false`),
+}));
 
 // ============================================
 // 5. Leads (العملاء المحتملون)
@@ -318,7 +328,7 @@ export const leads = pgTable("leads", {
   // الـ webhook الذي جلب هذا العميل — يُستخدم لتقييد رؤية المنسقين على حملاتهم فقط
   // null = lead أُضيف يدوياً أو من بدء قبل هذه الميزة (legacy)
   // forward reference: webhookEndpoints مُعرَّف لاحقاً، callback lazy
-  webhookEndpointId: uuid("webhook_endpoint_id"),
+  webhookEndpointId: uuid("webhook_endpoint_id").references(() => webhookEndpoints.id, { onDelete: "set null" }),
   stageId: uuid("stage_id").references(() => pipelineStages.id, { onDelete: "set null" }),
   name: varchar("name", { length: 255 }).notNull(),
   phone: varchar("phone", { length: 50 }),
@@ -330,7 +340,7 @@ export const leads = pgTable("leads", {
   welcomeSentAt: timestamp("welcome_sent_at", { withTimezone: true }),
   // المنسق الذي أُرسل الترحيب من رقمه — يُستخدم لاتّساق التذكيرات اللاحقة
   // null = أُرسل من tenant default (أو لم يُرسل بعد)
-  welcomeSentByUserId: uuid("welcome_sent_by_user_id"),
+  welcomeSentByUserId: uuid("welcome_sent_by_user_id").references(() => users.id, { onDelete: "set null" }),
   // حقول الحجز
   bookingStatus: bookingStatusEnum("booking_status"),
   bookingDate: timestamp("booking_date", { withTimezone: true }),
@@ -371,6 +381,10 @@ export const leads = pgTable("leads", {
     .where(sql`${t.bookingStatus} IS NOT NULL`),
   tenantPhoneIdx: index("leads_tenant_phone_idx").on(t.tenantId, t.phone),
   tenantCreatedIdx: index("leads_tenant_created_idx").on(t.tenantId, t.createdAt),
+  // يطابق migration 0010 — فلترة leads كل منسق على حملاته (webhook-endpoint scoped)
+  tenantWebhookIdx: index("leads_tenant_webhook_idx")
+    .on(t.tenantId, t.webhookEndpointId)
+    .where(sql`${t.webhookEndpointId} IS NOT NULL`),
 }));
 
 // ============================================
@@ -440,6 +454,10 @@ export const userWhatsappCredentials = pgTable("user_whatsapp_credentials", {
   apiKeyEncrypted: text("api_key_encrypted"),
   phoneNumberId: varchar("phone_number_id", { length: 50 }),
   templateLanguage: varchar("template_language", { length: 10 }).default("ar"),
+  // override أسماء القوالب — لو null يُستخدم اسم القالب من tenant whatsappConfigs.
+  // مهم لمن يربط رقمه من حسابه الشخصي في Meta (WABA مختلفة → القوالب لا تُتشارك).
+  welcomeTemplateName: varchar("welcome_template_name", { length: 255 }),
+  reminderTemplateName: varchar("reminder_template_name", { length: 255 }),
   isActive: boolean("is_active").default(false).notNull(),
   // متابعة آخر اختبار من UI — يساعد المالك يعرف أيّ منسق إعداده يعمل
   lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
@@ -473,7 +491,7 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   welcomeTemplateName: varchar("welcome_template_name", { length: 255 }),
   // round-robin pointer: id آخر منسق أُسنِد له lead من هذا webhook
   // مستخدَم لتوزيع leads بالتساوي بين المنسقين المربوطين بالحملة
-  lastAssignedToUserId: uuid("last_assigned_to_user_id"),
+  lastAssignedToUserId: uuid("last_assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
   lastReceivedAt: timestamp("last_received_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

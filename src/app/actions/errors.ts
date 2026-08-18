@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { errorLog, users } from "@/db/schema";
-import { eq, and, desc, sql, or, isNull, lt } from "drizzle-orm";
+import { eq, and, desc, sql, lt } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
 
@@ -32,7 +32,9 @@ export async function getErrors(options?: { limit?: number; unresolvedOnly?: boo
     .from(errorLog)
     .where(
       and(
-        or(eq(errorLog.tenantId, tenantId), isNull(errorLog.tenantId))!,
+        // أخطاء tenant_id NULL (webhook/cron) نظامية وقد تحوي سياق tenants أخرى —
+        // لا تُعرض لأي tenant. لا يوجد SUPER_ADMIN فعلي، فأُسقِط فرع isNull كلياً.
+        eq(errorLog.tenantId, tenantId),
         sql`${errorLog.createdAt} >= ${recentCutoff}`,
       ),
     )
@@ -68,7 +70,7 @@ export async function getErrorDetails(fingerprint: string) {
     .where(
       and(
         eq(errorLog.fingerprint, fingerprint),
-        or(eq(errorLog.tenantId, tenantId), isNull(errorLog.tenantId))!,
+        eq(errorLog.tenantId, tenantId),
       ),
     )
     .orderBy(desc(errorLog.createdAt))
@@ -93,15 +95,17 @@ export async function pruneOldErrors() {
 export async function getTodayErrorCount() {
   const { tenantId, role } = await requireTenant();
   if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) return 0;
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
+  // بداية اليوم بتوقيت الرياض (السيرفر UTC — setHours المحلي ينزاح 3 ساعات)
+  const riyadhStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Riyadh" });
+  const [ry, rm, rd] = riyadhStr.split("-").map(Number);
+  const dayStart = new Date(Date.UTC(ry, rm - 1, rd, -3, 0, 0));
 
   const [row] = await db
     .select({ count: sql<number>`COUNT(*)::int` })
     .from(errorLog)
     .where(
       and(
-        or(eq(errorLog.tenantId, tenantId), isNull(errorLog.tenantId))!,
+        eq(errorLog.tenantId, tenantId),
         eq(errorLog.level, "error"),
         sql`${errorLog.createdAt} >= ${dayStart}`,
       ),

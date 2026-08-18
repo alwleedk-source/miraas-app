@@ -55,6 +55,8 @@ export default function ProviderScheduleEditor({
   const [dayOffs, setDayOffs] = useState<DayOff[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [dayOffError, setDayOffError] = useState<string | null>(null);
   const [tab, setTab] = useState<"schedule" | "dayoffs">("schedule");
   const [newDayOffDate, setNewDayOffDate] = useState("");
   const [newDayOffReason, setNewDayOffReason] = useState("");
@@ -97,10 +99,20 @@ export default function ProviderScheduleEditor({
   }, [open, userId]);
 
   const handleSave = () => {
+    setSaveError(null);
     startTransition(async () => {
-      await saveProviderSchedule(userId, schedule);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      try {
+        const result = await saveProviderSchedule(userId, schedule);
+        // أخطاء التحقق (نهاية>بداية، استراحة ضمن الدوام...) تُعاد الآن كـ Fail برسالة عربية
+        if (!result.success) {
+          setSaveError(result.error);
+          return;
+        }
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch {
+        setSaveError("تعذّر حفظ الجدول — حاول مرة أخرى");
+      }
     });
   };
 
@@ -118,19 +130,36 @@ export default function ProviderScheduleEditor({
 
   const handleAddDayOff = () => {
     if (!newDayOffDate) return;
+    setDayOffError(null);
     startTransition(async () => {
-      await addProviderDayOff(userId, newDayOffDate, newDayOffReason || undefined);
-      const updated = await getProviderDayOffs(userId);
-      setDayOffs(updated);
-      setNewDayOffDate("");
-      setNewDayOffReason("");
+      try {
+        const result = await addProviderDayOff(userId, newDayOffDate, newDayOffReason || undefined);
+        if (!result.success) {
+          setDayOffError(result.error);
+          return;
+        }
+        const updated = await getProviderDayOffs(userId);
+        setDayOffs(updated);
+        setNewDayOffDate("");
+        setNewDayOffReason("");
+      } catch {
+        setDayOffError("تعذّر إضافة الإجازة — حاول مرة أخرى");
+      }
     });
   };
 
   const handleDeleteDayOff = (id: string) => {
+    setDayOffError(null);
+    // حذف متفائل — مع تراجع لو فشل الخادم (لا desync صامت)
+    const removed = dayOffs.find((d) => d.id === id);
     setDayOffs((prev) => prev.filter((d) => d.id !== id));
     startTransition(async () => {
-      await deleteProviderDayOff(id);
+      try {
+        await deleteProviderDayOff(id);
+      } catch {
+        if (removed) setDayOffs((prev) => [...prev, removed]);
+        setDayOffError("تعذّر حذف الإجازة — أُعيدت للقائمة");
+      }
     });
   };
 
@@ -253,6 +282,11 @@ export default function ProviderScheduleEditor({
             </div>
 
             {/* زر الحفظ */}
+            {saveError && (
+              <p className="mt-3 text-sm text-danger-600 bg-danger-50 border border-danger-500/20 rounded-lg p-2">
+                ⚠️ {saveError}
+              </p>
+            )}
             <div className="mt-4 flex gap-2">
               <Button onClick={handleSave} disabled={isPending} className="flex-1">
                 {isPending ? (
@@ -269,6 +303,11 @@ export default function ProviderScheduleEditor({
           <>
             {/* إجازات */}
             <div className="space-y-3">
+              {dayOffError && (
+                <p className="text-sm text-danger-600 bg-danger-50 border border-danger-500/20 rounded-lg p-2">
+                  ⚠️ {dayOffError}
+                </p>
+              )}
               <div className="flex gap-2">
                 <Input
                   type="date"

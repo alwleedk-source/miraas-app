@@ -5,7 +5,7 @@ import { tenants } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
-import { testBackupConnection } from "@/lib/backup-push";
+import { testBackupConnection, isAllowedBackupUrl } from "@/lib/backup-push";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { randomBytes } from "crypto";
@@ -29,8 +29,9 @@ export async function saveBackupSettings(input: {
 
   // إذا enabled، URL لازم. السر لازم فقط لو لم يكن محفوظاً سابقاً
   if (input.enabled) {
-    if (!input.url || !input.url.startsWith("https://")) {
-      throw new Error("URL غير صالح — يجب أن يبدأ بـ https://");
+    // 🔒 SSRF guard — يجب أن يكون رابط Google Apps Script (لا عناوين داخلية)
+    if (!isAllowedBackupUrl(input.url)) {
+      return { success: false as const, error: "الرابط يجب أن يكون رابط Google Apps Script (https://script.google.com/...)" };
     }
     // تحقّق من وجود سر محفوظ مسبقاً لو لم يُرسَل واحد جديد
     if (!input.secret || input.secret.length < 8) {
@@ -41,13 +42,17 @@ export async function saveBackupSettings(input: {
         .limit(1);
       const hasStoredSecret = !!(existing?.settings as { backupSheetSecret?: string })?.backupSheetSecret;
       if (!hasStoredSecret) {
-        throw new Error("السر مطلوب — ولّد سراً جديداً (8 حروف على الأقل)");
+        return { success: false as const, error: "السر مطلوب — ولّد سراً جديداً (8 حروف على الأقل)" };
       }
       // سر محفوظ موجود — اتركه كما هو
     }
   }
 
-  const parsed = updateBackupSchema.parse(input);
+  const parsedResult = updateBackupSchema.safeParse(input);
+  if (!parsedResult.success) {
+    return { success: false as const, error: "بيانات غير صالحة — تحقق من المدخلات" };
+  }
+  const parsed = parsedResult.data;
 
   const update: Record<string, unknown> = {
     backupSheetEnabled: parsed.enabled,
@@ -69,7 +74,7 @@ export async function saveBackupSettings(input: {
     .where(eq(tenants.id, tenantId));
 
   revalidatePath("/settings/backup");
-  return { success: true };
+  return { success: true as const };
 }
 
 /**

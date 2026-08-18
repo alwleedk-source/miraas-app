@@ -22,7 +22,7 @@ import { requireTenant } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { leads, followUps, leadSources, pipelineStages, users } from "@/db/schema";
-import { eq, and, count, sql, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, count, sql, desc, asc, gte, lt, isNull } from "drizzle-orm";
 import AnalyticsDateFilter from "./date-filter";
 
 export default async function AnalyticsPage({
@@ -38,11 +38,25 @@ export default async function AnalyticsPage({
   // تحليلات — OWNER/ADMIN فقط (بيانات أعمال حساسة)
   if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) redirect("/");
 
+  // بداية اليوم بتوقيت الرياض — CURRENT_DATE يُحسَب بتوقيت جلسة DB (UTC) فينزاح 3 ساعات
+  const nowForRange = new Date();
+  const [rangeY, rangeM, rangeD] = nowForRange
+    .toLocaleDateString("en-CA", { timeZone: "Asia/Riyadh" })
+    .split("-")
+    .map(Number);
+  const riyadhTodayStart = new Date(Date.UTC(rangeY, rangeM - 1, rangeD, -3, 0, 0));
+
+  // حدود الشهر الحالي بتوقيت الرياض — CURRENT_DATE في الاستعلام يُحسب بتوقيت
+  // جلسة DB (UTC) فينزاح شهر "هذا الشهر" عند أطراف الشهر 3 ساعات.
+  // (Date.UTC مع rangeM بدل rangeM-1 يلتف تلقائياً ليناير السنة التالية)
+  const riyadhMonthStart = new Date(Date.UTC(rangeY, rangeM - 1, 1, -3, 0, 0));
+  const riyadhNextMonthStart = new Date(Date.UTC(rangeY, rangeM, 1, -3, 0, 0));
+
   // حساب فلتر التاريخ
   let dateFilter: ReturnType<typeof sql> | null = null;
   let rangeLabel = "كل الأوقات";
   if (range === "today") {
-    dateFilter = sql`${leads.createdAt} >= CURRENT_DATE`;
+    dateFilter = sql`${leads.createdAt} >= ${riyadhTodayStart}`;
     rangeLabel = "اليوم";
   } else if (range === "7") {
     dateFilter = sql`${leads.createdAt} >= NOW() - INTERVAL '7 days'`;
@@ -55,7 +69,12 @@ export default async function AnalyticsPage({
     rangeLabel = "آخر 3 أشهر";
   }
 
-  const baseConditions = [eq(leads.tenantId, tenantId), eq(leads.isDeleted, false)];
+  const baseConditions = [
+    eq(leads.tenantId, tenantId),
+    eq(leads.isDeleted, false),
+    // المؤرشفون مستثنون — اتساقاً مع الـ dashboard وقمع التحويل (كلاهما يستثنيهم)
+    isNull(leads.archivedAt),
+  ];
   if (dateFilter) baseConditions.push(dateFilter);
 
   // =============================================
@@ -74,15 +93,15 @@ export default async function AnalyticsPage({
       and(
         eq(leads.tenantId, tenantId),
         eq(leads.isDeleted, false),
-        sql`EXTRACT(MONTH FROM ${leads.createdAt}) = EXTRACT(MONTH FROM CURRENT_DATE)`,
-        sql`EXTRACT(YEAR FROM ${leads.createdAt}) = EXTRACT(YEAR FROM CURRENT_DATE)`
+        gte(leads.createdAt, riyadhMonthStart),
+        lt(leads.createdAt, riyadhNextMonthStart)
       )
     );
 
   // فلتر المتابعات
   let followUpDateFilter: ReturnType<typeof sql> | null = null;
   if (range === "today") {
-    followUpDateFilter = sql`${followUps.createdAt} >= CURRENT_DATE`;
+    followUpDateFilter = sql`${followUps.createdAt} >= ${riyadhTodayStart}`;
   } else if (range === "7") {
     followUpDateFilter = sql`${followUps.createdAt} >= NOW() - INTERVAL '7 days'`;
   } else if (range === "30") {
@@ -111,39 +130,33 @@ export default async function AnalyticsPage({
     );
 
   // =============================================
-  // نسبة التحويل العامة + المراحل المُحوّلة
+  // نسبة التحويل العامة
   // =============================================
 
-  const convertedStages = await db
-    .select({ id: pipelineStages.id, name: pipelineStages.name })
-    .from(pipelineStages)
-    .where(
-      and(
-        eq(pipelineStages.tenantId, tenantId),
-        sql`LOWER(${pipelineStages.name}) IN ('محوّل', 'مُحوّل', 'converted', 'مغلق ربح', 'won')`
-      )
-    );
-
-  const convertedIds = convertedStages.map((s) => s.id);
-  let conversionRate = 0;
-
-  if (convertedIds.length > 0 && totalLeadsResult.count > 0) {
-    const [converted] = await db
-      .select({ count: count() })
-      .from(leads)
-      .where(and(...baseConditions, inArray(leads.stageId, convertedIds)));
-    conversionRate = Math.round((converted.count / totalLeadsResult.count) * 100);
-  }
+  // التحويل = عميل أتمّ حجزه (bookingStatus = COMPLETED) ضمن الفترة — نفس تعريف
+  // قمع التحويل (analytics-funnel). المطابقة بأسماء المراحل ('محوّل'…)
+  // كانت تنكسر بصمت عند إعادة تسمية المرحلة.
+  const [converted] = await db
+    .select({ count: count() })
+    .from(leads)
+    .where(and(...baseConditions, eq(leads.bookingStatus, "COMPLETED")));
+  const convertedCount = converted?.count ?? 0;
+  const conversionRate =
+    totalLeadsResult.count > 0
+      ? Math.round((convertedCount / totalLeadsResult.count) * 100)
+      : 0;
 
   // =============================================
   // مخطط زمني
   // =============================================
 
   const chartDays = range === "30" ? 30 : range === "90" ? 90 : 7;
+  // التجميع بيوم الرياض — created_at مخزّن UTC و TO_CHAR بلا timezone كان
+  // يجمّع بيوم UTC فينزاح العمود 3 ساعات عن يوم العمل الفعلي.
   const dailyLeads = await db
     .select({
-      day: sql<string>`TO_CHAR(${leads.createdAt}, 'YYYY-MM-DD')`,
-      dayLabel: sql<string>`TO_CHAR(${leads.createdAt}, 'Dy')`,
+      day: sql<string>`TO_CHAR(${leads.createdAt} AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD')`,
+      dayLabel: sql<string>`TO_CHAR(${leads.createdAt} AT TIME ZONE 'Asia/Riyadh', 'Dy')`,
       count: count(),
     })
     .from(leads)
@@ -154,8 +167,11 @@ export default async function AnalyticsPage({
         sql`${leads.createdAt} >= NOW() - INTERVAL '${sql.raw(String(chartDays))} days'`
       )
     )
-    .groupBy(sql`TO_CHAR(${leads.createdAt}, 'YYYY-MM-DD')`, sql`TO_CHAR(${leads.createdAt}, 'Dy')`)
-    .orderBy(asc(sql`TO_CHAR(${leads.createdAt}, 'YYYY-MM-DD')`));
+    .groupBy(
+      sql`TO_CHAR(${leads.createdAt} AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD')`,
+      sql`TO_CHAR(${leads.createdAt} AT TIME ZONE 'Asia/Riyadh', 'Dy')`
+    )
+    .orderBy(asc(sql`TO_CHAR(${leads.createdAt} AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD')`));
 
   // =============================================
   // قمع التحويل (Funnel)
@@ -196,9 +212,9 @@ export default async function AnalyticsPage({
 
   const totalFromSources = sources.reduce((s, src) => s + src.count, 0);
 
-  // نسبة تحويل كل حملة
+  // نسبة تحويل كل حملة — بنفس تعريف التحويل أعلاه (COMPLETED)، لا بأسماء المراحل
   let sourceConversions: Map<string, number> = new Map();
-  if (convertedIds.length > 0 && sources.length > 0) {
+  if (sources.length > 0) {
     const sourceConversionData = await db
       .select({
         sourceId: leads.sourceId,
@@ -208,7 +224,7 @@ export default async function AnalyticsPage({
       .where(
         and(
           ...baseConditions,
-          inArray(leads.stageId, convertedIds),
+          eq(leads.bookingStatus, "COMPLETED"),
           sql`${leads.sourceId} IS NOT NULL`
         )
       )
@@ -249,9 +265,9 @@ export default async function AnalyticsPage({
 
   const followUpsMap = new Map(coordinatorFollowUps.map((cf) => [cf.userId, cf.followUpsCount]));
 
-  // تحويلات كل منسق
+  // تحويلات كل منسق — نفس التعريف (COMPLETED)
   let coordinatorConversions: Map<string, number> = new Map();
-  if (convertedIds.length > 0) {
+  {
     const convData = await db
       .select({
         assignedTo: leads.assignedTo,
@@ -261,7 +277,7 @@ export default async function AnalyticsPage({
       .where(
         and(
           ...baseConditions,
-          inArray(leads.stageId, convertedIds),
+          eq(leads.bookingStatus, "COMPLETED"),
           sql`${leads.assignedTo} IS NOT NULL`
         )
       )
@@ -794,7 +810,9 @@ export default async function AnalyticsPage({
                             <span className="text-xs font-semibold text-surface-700">نسبة التحويل</span>
                           </div>
                           <div className="space-y-1.5">
-                            {rankedCoordinators
+                            {/* نسخة قبل الفرز — sort يُحوّر في مكانه، وكان يُفسد ترتيب
+                                المصفوفة المشتركة المستخدمة لاحقاً في مخطّط "النقاط الإجمالية" */}
+                            {[...rankedCoordinators]
                               .sort((a, b) => b.convRate - a.convRate)
                               .map((coord, i) => (
                               <div key={coord.userId} className="flex items-center gap-2">
@@ -1004,7 +1022,7 @@ export default async function AnalyticsPage({
                                 {source.count}
                               </span>
                               <Badge variant="secondary" className="text-[10px]">{pct}%</Badge>
-                              {convertedIds.length > 0 && (
+                              {convertedCount > 0 && (
                                 <Badge
                                   variant={srcConvRate > 0 ? "success" : "outline"}
                                   className="text-[10px]"

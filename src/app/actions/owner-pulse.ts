@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { leads, followUps, users, leadSources } from "@/db/schema";
-import { sql, eq, and, gte, lte, isNotNull, isNull, count } from "drizzle-orm";
+import { sql, eq, and, gte, lt, lte, isNotNull, isNull, count } from "drizzle-orm";
 import { requireTenant } from "@/lib/auth-server";
 import { assertRole, ROLE } from "@/lib/tenant-guards";
 
@@ -35,6 +35,9 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
   const todayStart = startOfDayRiyadh(0);
   const yesterdayStart = startOfDayRiyadh(-1);
   const weekStart = startOfDayRiyadh(-6);
+  // حدّ علوي لـ "هذا الأسبوع" = بداية الغد (يجعل النافذة 7 أيام مثل الأسبوع السابق).
+  // بدونه كانت bookingDate المستقبلية (مواعيد قادمة) تضخّم عدّ الأسبوع وتُظهر اتجاهاً صاعداً دائماً.
+  const weekEnd = startOfDayRiyadh(1);
   const lastWeekStart = startOfDayRiyadh(-13);
   const lastWeekEnd = startOfDayRiyadh(-6);
   const now = new Date();
@@ -60,7 +63,7 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
           gte(leads.createdAt, yesterdayStart),
-          lte(leads.createdAt, todayStart),
+          lt(leads.createdAt, todayStart),
         ),
       )
       .then((r) => r[0]?.c ?? 0),
@@ -76,8 +79,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          isNull(leads.archivedAt),
           isNotNull(leads.bookingDate),
           gte(leads.bookingDate, weekStart),
+          lt(leads.bookingDate, weekEnd),
         ),
       )
       .then((r) => r[0]?.c ?? 0),
@@ -88,9 +93,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          isNull(leads.archivedAt),
           isNotNull(leads.bookingDate),
           gte(leads.bookingDate, lastWeekStart),
-          lte(leads.bookingDate, lastWeekEnd),
+          lt(leads.bookingDate, lastWeekEnd),
         ),
       )
       .then((r) => r[0]?.c ?? 0),
@@ -105,8 +111,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          isNull(leads.archivedAt),
           isNotNull(leads.bookingDate),
           gte(leads.bookingDate, weekStart),
+          lt(leads.bookingDate, weekEnd),
           eq(leads.bookingStatus, "COMPLETED"),
         ),
       )
@@ -118,9 +126,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
         and(
           eq(leads.tenantId, tenantId),
           eq(leads.isDeleted, false),
+          isNull(leads.archivedAt),
           isNotNull(leads.bookingDate),
           gte(leads.bookingDate, lastWeekStart),
-          lte(leads.bookingDate, lastWeekEnd),
+          lt(leads.bookingDate, lastWeekEnd),
           eq(leads.bookingStatus, "COMPLETED"),
         ),
       )
@@ -140,8 +149,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
       and(
         eq(leads.tenantId, tenantId),
         eq(leads.isDeleted, false),
+        isNull(leads.archivedAt),
         eq(leads.bookingStatus, "COMPLETED"),
         gte(leads.bookingDate, weekStart),
+        lt(leads.bookingDate, weekEnd),
       ),
     )
     .groupBy(users.id, users.name)
@@ -181,8 +192,10 @@ export async function getOwnerPulse(): Promise<OwnerPulse> {
       and(
         eq(leads.tenantId, tenantId),
         eq(leads.isDeleted, false),
+        isNull(leads.archivedAt),
         eq(leads.bookingStatus, "COMPLETED"),
         gte(leads.bookingDate, weekStart),
+        lt(leads.bookingDate, weekEnd),
       ),
     )
     .groupBy(leadSources.name)

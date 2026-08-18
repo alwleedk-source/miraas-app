@@ -16,5 +16,8 @@ export default async function ProviderPage() {
     redirect("/");
   }
 
+  // فشل متوقَّع من الأكشن (صلاحية/تحقق) — نفس سلوك الرمي غير المتوقع
+  if (!dashboard.success) redirect("/");
+
   return <ProviderDashboardClient dashboard={dashboard} />;
 }

@@ -34,6 +34,13 @@ interface Props {
   onComplete: (created: number, skipped: number) => void;
 }
 
+// حدود حماية — ملفات ضخمة كانت تجمّد المتصفح وتضغط الخادم
+const MAX_FILE_MB = 5;
+const MAX_ROWS = 5000;
+const PREVIEW_LIMIT = 50;
+// سقف checkDuplicatePhones في الخادم 500 رقم لكل استدعاء
+const DUP_CHECK_CHUNK = 500;
+
 const STATUS_BADGES: Record<RowStatus, { label: string; cls: string }> = {
   valid: { label: "✓ جديد", cls: "bg-success-50 text-success-700 border-success-200" },
   duplicate: { label: "⚠️ مكرر", cls: "bg-warning-50 text-warning-700 border-warning-200" },
@@ -63,35 +70,59 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
     skippedInvalid?: number;
     skippedNoPhone?: number;
   } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // معالجة الملف — كاشف ذكي للأعمدة
   const processFile = useCallback((file: File) => {
+    setFileError(null);
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      setFileError(`الملف كبير جداً — الحد الأقصى ${MAX_FILE_MB} ميجابايت`);
+      return;
+    }
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const data = e.target?.result;
-      const wb = XLSX.read(data, { type: "binary" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      try {
+        const data = e.target?.result;
+        const wb = XLSX.read(data, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
-      if (json.length < 2) return;
+        if (json.length < 2) {
+          setFileError("الملف فارغ أو لا يحتوي صفوف بيانات — تأكد من اختيار الملف الصحيح");
+          return;
+        }
 
-      const hdrs = json[0].map((h) => String(h));
-      const body = json.slice(1).filter((r) => r.some((c) => String(c).trim()));
+        const hdrs = json[0].map((h) => String(h));
+        const body = json.slice(1).filter((r) => r.some((c) => String(c).trim()));
+        if (body.length === 0) {
+          setFileError("الملف لا يحتوي صفوف بيانات");
+          return;
+        }
+        if (body.length > MAX_ROWS) {
+          setFileError(
+            `الملف يحتوي ${body.length.toLocaleString("ar-SA")} صفاً — الحد الأقصى ${MAX_ROWS.toLocaleString("ar-SA")} صف. قسّم الملف وحاول مجدداً`,
+          );
+          return;
+        }
 
-      setHeaders(hdrs);
-      setRawData(body);
+        setHeaders(hdrs);
+        setRawData(body);
 
-      // 🧠 كاشف ذكي
-      const detection = detectColumns(hdrs, body);
-      setNameCol(detection.nameCol >= 0 ? detection.nameCol : 0);
-      setPhoneCol(detection.phoneCol >= 0 ? detection.phoneCol : 1);
-      setDetectionConfidence(detection.confidence);
-      setDetectionMethod(detection.method);
+        // 🧠 كاشف ذكي
+        const detection = detectColumns(hdrs, body);
+        setNameCol(detection.nameCol >= 0 ? detection.nameCol : 0);
+        setPhoneCol(detection.phoneCol >= 0 ? detection.phoneCol : 1);
+        setDetectionConfidence(detection.confidence);
+        setDetectionMethod(detection.method);
 
-      setStep("mapping");
+        setStep("mapping");
+      } catch {
+        setFileError("تعذّرت قراءة الملف — قد يكون تالفاً أو بصيغة غير مدعومة");
+      }
     };
+    reader.onerror = () => setFileError("تعذّرت قراءة الملف — حاول مجدداً");
     reader.readAsBinaryString(file);
   }, []);
 
@@ -108,6 +139,7 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
 
   // تأكيد الأعمدة ← المعاينة
   const handleConfirmMapping = () => {
+    setFileError(null);
     // تصنيف كل صف بشكل صارم
     const parsed: ImportRow[] = rawData.map((row) => {
       const name = String(row[nameCol] || "").trim();
@@ -151,23 +183,35 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
     setRows(parsed);
     setStep("preview");
 
-    // فحص المكررات على الصالحة فقط
+    // فحص المكررات على الصالحة فقط (على دفعات — الخادم يسمح بـ 500 رقم للاستدعاء)
     const validPhones = parsed
       .filter((r) => r.status === "valid" && r.normalizedPhone)
       .map((r) => r.normalizedPhone!);
     if (validPhones.length > 0) {
       startTransition(async () => {
-        const dupes = await checkDuplicatePhones(validPhones);
-        const dupeMap = new Map(dupes.map((d) => [d.phone, d.status]));
-        setRows((prev) =>
-          prev.map((r) => {
-            if (r.status !== "valid" || !r.normalizedPhone) return r;
-            const dupStatus = dupeMap.get(r.normalizedPhone);
-            if (dupStatus === "active") return { ...r, status: "duplicate" as RowStatus };
-            if (dupStatus === "deleted") return { ...r, status: "deleted" as RowStatus };
-            return r;
-          })
-        );
+        try {
+          const dupes: { phone: string | null; status: "deleted" | "active" }[] = [];
+          for (let i = 0; i < validPhones.length; i += DUP_CHECK_CHUNK) {
+            const res = await checkDuplicatePhones(validPhones.slice(i, i + DUP_CHECK_CHUNK));
+            if (!res.success) {
+              setFileError(res.error);
+              return;
+            }
+            dupes.push(...res.duplicates);
+          }
+          const dupeMap = new Map(dupes.map((d) => [d.phone, d.status]));
+          setRows((prev) =>
+            prev.map((r) => {
+              if (r.status !== "valid" || !r.normalizedPhone) return r;
+              const dupStatus = dupeMap.get(r.normalizedPhone);
+              if (dupStatus === "active") return { ...r, status: "duplicate" as RowStatus };
+              if (dupStatus === "deleted") return { ...r, status: "deleted" as RowStatus };
+              return r;
+            })
+          );
+        } catch {
+          setFileError("فشل فحص الأرقام المكررة — راجع المعاينة جيداً قبل الاستيراد");
+        }
       });
     }
   };
@@ -179,13 +223,22 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
       .map((r) => ({ name: r.name, phone: r.normalizedPhone! }));
     if (toImport.length === 0) return;
 
+    setFileError(null);
     startTransition(async () => {
-      const res = await bulkImportLeads({
-        campaignName,
-        leads: toImport,
-      });
-      setResult(res);
-      setStep("done");
+      try {
+        const res = await bulkImportLeads({
+          campaignName,
+          leads: toImport,
+        });
+        if (!res.success) {
+          setFileError(res.error);
+          return;
+        }
+        setResult(res);
+        setStep("done");
+      } catch {
+        setFileError("فشل الاستيراد — حاول مرة أخرى");
+      }
     });
   };
 
@@ -228,6 +281,14 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
         </CardHeader>
 
         <CardContent className="p-5 overflow-y-auto flex-1">
+          {/* خطأ الملف/الاستيراد — يظهر في كل الخطوات */}
+          {fileError && (
+            <div className="flex items-start gap-2 p-3 mb-4 bg-danger-50 border border-danger-200 rounded-lg text-xs text-danger-700">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <p>{fileError}</p>
+            </div>
+          )}
+
           {/* الخطوة 1: اسم الحملة + رفع الملف */}
           {step === "upload" && (
             <div className="space-y-5">
@@ -425,7 +486,7 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
                 </div>
               )}
 
-              {/* الجدول */}
+              {/* الجدول — معاينة أول 50 صفاً فقط (البقية تُعالج عند الاستيراد) */}
               <div className="border border-surface-200 rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface-50">
@@ -437,7 +498,7 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, i) => {
+                    {rows.slice(0, PREVIEW_LIMIT).map((row, i) => {
                       const dimmed = row.status !== "valid";
                       return (
                         <tr
@@ -475,6 +536,11 @@ export default function ImportDialog({ onClose, onComplete }: Props) {
                     })}
                   </tbody>
                 </table>
+                {rows.length > PREVIEW_LIMIT && (
+                  <p className="text-xs text-surface-400 text-center py-2 border-t border-surface-100">
+                    تُعرض أول {PREVIEW_LIMIT} صفاً فقط — و{(rows.length - PREVIEW_LIMIT).toLocaleString("ar-SA")} صفاً آخر سيُعالَج عند الاستيراد
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-2 justify-end">

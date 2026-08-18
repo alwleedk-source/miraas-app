@@ -52,7 +52,9 @@ export async function GET(req: Request) {
     status: allOk ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
     checks,
-    ...(isProd && allOk ? {} : { errors }),
+    // في الإنتاج لا نكشف تفاصيل الأخطاء (أسماء متغيّرات بيئة/رسائل DB) لمتصل غير موثّق.
+    // الـ checks تُظهر أيّ نظام فرعي فشل (database/env)، وstrict mode يعيد 503 للمراقبة.
+    ...(isProd ? {} : { errors }),
   };
 
   // strict mode: 503 عند أي failure (للمراقبة الدقيقة)

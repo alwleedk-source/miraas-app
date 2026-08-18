@@ -82,7 +82,6 @@ export default function QuickBookingModal({
 
   // تحذير التعارض
   const [conflictWarning, setConflictWarning] = useState("");
-  const [forceOverbook, setForceOverbook] = useState(false);
 
   // بحث بالجوال مع debounce
   const doSearch = useCallback(async (value: string) => {
@@ -92,8 +91,8 @@ export default function QuickBookingModal({
     }
     setSearching(true);
     try {
-      const results = await searchLeadByPhone(value);
-      setSearchResults(results);
+      const res = await searchLeadByPhone(value);
+      setSearchResults(res.success ? res.results : null);
     } catch {
       setSearchResults(null);
     } finally {
@@ -126,7 +125,6 @@ export default function QuickBookingModal({
       setAvailableSlots([]);
       setSelectedTime("");
       setConflictWarning("");
-      setForceOverbook(false);
     }
   }, [open]);
 
@@ -164,7 +162,7 @@ export default function QuickBookingModal({
       durationMin: bookingDuration,
     })
       .then((result) => {
-        setAvailableSlots(result.slots);
+        setAvailableSlots(result.success ? result.slots : []);
       })
       .catch(() => setAvailableSlots([]))
       .finally(() => setLoadingSlots(false));
@@ -205,27 +203,35 @@ export default function QuickBookingModal({
   const handleTimeSelect = async (time: string, slot: TimeSlot) => {
     setSelectedTime(time);
     setConflictWarning("");
-    setForceOverbook(false);
 
     if (!slot.available) {
-      // فحص التعارض (Soft Block)
+      // فحص التعارض (Soft Block) — التحذير يمنع الإرسال حتى يختار المستخدم وقتاً آخر
       const dateTime = `${bookingDate}T${time}`;
-      const result = await checkBookingConflict({
-        providerId: selectedProviderId,
-        departmentId: selectedDeptId,
-        date: dateTime,
-        durationMin: bookingDuration,
-      });
-      if (result.hasConflict) {
-        const names = result.conflictingBookings.map((c) => c.name).join("، ");
-        setConflictWarning(`⚠️ تعارض مع: ${names}`);
+      try {
+        const result = await checkBookingConflict({
+          providerId: selectedProviderId,
+          departmentId: selectedDeptId,
+          date: dateTime,
+          durationMin: bookingDuration,
+        });
+        if (result.success && result.hasConflict) {
+          const names = result.conflictingBookings.map((c) => c.name).join("، ");
+          setConflictWarning(`⚠️ تعارض مع: ${names}`);
+        } else if (!result.success) {
+          // تعذّر الفحص لكن الشريحة غير متاحة أصلاً — أبقِ المنع
+          setConflictWarning("⚠️ هذا الوقت غير متاح");
+        }
+      } catch {
+        setConflictWarning("⚠️ هذا الوقت غير متاح");
       }
     }
   };
 
   const handleSubmit = () => {
     if (!bookingDate || !selectedTime) return;
-    if (conflictWarning && !forceOverbook) return;
+    // تعارض قائم = لا إرسال — قيد قاعدة البيانات (EXCLUDE) يرفض التعارض دائماً،
+    // فلا معنى لمحاولة "الحجز رغم التعارض"
+    if (conflictWarning) return;
 
     const fullDateTime = `${bookingDate}T${selectedTime}`;
 
@@ -242,10 +248,14 @@ export default function QuickBookingModal({
           bookingResourceId: selectedProviderId || undefined,
           bookingDurationMin: bookingDuration,
         });
+        if (!result.success) {
+          alert(result.error);
+          return;
+        }
         setCreatedName(result.name);
         setStep("done");
-      } catch (err) {
-        alert(err instanceof Error ? err.message : "حدث خطأ");
+      } catch {
+        alert("حدث خطأ غير متوقع — حاول مجدداً");
       }
     });
   };
@@ -606,24 +616,16 @@ export default function QuickBookingModal({
                 </div>
               )}
 
-              {/* تحذير التعارض (Soft Block) */}
+              {/* تحذير التعارض (Soft Block) — لا يمكن تجاوزه؛ القاعدة ترفض التعارض */}
               {conflictWarning && (
-                <div className="p-3 rounded-lg bg-danger-50 border border-danger-200 space-y-2">
+                <div className="p-3 rounded-lg bg-danger-50 border border-danger-200 space-y-1.5">
                   <div className="flex items-center gap-2 text-sm text-danger-700 font-medium">
                     <AlertTriangle className="h-4 w-4" />
                     {conflictWarning}
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={forceOverbook}
-                      onChange={(e) => setForceOverbook(e.target.checked)}
-                      className="rounded border-danger-300"
-                    />
-                    <span className="text-xs text-danger-600">
-                      متأكد — أريد الحجز رغم التعارض (حالة طوارئ)
-                    </span>
-                  </label>
+                  <p className="text-xs text-danger-600">
+                    لا يمكن الحجز في هذا الوقت — اختر وقتاً آخر من الأوقات المتاحة أعلاه.
+                  </p>
                 </div>
               )}
 
@@ -645,7 +647,7 @@ export default function QuickBookingModal({
                     !bookingDate ||
                     !selectedTime ||
                     (!selectedLead && !newName.trim()) ||
-                    (conflictWarning !== "" && !forceOverbook) ||
+                    conflictWarning !== "" ||
                     isPending
                   }
                   className="flex-1 gap-2"

@@ -25,7 +25,11 @@ export default function TeamActions() {
     setError("");
     startTransition(async () => {
       try {
-        await inviteTeamMember({ name, email, password, role });
+        const result = await inviteTeamMember({ name, email, password, role });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setSuccess(true);
         setTimeout(() => {
           setShowForm(false);
@@ -81,7 +85,8 @@ export default function TeamActions() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="member-password">كلمة المرور</Label>
-            <Input id="member-password" name="password" type="password" placeholder="••••••••" dir="ltr" className="text-left" required minLength={8} />
+            <Input id="member-password" name="password" type="password" placeholder="••••••••" dir="ltr" className="text-left" required minLength={10} />
+            <p className="text-[11px] text-surface-400">10 أحرف على الأقل</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="member-role">الصلاحية</Label>

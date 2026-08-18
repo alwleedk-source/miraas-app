@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { tenants, pipelineStages, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { getSession } from "@/lib/auth-server";
 import { generateUniqueSlug } from "@/lib/utils";
 
@@ -50,18 +50,33 @@ export async function createTenantForUser(companyName: string) {
       })
       .returning();
 
-    await tx
+    // ربط ذرّي: فقط إن كان المستخدم بلا شركة بعد — يمنع TOCTOU (طلبان متزامنان
+    // ينشئان شركتين فتبقى واحدة يتيمة). الخاسر يفشل هنا فتُلغى معاملته بالكامل.
+    const linked = await tx
       .update(users)
       .set({ tenantId: tenant.id, role: "OWNER" })
-      .where(eq(users.id, userId));
+      .where(and(eq(users.id, userId), isNull(users.tenantId)))
+      .returning({ id: users.id });
+    if (linked.length === 0) {
+      throw new Error("لديك شركة بالفعل");
+    }
 
-    const defaultStages = [
+    const defaultStages: Array<{
+      name: string;
+      color: string;
+      position: number;
+      isDefault: boolean;
+      isBooking?: boolean;
+    }> = [
       { name: "جديد", color: "#3B82F6", position: 0, isDefault: true },
       { name: "استفسار", color: "#F59E0B", position: 1, isDefault: false },
       { name: "مهتم", color: "#EF4444", position: 2, isDefault: false },
       { name: "عرض مُرسل", color: "#8B5CF6", position: 3, isDefault: false },
-      { name: "مُحوّل", color: "#22C55E", position: 4, isDefault: false },
-      { name: "مغلق", color: "#6B7280", position: 5, isDefault: false },
+      // مرحلة الحجز — isBooking=true تربطها بمنطق الحجوزات. قبل "مُحوّل"/"مغلق".
+      // (للـ tenants الأقدم: migration 0015_booking_stage_backfill.sql)
+      { name: "حجز", color: "#06B6D4", position: 4, isDefault: false, isBooking: true },
+      { name: "مُحوّل", color: "#22C55E", position: 5, isDefault: false },
+      { name: "مغلق", color: "#6B7280", position: 6, isDefault: false },
     ];
 
     await tx.insert(pipelineStages).values(

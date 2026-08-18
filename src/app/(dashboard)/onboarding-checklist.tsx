@@ -17,7 +17,7 @@ export default function OnboardingChecklist({ status }: { status: OnboardingStat
             <div className="p-1.5 rounded-lg bg-gradient-to-br from-primary-500 to-blue-600 shadow-md">
               <Sparkles className="h-4 w-4 text-white" />
             </div>
-            {isStart ? "🚀 لنبدأ — 4 خطوات لتفعيل مِراس" : "إكمال إعداد مِراس"}
+            {isStart ? "🚀 لنبدأ — 5 خطوات لتفعيل مِراس" : "إكمال إعداد مِراس"}
           </CardTitle>
           <span className="text-xs font-semibold text-primary-700 tabular-nums bg-primary-100 px-2.5 py-1 rounded-full">
             {status.completedCount} / {status.totalCount}

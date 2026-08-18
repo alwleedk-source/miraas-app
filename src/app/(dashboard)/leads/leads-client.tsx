@@ -38,7 +38,7 @@ import {
   Bell,
   MessageCircle,
 } from "lucide-react";
-import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS, toWhatsappUrl } from "@/lib/utils";
+import { cn, getInitials, PRIORITY_LABELS, PRIORITY_COLORS, toWhatsappUrl, parseRiyadhDateTime } from "@/lib/utils";
 import { useNow } from "@/lib/hooks";
 import {
   createLead,
@@ -114,6 +114,7 @@ interface Props {
   currentUserRole: string;
   availableServices?: { id: string; name: string; departmentId?: string | null }[];
   availableDepartments?: { id: string; name: string; color: string }[];
+  initialSearch?: string;
 }
 
 type FollowUpType = "CALL" | "MESSAGE" | "MEETING" | "EMAIL" | "WHATSAPP" | "NOTE";
@@ -131,11 +132,11 @@ const FOLLOW_UP_TYPES: { value: FollowUpType; label: string }[] = [
 // Component
 // =============================================
 
-export default function LeadsClient({ initialLeads, stages, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [], availableDepartments = [] }: Props) {
+export default function LeadsClient({ initialLeads, stages, total, teamMembers = [], tags: availableTags = [], currentUserRole, availableServices = [], availableDepartments = [], initialSearch = "" }: Props) {
   const now = useNow();
   const [leads, setLeads] = useState(initialLeads);
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [showAddForm, setShowAddForm] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
@@ -230,7 +231,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     let cancelled = false;
     const id = selectedLead.id;
     getFollowUps(id)
-      .then((data) => { if (!cancelled) { setFollowUpsList(data); setFollowUpsLoadedFor(id); } })
+      .then((res) => { if (!cancelled) { setFollowUpsList(res.success ? res.followUps : []); setFollowUpsLoadedFor(id); } })
       .catch(() => { if (!cancelled) { setFollowUpsList([]); setFollowUpsLoadedFor(id); } });
     getLeadTags(id)
       .then((data) => { if (!cancelled) { setLeadTags(data); setTagsLoadedFor(id); } })
@@ -293,7 +294,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
       try {
         const stage = stages.find((s) => s.id === stageId);
         const ids = Array.from(selectedIds);
-        await bulkUpdateLeads({ ids, patch: { stageId } });
+        const res = await bulkUpdateLeads({ ids, patch: { stageId } });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) =>
           prev.map((l) => (selectedIds.has(l.id) ? { ...l, stage: stage || null } : l)),
         );
@@ -310,7 +315,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
       try {
         const member = teamMembers.find((m) => m.id === memberId);
         const ids = Array.from(selectedIds);
-        await bulkUpdateLeads({ ids, patch: { assignedTo: memberId || null } });
+        const res = await bulkUpdateLeads({ ids, patch: { assignedTo: memberId || null } });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) =>
           prev.map((l) =>
             selectedIds.has(l.id)
@@ -331,7 +340,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     startTransition(async () => {
       try {
         const ids = Array.from(selectedIds);
-        await bulkDeleteLeads({ ids });
+        const res = await bulkDeleteLeads({ ids });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) => prev.filter((l) => !selectedIds.has(l.id)));
         setSelectedIds(new Set());
       } catch (err) {
@@ -354,6 +367,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
         priority: filterPriority || undefined,
         assignedTo: filterAssigned || undefined,
       });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -375,7 +392,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        const lead = await createLead({
+        const res = await createLead({
           name: newLead.name.trim(),
           phone: newLead.phone || undefined,
           email: newLead.email || undefined,
@@ -383,16 +400,20 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
           stageId: newLead.stageId || undefined,
           sourceName: newLead.source || undefined,
         });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         // Add to local state with stage info (reconstructed from input)
         const stage = newLead.stageId ? stages.find((s) => s.id === newLead.stageId) : null;
         setLeads((prev) => [
           {
-            id: lead.id,
-            name: lead.name,
-            phone: lead.phone,
+            id: res.id,
+            name: res.name,
+            phone: res.phone,
             email: newLead.email || null,
             company: null,
-            priority: lead.priority,
+            priority: res.priority,
             createdAt: new Date(),
             assignedUser: null,
             stage: stage || null,
@@ -413,13 +434,17 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        await updateLead({
+        const res = await updateLead({
           id: editingLead.id,
           name: editingLead.name,
           phone: editingLead.phone || undefined,
           email: (editingLead as LeadData & { email?: string }).email || undefined,
           priority: editingLead.priority as "LOW" | "MEDIUM" | "HIGH" | "URGENT",
         });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) =>
           prev.map((l) => (l.id === editingLead.id ? { ...l, ...editingLead } : l))
         );
@@ -435,7 +460,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        await deleteLead(leadId);
+        const res = await deleteLead(leadId);
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) => prev.filter((l) => l.id !== leadId));
         setShowDeleteConfirm(null);
         setSelectedLead(null);
@@ -459,7 +488,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        await changeLeadStage(leadId, stageId);
+        const res = await changeLeadStage(leadId, stageId);
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setLeads((prev) =>
           prev.map((l) => (l.id === leadId ? { ...l, stage: stage || null } : l))
         );
@@ -469,24 +502,33 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     });
   };
 
-  // تأكيد الحجز
+  // تأكيد الحجز — الحجز أولاً ثم نقل المرحلة (لو فشل الحجز لا تتحرك المرحلة بلا حجز)
   const handleBookingConfirm = () => {
     if (!bookingModal || !bookingDate || selectedServices.length === 0) return;
     setError(null);
     startTransition(async () => {
       try {
-        await changeLeadStage(bookingModal.leadId, bookingModal.stageId);
-        await createBooking({
+        const booking = await createBooking({
           leadId: bookingModal.leadId,
           bookingDate,
           bookingService: selectedServices.join("، "),
           bookingNotes: bookingNotes || undefined,
           bookingDepartmentId: bookingDepartmentId || undefined,
         });
-        const stage = stages.find((s) => s.id === bookingModal.stageId);
-        setLeads((prev) =>
-          prev.map((l) => (l.id === bookingModal.leadId ? { ...l, stage: stage || null } : l))
-        );
+        if (!booking.success) {
+          setError(booking.error);
+          return;
+        }
+        // الحجز تم — انقل المرحلة. لو فشل النقل نُعلم المستخدم أن الحجز نجح
+        const moved = await changeLeadStage(bookingModal.leadId, bookingModal.stageId);
+        if (moved.success) {
+          const stage = stages.find((s) => s.id === bookingModal.stageId);
+          setLeads((prev) =>
+            prev.map((l) => (l.id === bookingModal.leadId ? { ...l, stage: stage || null } : l))
+          );
+        } else {
+          setError(`تم إنشاء الحجز بنجاح، لكن تعذّر نقل المرحلة: ${moved.error}`);
+        }
         setBookingModal(null);
         setBookingDate("");
         setSelectedServices([]);
@@ -503,7 +545,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        await updateLead({ id: leadId, assignedTo: memberId || undefined });
+        const res = await updateLead({ id: leadId, assignedTo: memberId || undefined });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         const member = teamMembers.find((m) => m.id === memberId);
         setLeads((prev) =>
           prev.map((l) =>
@@ -529,10 +575,18 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     startTransition(async () => {
       try {
         if (isAssigned) {
-          await removeTag(leadId, tagId);
+          const res = await removeTag(leadId, tagId);
+          if (!res.success) {
+            setError(res.error);
+            return;
+          }
           setLeadTags((prev) => prev.filter((t) => t.id !== tagId));
         } else {
-          await assignTag(leadId, tagId);
+          const res = await assignTag(leadId, tagId);
+          if (!res.success) {
+            setError(res.error);
+            return;
+          }
           const tag = availableTags.find((t) => t.id === tagId);
           if (tag) setLeadTags((prev) => [...prev, tag]);
         }
@@ -547,19 +601,24 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setError(null);
     startTransition(async () => {
       try {
-        // تجميع التاريخ/الوقت
+        // تجميع التاريخ/الوقت — الوقت المُختار جدار الرياض (مثل الحجوزات)، لا توقيت المتصفح
         let scheduledAt: Date | undefined;
         if (followUpScheduled && followUpDate) {
           const timeStr = followUpTime || "09:00";
-          scheduledAt = new Date(`${followUpDate}T${timeStr}:00`);
+          scheduledAt = parseRiyadhDateTime(`${followUpDate}T${timeStr}:00`);
         }
 
-        const followUp = await createFollowUp({
+        const res = await createFollowUp({
           leadId: selectedLead.id,
           type: followUpType,
           notes: followUpNotes.trim(),
           scheduledAt,
         });
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
+        const followUp = res.followUp;
         // أضف المتابعة الجديدة لأعلى القائمة فورًا
         setFollowUpsList((prev) => [
           {
@@ -587,10 +646,17 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
   // Quick Follow-Up Actions
   // =============================================
 
-  const toDateTimeLocal = (date: Date) => {
-    const tzOffset = date.getTimezoneOffset() * 60000;
-    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
-  };
+  // كل أوقات "التذكير السريع" تُعامَل كوقت جدار بتوقيت الرياض (مثل الحجوزات)،
+  // لا بتوقيت المتصفح. الرياض UTC+3 بلا تبديل صيفي — نفس افتراض parseRiyadhDateTime.
+  // الحيلة: نزيح اللحظة +3 ساعات ثم نقرأ/نكتب بدوال UTC فنحصل على جدار الرياض.
+  const RIYADH_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+  /** يُرجع "YYYY-MM-DDTHH:mm" بجدار الرياض — ما يعرضه datetime-local */
+  const toRiyadhDateTimeLocal = (date: Date) =>
+    new Date(date.getTime() + RIYADH_OFFSET_MS).toISOString().slice(0, 16);
+
+  /** يبني Date من سلسلة جدار الرياض "YYYY-MM-DDTHH:mm" في إطار UTC المزاح */
+  const fromRiyadhWall = (wall: string) => new Date(`${wall}:00.000Z`);
 
   const openQuickAction = (leadId: string) => {
     if (quickActionLeadId === leadId) {
@@ -605,9 +671,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
 
     const lead = leads.find((l) => l.id === leadId);
     if (lead?.nextFollowUpDate) {
-      setQuickDateTime(toDateTimeLocal(new Date(lead.nextFollowUpDate)));
+      setQuickDateTime(toRiyadhDateTimeLocal(new Date(lead.nextFollowUpDate)));
       getLeadPendingFollowUp(leadId)
-        .then((p) => {
+        .then((res) => {
+          const p = res.success ? res.followUp : null;
           if (!p?.id) return;
           setEditingFollowUpId(p.id);
           if (p.type === "WHATSAPP" || p.type === "MESSAGE" || p.type === "CALL") {
@@ -617,58 +684,54 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
         })
         .catch(() => {});
     } else {
-      const soon = new Date();
-      soon.setHours(soon.getHours() + 1);
-      soon.setSeconds(0, 0);
-      setQuickDateTime(toDateTimeLocal(soon));
+      const soon = fromRiyadhWall(toRiyadhDateTimeLocal(new Date()));
+      soon.setUTCHours(soon.getUTCHours() + 1);
+      soon.setUTCSeconds(0, 0);
+      setQuickDateTime(soon.toISOString().slice(0, 16));
     }
   };
 
   // تعيين اليوم — يحافظ على الوقت المُختار، ويقفز لوقت منطقي إذا صار الوقت ماضياً
   // event handler — `new Date()` فيه آمن لأنه يُنفّذ عند الضغط، لا أثناء render
   const setQuickDay = (daysFromNow: number) => {
-     
-    const ref = new Date();
-    const target = new Date();
-     
-    target.setDate(ref.getDate() + daysFromNow);
-    const base = quickDateTime ? new Date(quickDateTime) : null;
+    // ref: "الآن" بجدار الرياض داخل إطار UTC المزاح
+    const ref = fromRiyadhWall(toRiyadhDateTimeLocal(new Date()));
+    const target = new Date(ref);
+    target.setUTCDate(ref.getUTCDate() + daysFromNow);
+    const base = quickDateTime ? fromRiyadhWall(quickDateTime) : null;
     if (base) {
-      target.setHours(base.getHours(), base.getMinutes(), 0, 0);
+      target.setUTCHours(base.getUTCHours(), base.getUTCMinutes(), 0, 0);
     } else {
-      target.setHours(ref.getHours() + 1, 0, 0, 0);
+      target.setUTCHours(ref.getUTCHours() + 1, 0, 0, 0);
     }
     if (target.getTime() < ref.getTime()) {
-      target.setHours(ref.getHours() + 1, 0, 0, 0);
+      target.setUTCHours(ref.getUTCHours() + 1, 0, 0, 0);
     }
-    setQuickDateTime(toDateTimeLocal(target));
+    setQuickDateTime(target.toISOString().slice(0, 16));
   };
 
   // تعيين الساعة — يحافظ على اليوم المُختار، ويقفز للغد إذا صار الوقت ماضياً
   const setQuickHour = (hour24: number) => {
-     
-    const ref = new Date();
-    const base = quickDateTime ? new Date(quickDateTime) : new Date();
-     
-    base.setHours(hour24, 0, 0, 0);
+    const ref = fromRiyadhWall(toRiyadhDateTimeLocal(new Date()));
+    const base = quickDateTime ? fromRiyadhWall(quickDateTime) : new Date(ref);
+    base.setUTCHours(hour24, 0, 0, 0);
     if (base.getTime() < ref.getTime()) {
-      base.setDate(base.getDate() + 1);
+      base.setUTCDate(base.getUTCDate() + 1);
     }
-    setQuickDateTime(toDateTimeLocal(base));
+    setQuickDateTime(base.toISOString().slice(0, 16));
   };
 
-  // هل اليوم المختار يطابق يوم معيّناً من الآن؟
+  // هل اليوم المختار يطابق يوم معيّناً من الآن؟ (بجدار الرياض)
   const isDaySelected = (daysFromNow: number) => {
     if (!quickDateTime) return false;
-    const d = new Date(quickDateTime);
-    const target = new Date();
-    target.setDate(target.getDate() + daysFromNow);
-    return d.toDateString() === target.toDateString();
+    const ref = fromRiyadhWall(toRiyadhDateTimeLocal(new Date()));
+    ref.setUTCDate(ref.getUTCDate() + daysFromNow);
+    return quickDateTime.slice(0, 10) === ref.toISOString().slice(0, 10);
   };
 
   const isHourSelected = (hour24: number) => {
     if (!quickDateTime) return false;
-    return new Date(quickDateTime).getHours() === hour24;
+    return Number(quickDateTime.slice(11, 13)) === hour24;
   };
 
   const setNextFollowUp = (leadId: string, newDate: Date | null) => {
@@ -681,7 +744,8 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     if (!quickDateTime) return;
     startTransition(async () => {
       try {
-        const picked = new Date(quickDateTime);
+        // quickDateTime وقت جدار بالرياض — نحوّله للحظة الصحيحة قبل الإرسال
+        const picked = parseRiyadhDateTime(quickDateTime);
         const noteValue = quickNote.trim();
         let savedAt: Date;
         let newFollowUpId: string | null = null;
@@ -690,6 +754,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
             notes: noteValue,
             type: quickType,
           });
+          if (!result.success) {
+            setError(result.error);
+            return;
+          }
           savedAt = new Date(result.scheduledAt);
         } else {
           const result = await quickScheduleFollowUp({
@@ -698,11 +766,15 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
             notes: noteValue || undefined,
             type: quickType,
           });
+          if (!result.success) {
+            setError(result.error);
+            return;
+          }
           savedAt = new Date(result.scheduledAt);
           newFollowUpId = result.followUpId;
         }
         setNextFollowUp(leadId, savedAt);
-        const label = `${savedAt.toLocaleDateString("ar-SA", { day: "numeric", month: "short" })} ${savedAt.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`;
+        const label = `${savedAt.toLocaleDateString("ar-SA", { day: "numeric", month: "short", timeZone: "Asia/Riyadh" })} ${savedAt.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" })}`;
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
         if (newFollowUpId) {
@@ -728,7 +800,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     setUndoToast(null);
     startTransition(async () => {
       try {
-        await cancelFollowUp(followUpId);
+        const res = await cancelFollowUp(followUpId);
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setNextFollowUp(leadId, null);
         setQuickSuccess("↶ تم التراجع");
         setTimeout(() => setQuickSuccess(null), 2000);
@@ -742,7 +818,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     if (!editingFollowUpId) return;
     startTransition(async () => {
       try {
-        await cancelFollowUp(editingFollowUpId);
+        const res = await cancelFollowUp(editingFollowUpId);
+        if (!res.success) {
+          setError(res.error);
+          return;
+        }
         setNextFollowUp(leadId, null);
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
@@ -758,6 +838,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
     startTransition(async () => {
       try {
         const result = await quickNoResponse(leadId);
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setNextFollowUp(leadId, new Date(result.retryDate));
         setQuickActionLeadId(null);
         setEditingFollowUpId(null);
@@ -802,10 +886,12 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
               تصدير
             </Button>
           )}
-          <Button variant="outline" onClick={() => setShowImport(true)}>
-            <FileSpreadsheet className="h-4 w-4 me-2" />
-            استيراد
-          </Button>
+          {(currentUserRole === "OWNER" || currentUserRole === "ADMIN") && (
+            <Button variant="outline" onClick={() => setShowImport(true)}>
+              <FileSpreadsheet className="h-4 w-4 me-2" />
+              استيراد
+            </Button>
+          )}
           <Button onClick={() => setShowAddForm(true)} disabled={showAddForm}>
             <Plus className="h-4 w-4 me-2" />
             إضافة عميل
@@ -1067,27 +1153,31 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
             تم تحديد {selectedIds.size} عميل
           </span>
           <div className="flex items-center gap-2 ms-auto">
-            <select
-              onChange={(e) => { if (e.target.value) handleBulkStageChange(e.target.value); e.target.value = ""; }}
-              className="h-8 rounded-md border border-primary-200 bg-white px-2 text-xs"
-              defaultValue=""
-            >
-              <option value="" disabled>نقل للمرحلة...</option>
-              {stages.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            {teamMembers.length > 0 && (
-              <select
-                onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); e.target.value = ""; }}
-                className="h-8 rounded-md border border-primary-200 bg-white px-2 text-xs"
-                defaultValue=""
-              >
-                <option value="" disabled>تعيين لـ...</option>
-                {teamMembers.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
+            {currentUserRole !== "COORDINATOR" && (
+              <>
+                <select
+                  onChange={(e) => { if (e.target.value) handleBulkStageChange(e.target.value); e.target.value = ""; }}
+                  className="h-8 rounded-md border border-primary-200 bg-white px-2 text-xs"
+                  defaultValue=""
+                >
+                  <option value="" disabled>نقل للمرحلة...</option>
+                  {stages.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {teamMembers.length > 0 && (
+                  <select
+                    onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); e.target.value = ""; }}
+                    className="h-8 rounded-md border border-primary-200 bg-white px-2 text-xs"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>تعيين لـ...</option>
+                    {teamMembers.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                )}
+              </>
             )}
             {currentUserRole !== "COORDINATOR" && (
               <button
@@ -1195,9 +1285,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                               const d = new Date(lead.nextFollowUpDate);
                               const now = new Date();
                               const isOverdue = d.getTime() < now.getTime();
-                              const isToday = d.toDateString() === now.toDateString();
-                              const timeStr = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
-                              const dateStr = d.toLocaleDateString("ar-SA", { day: "numeric", month: "short" });
+                              // "اليوم" بجدار الرياض لا بتوقيت المتصفح
+                              const isToday = toRiyadhDateTimeLocal(d).slice(0, 10) === toRiyadhDateTimeLocal(now).slice(0, 10);
+                              const timeStr = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" });
+                              const dateStr = d.toLocaleDateString("ar-SA", { day: "numeric", month: "short", timeZone: "Asia/Riyadh" });
                               const label = isOverdue
                                 ? `متأخر: ${isToday ? timeStr : `${dateStr} ${timeStr}`}`
                                 : isToday
@@ -1405,17 +1496,17 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                                   className="w-full text-xs border border-surface-200 rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-warning-200"
                                 />
                                 {quickDateTime && (() => {
-                                  const d = new Date(quickDateTime);
+                                  const d = parseRiyadhDateTime(quickDateTime);
                                   const now = new Date();
                                   const diffMs = d.getTime() - now.getTime();
                                   const diffMin = Math.round(diffMs / 60000);
                                   const absMin = Math.abs(diffMin);
                                   const isPast = diffMs < 0;
-                                  const isToday = d.toDateString() === now.toDateString();
+                                  const isToday = toRiyadhDateTimeLocal(d).slice(0, 10) === toRiyadhDateTimeLocal(now).slice(0, 10);
                                   const dateLabel = isToday
                                     ? "اليوم"
-                                    : d.toLocaleDateString("ar-SA", { weekday: "long", day: "numeric", month: "short" });
-                                  const timeLabel = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+                                    : d.toLocaleDateString("ar-SA", { weekday: "long", day: "numeric", month: "short", timeZone: "Asia/Riyadh" });
+                                  const timeLabel = d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" });
                                   const rel = isPast
                                     ? "⚠️ وقت سابق — تحقق"
                                     : absMin < 60
@@ -1497,6 +1588,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                 </tbody>
               </table>
             </div>
+            {total > 200 && (
+              <p className="text-xs text-surface-400 text-center py-2 border-t border-surface-100">
+                يُعرض أول 200 عميل من {total.toLocaleString("ar-SA")} — استخدم البحث للوصول لغيرهم
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1978,7 +2074,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                                 type="date"
                                 value={followUpDate}
                                 onChange={(e) => setFollowUpDate(e.target.value)}
-                                min={new Date().toISOString().split("T")[0]}
+                                min={toRiyadhDateTimeLocal(new Date()).slice(0, 10)}
                                 className="flex-1 text-sm"
                                 dir="ltr"
                               />
@@ -2128,7 +2224,10 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                                           {displayNotes}
                                         </p>
                                       )}
-                                      {scheduled && (
+                                      {scheduled && (() => {
+                                        // كل العرض بتوقيت الرياض — والوقت يُخفى فقط لو منتصف الليل رياضاً
+                                        const riyadhHM = scheduled.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Riyadh" });
+                                        return (
                                         <div className={cn(
                                           "flex items-center gap-1.5 mt-1 text-xs rounded px-2 py-1 w-fit",
                                           status === "overdue" ? "text-danger-700 bg-danger-100/60"
@@ -2137,10 +2236,11 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
                                             : "text-warning-700 bg-warning-100/60"
                                         )}>
                                           <CalendarClock className="h-3 w-3" />
-                                          {scheduled.toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric" })}
-                                          {scheduled.getHours() !== 0 && ` — ${scheduled.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`}
+                                          {scheduled.toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Riyadh" })}
+                                          {riyadhHM !== "00:00" && ` — ${scheduled.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Riyadh" })}`}
                                         </div>
-                                      )}
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                 );
@@ -2175,7 +2275,7 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
               </div>
               <h3 className="text-lg font-bold text-surface-900 mb-2">حذف العميل؟</h3>
               <p className="text-sm text-surface-500 mb-6">
-                سيتم حذف هذا العميل من القائمة. يمكنك استعادته لاحقاً.
+                سيتم حذف هذا العميل نهائياً ولا يمكن استعادته. إن أردت الاحتفاظ ببياناته استخدم الأرشفة بدلاً من الحذف.
               </p>
               <div className="flex gap-3">
                 <Button
@@ -2400,14 +2500,14 @@ export default function LeadsClient({ initialLeads, stages, teamMembers = [], ta
 
       {/* رسالة نجاح المتابعة السريعة */}
       {quickSuccess && (
-        <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white px-5 py-3 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-2">
+        <div className="fixed bottom-4 start-1/2 translate-x-1/2 bg-surface-900 text-white px-5 py-3 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-2">
           {quickSuccess}
         </div>
       )}
 
       {/* Toast التراجع — على نمط Gmail/Linear */}
       {undoToast && (
-        <div className="fixed bottom-4 start-1/2 -translate-x-1/2 bg-surface-900 text-white ps-4 pe-2 py-2 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-3">
+        <div className="fixed bottom-4 start-1/2 translate-x-1/2 bg-surface-900 text-white ps-4 pe-2 py-2 rounded-xl shadow-lg text-sm z-[70] animate-fade-in flex items-center gap-3">
           <span>{undoToast.message}</span>
           <button
             onClick={handleUndoSchedule}

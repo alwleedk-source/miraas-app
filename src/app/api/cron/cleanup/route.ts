@@ -9,7 +9,16 @@ import { logger } from "@/lib/logger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const CRON_SECRET = process.env.CRON_SECRET;
+// تنظيف القيمة من المسافات/quotes (Coolify قد يحفظها بـ wrappers) + حدّ أدنى للطول.
+// lazy: نتحقّق عند أول طلب لا عند تحميل الموديول (يكسر next build).
+function getCronSecret(): string | null {
+  const raw = process.env.CRON_SECRET
+    ?.trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\s+/g, "");
+  if (!raw || raw.length < 32) return null;
+  return raw;
+}
 
 /**
  * GET /api/cron/cleanup
@@ -18,7 +27,7 @@ const CRON_SECRET = process.env.CRON_SECRET;
  * ينظّف:
  *   - error_log أقدم من 30 يوم
  *   - rate_limits منتهية
- *   - users بـ tenantId=NULL أقدم من ساعة (abandoned signups)
+ *   - users بـ tenantId=NULL أقدم من 72 ساعة (abandoned signups)
  *   - sessions منتهية أقدم من أسبوع
  */
 export async function GET(request: NextRequest) {
@@ -27,11 +36,12 @@ export async function GET(request: NextRequest) {
     request.headers.get("x-cron-key") ??
     request.nextUrl.searchParams.get("secret") ??
     "";
-  if (!CRON_SECRET) {
+  const cronSecret = getCronSecret();
+  if (!cronSecret) {
     return NextResponse.json({ error: "not configured" }, { status: 500 });
   }
   const a = Buffer.from(provided);
-  const b = Buffer.from(CRON_SECRET);
+  const b = Buffer.from(cronSecret);
   const valid = a.length === b.length && timingSafeEqual(a, b);
   if (!valid) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
@@ -54,12 +64,15 @@ export async function GET(request: NextRequest) {
     results.rateLimits = "failed";
   }
 
-  // 3. abandoned signups — users بلا tenantId أقدم من ساعة
+  // 3. abandoned signups — users بلا tenantId أقدم من 72 ساعة.
+  //    ⚠️ لا تخفضها عن عمر رابط التحقق: better-auth الافتراضي TTL = ساعة واحدة،
+  //    وبنافذة ساعة كان يُحذف حساب من لم يُفعّل بريده بعد رغم أن رابطه ما زال
+  //    صالحاً — 72 ساعة تعطي هامشاً مريحاً (تأخر بريد، إعادة إرسال، عطلة).
   try {
-    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const orphanCutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
     const r = await db
       .delete(users)
-      .where(and(isNull(users.tenantId), lt(users.createdAt, hourAgo)));
+      .where(and(isNull(users.tenantId), lt(users.createdAt, orphanCutoff)));
     results.orphanUsers = (r as unknown as { rowCount?: number })?.rowCount ?? "ok";
   } catch (e) {
     results.orphanUsers = e instanceof Error ? e.message : "failed";

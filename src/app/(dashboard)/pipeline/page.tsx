@@ -41,13 +41,17 @@ export default async function PipelinePage() {
             eq(leads.stageId, stage.id),
             eq(leads.tenantId, tenantId),
             eq(leads.isDeleted, false),
+            // استثنِ المؤرشفين — يطابق عدّادات الـ dashboard (stageBreakdown هناك)
+            isNull(leads.archivedAt),
           ),
         );
       return { ...stage, count: leadsCount };
     }),
   );
 
-  const archivedStages = await getArchivedStages().catch(() => []);
+  // العقد الجديد: { success: true, stages } | { success: false } — الفشل = لا أرشيف
+  const archivedResult = await getArchivedStages().catch(() => null);
+  const archivedStages = archivedResult?.success ? archivedResult.stages : [];
   const totalLeads = stagesWithCounts.reduce((s, st) => s + st.count, 0);
 
   return (

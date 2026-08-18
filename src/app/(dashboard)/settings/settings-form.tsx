@@ -30,13 +30,17 @@ export default function SettingsForm({
     setError(null);
     startTransition(async () => {
       try {
-        await updateTenantSettings({
+        const result = await updateTenantSettings({
           name,
           settings: {
             receptionistPhone: recpPhone.trim(),
             receptionistName: recpName.trim(),
           },
         });
+        if (!result.success) {
+          setError(result.error);
+          return;
+        }
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       } catch (e) {

@@ -26,7 +26,10 @@ export default async function DashboardLayout({
 
   let overdueCount = 0;
   try {
-    overdueCount = await getOverdueFollowUpsCount();
+    // العقد الجديد: { success: true, count } | { success: false } — عند الفشل
+    // (PROVIDER غير مخوّل مثلاً) نُخفي الشريط بهدوء (count = 0)
+    const res = await getOverdueFollowUpsCount();
+    if (res.success) overdueCount = res.count;
   } catch (e) {
     // لا تبتلع redirect من requireTenant داخل dependencies
     if (isNextRedirect(e)) throw e;

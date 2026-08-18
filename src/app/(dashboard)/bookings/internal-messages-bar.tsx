@@ -18,6 +18,7 @@ export default function InternalMessagesBar({ messages }: { messages: Message[] 
   const [isPending, startTransition] = useTransition();
   const [visibleMessages] = useState(messages);
   const [dismissed, setDismissed] = useState<string[]>([]);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (visibleMessages.length === 0) return null;
 
@@ -25,17 +26,41 @@ export default function InternalMessagesBar({ messages }: { messages: Message[] 
   if (activeMessages.length === 0) return null;
 
   const handleDismiss = (id: string) => {
+    setActionError(null);
     setDismissed((prev) => [...prev, id]);
     startTransition(async () => {
-      await markMessagesAsRead([id]);
+      // تراجع عند الفشل — الرسالة تبقى ظاهرة بدل اختفاء صامت
+      const rollback = () => setDismissed((prev) => prev.filter((d) => d !== id));
+      try {
+        const res = await markMessagesAsRead([id]);
+        if (!res.success) {
+          rollback();
+          setActionError(res.error);
+        }
+      } catch {
+        rollback();
+        setActionError("تعذّر تعليم الرسالة كمقروءة — حاول مجدداً");
+      }
     });
   };
 
   const handleDismissAll = () => {
     const ids = activeMessages.map((m) => m.id);
+    setActionError(null);
     setDismissed((prev) => [...prev, ...ids]);
     startTransition(async () => {
-      await markMessagesAsRead(ids);
+      const rollback = () =>
+        setDismissed((prev) => prev.filter((d) => !ids.includes(d)));
+      try {
+        const res = await markMessagesAsRead(ids);
+        if (!res.success) {
+          rollback();
+          setActionError(res.error);
+        }
+      } catch {
+        rollback();
+        setActionError("تعذّر تعليم الرسائل كمقروءة — حاول مجدداً");
+      }
     });
   };
 
@@ -43,6 +68,7 @@ export default function InternalMessagesBar({ messages }: { messages: Message[] 
     return new Date(date).toLocaleTimeString("ar-SA-u-ca-gregory", {
       hour: "2-digit",
       minute: "2-digit",
+      timeZone: "Asia/Riyadh",
     });
   };
 
@@ -66,6 +92,12 @@ export default function InternalMessagesBar({ messages }: { messages: Message[] 
           قراءة الكل
         </button>
       </div>
+
+      {actionError && (
+        <p className="text-xs text-danger-600 bg-danger-50 border border-danger-100 rounded-lg px-2.5 py-1.5 mb-2">
+          {actionError}
+        </p>
+      )}
 
       <div className="space-y-1.5">
         {activeMessages.map((msg) => (

@@ -85,6 +85,10 @@ export default function DepartmentsManager({
           color: newColor,
           defaultGapMinutes: newGap,
         });
+        if (!dep.success) {
+          alert(dep.error);
+          return;
+        }
         setDeptList((prev) => [
           ...prev,
           {
@@ -98,7 +102,9 @@ export default function DepartmentsManager({
         setNewName("");
         setNewGap(15);
         setShowAdd(false);
-      } catch {}
+      } catch {
+        alert("تعذّر إضافة القسم — حاول مرة أخرى");
+      }
     });
   };
 
@@ -110,30 +116,59 @@ export default function DepartmentsManager({
     );
     startTransition(async () => {
       try {
-        await updateDepartment(id, { isActive: !dept.isActive });
-      } catch {
+        const result = await updateDepartment(id, { isActive: !dept.isActive });
+        if (!result.success) throw new Error(result.error);
+      } catch (err) {
+        // تراجع + إظهار الخطأ — لا desync صامت
         setDeptList((prev) =>
           prev.map((d) => (d.id === id ? { ...d, isActive: dept.isActive } : d))
         );
+        alert(err instanceof Error ? err.message : "تعذّر تغيير حالة القسم");
       }
     });
   };
 
   const handleDelete = (id: string) => {
-    setDeptList((prev) => prev.filter((d) => d.id !== id));
+    // تأكيد — الحذف يُزيل ربط مقدّمي الخدمة بالقسم (cascade)
+    if (!confirm("حذف هذا القسم نهائياً؟ سيُزال ربط مقدّمي الخدمة به.")) return;
     startTransition(async () => {
       try {
         await deleteDepartment(id);
-      } catch {}
+        // نُزيل من القائمة بعد نجاح الخادم فقط (لا desync لو فشل الحذف)
+        setDeptList((prev) => prev.filter((d) => d.id !== id));
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "تعذّر حذف القسم");
+      }
     });
   };
 
   const handleGapChange = (id: string, gap: number) => {
+    const prevGap = deptList.find((d) => d.id === id)?.defaultGapMinutes;
     setDeptList((prev) =>
       prev.map((d) => (d.id === id ? { ...d, defaultGapMinutes: gap } : d))
     );
+    // حدّث نسخة المودال أيضاً — أزرار الفجوة تقارن مع editingDept.defaultGapMinutes
+    setEditingDept((prev) =>
+      prev && prev.id === id ? { ...prev, defaultGapMinutes: gap } : prev
+    );
     startTransition(async () => {
-      await updateDepartment(id, { defaultGapMinutes: gap });
+      try {
+        const result = await updateDepartment(id, { defaultGapMinutes: gap });
+        if (!result.success) throw new Error(result.error);
+      } catch (err) {
+        // تراجع — القيمة لم تُحفَظ، لا نُبقِ تغييراً وهمياً (الفجوة تؤثّر على تباعد المواعيد)
+        setDeptList((prev) =>
+          prev.map((d) =>
+            d.id === id ? { ...d, defaultGapMinutes: prevGap ?? d.defaultGapMinutes } : d,
+          ),
+        );
+        setEditingDept((prev) =>
+          prev && prev.id === id
+            ? { ...prev, defaultGapMinutes: prevGap ?? prev.defaultGapMinutes }
+            : prev,
+        );
+        alert(err instanceof Error ? err.message : "تعذّر حفظ الفجوة الزمنية");
+      }
     });
   };
 
@@ -153,19 +188,31 @@ export default function DepartmentsManager({
     if (!editingDept) return;
     startTransition(async () => {
       try {
-        await linkProviderToDepartment(editingDept.id, userId);
+        const result = await linkProviderToDepartment(editingDept.id, userId);
+        if (!result.success) {
+          alert(result.error);
+          return;
+        }
         const providers = await getDepartmentProviders(editingDept.id);
         setDeptProviders(providers);
-      } catch {}
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "تعذّر ربط المزوّد");
+      }
     });
   };
 
   const handleUnlinkProvider = (linkId: string) => {
+    const removed = deptProviders.find((p) => p.id === linkId);
     setDeptProviders((prev) => prev.filter((p) => p.id !== linkId));
     startTransition(async () => {
       try {
-        await unlinkProviderFromDepartment(linkId);
-      } catch {}
+        const result = await unlinkProviderFromDepartment(linkId);
+        if (!result.success) throw new Error(result.error);
+      } catch (err) {
+        // تراجع — لم يُفكّ الربط فعلياً، نُعيد المزوّد ونُظهر الخطأ (لا desync صامت)
+        if (removed) setDeptProviders((prev) => [...prev, removed]);
+        alert(err instanceof Error ? err.message : "تعذّر فكّ الربط");
+      }
     });
   };
 

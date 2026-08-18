@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -66,6 +66,7 @@ const providerNav: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { data: session } = useSession();
 
@@ -78,9 +79,18 @@ export function Sidebar() {
   const visibleMain = visibleFor(mainNav);
   const visibleSettings = visibleFor(settingsNav);
 
+  // كل المسارات المعلنة في القوائم — لحساب "الأطول تطابقاً"
+  const allHrefs = [...mainNav, ...settingsNav, ...providerNav].map((i) => i.href);
+
+  // العنصر الفعّال = أطول مسار يطابق الـ pathname. بلا هذا كان startsWith
+  // يُفعّل "الإعدادات" (/settings) وأنت في /settings/whatsapp — الآن الأدق يفوز.
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
+    const matches = pathname === href || pathname.startsWith(href + "/");
+    if (!matches) return false;
+    return !allHrefs.some(
+      (h) => h.length > href.length && (pathname === h || pathname.startsWith(h + "/"))
+    );
   };
 
   const NavLink = ({ item }: { item: NavItem }) => (
@@ -167,7 +177,7 @@ export function Sidebar() {
         <button
           onClick={() => {
             signOut();
-            window.location.href = "/login";
+            router.push("/login");
           }}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-surface-600 hover:bg-danger-50 hover:text-danger-600 transition-all w-full"
         >

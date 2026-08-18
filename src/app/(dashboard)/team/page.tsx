@@ -24,8 +24,11 @@ const roleLabels: Record<string, string> = {
 };
 
 export default async function TeamPage() {
-  const { tenantId, userId: currentUserId } = await requireTenant();
+  const { tenantId, userId: currentUserId, role } = await requireTenant();
   if (!tenantId) redirect("/register");
+  // صفحة إدارية — COORDINATOR يُردّ للرئيسية بدل حالة فارغة مضلّلة + نموذج دعوة مصيره الفشل
+  if (role === "PROVIDER") redirect("/provider");
+  if (!["OWNER", "ADMIN", "SUPER_ADMIN"].includes(role)) redirect("/");
 
   let members: Awaited<ReturnType<typeof getTeamMembers>> = [];
   try {

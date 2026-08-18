@@ -10,7 +10,7 @@
 
 import { db } from "@/db";
 import { whatsappConfigs, userWhatsappCredentials, leads, activityLog } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
 import { validateAndNormalizePhone } from "@/lib/utils";
 
@@ -49,6 +49,13 @@ export interface ResolvedCredentials {
   templateLanguage: string;
   /** قائمة templateParams (يبقى من tenant config — موحّد للجميع) */
   templateParams: string[];
+  /**
+   * أسماء قوالب خاصة بهذا المنسق (null لو يرث من tenant).
+   * مفيد عندما WABA الشخصي للمنسق منفصل عن WABA الشركة — كل WABA لها قوالب
+   * منفصلة في Meta، فالأسماء قد تختلف.
+   */
+  userWelcomeTemplate: string | null;
+  userReminderTemplate: string | null;
 }
 
 // =============================================
@@ -137,6 +144,8 @@ export async function resolveCredentialsForLead(
           phoneNumberId: userCreds.phoneNumberId,
           templateLanguage: userCreds.templateLanguage || "ar",
           templateParams: (tenantConfig?.templateParams as string[]) || ["customer_name"],
+          userWelcomeTemplate: userCreds.welcomeTemplateName?.trim() || null,
+          userReminderTemplate: userCreds.reminderTemplateName?.trim() || null,
         },
       };
     } catch {
@@ -169,6 +178,8 @@ export async function resolveCredentialsForLead(
           phoneNumberId: tenantConfig.phoneNumber,
           templateLanguage: tenantConfig.templateLanguage || "ar",
           templateParams: (tenantConfig.templateParams as string[]) || ["customer_name"],
+          userWelcomeTemplate: null,
+          userReminderTemplate: null,
         },
       };
     } catch {
@@ -235,17 +246,21 @@ async function sendTemplateViaMeta(
       },
     };
 
+    // مهلة 10ث — يمنع تعليق الطلب (الترحيب يُرسَل من webhook، والاختبار من UI) لو تأخّر Meta
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     const response = await fetch(
       `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
       {
         method: "POST",
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
       }
-    );
+    ).finally(() => clearTimeout(timeout));
 
     const data = await response.json();
 
@@ -288,6 +303,22 @@ export async function sendWelcomeMessage(
    */
   preferredUserId?: string | null,
 ): Promise<SendResult> {
+  // 0. 🔒 idempotency — احجز الـ lead ذرّياً قبل الإرسال لمنع ترحيب مزدوج.
+  //    الـ webhook يطلق الإرسال fire-and-forget، وتكرار تسليم Google Sheets أو
+  //    سباق طلبين قد يُرسل رسالتين. UPDATE ... WHERE welcomeSentAt IS NULL ذرّي:
+  //    أوّل من ينجح يحجز، والباقي يحصل على 0 صفوف فيتوقّف. عند أي فشل لاحق
+  //    نُعيد welcomeSentAt إلى null ليُعاد الإرسال في محاولة قادمة.
+  if (leadId) {
+    const claimed = await db
+      .update(leads)
+      .set({ welcomeSentAt: new Date() })
+      .where(and(eq(leads.id, leadId), isNull(leads.welcomeSentAt)))
+      .returning({ id: leads.id });
+    if (claimed.length === 0) {
+      return { success: false, error: "تم إرسال الترحيب مسبقاً" };
+    }
+  }
+
   // 1. تطبيق سلسلة الاختيار (مع منسق: لا fallback)
   const resolution = await resolveCredentialsForLead(tenantId, preferredUserId ?? null);
   if (!resolution.ok) {
@@ -300,6 +331,8 @@ export async function sendWelcomeMessage(
         : "لا توجد credentials نشطة — أكمل إعدادات الواتساب";
 
     if (leadId) {
+      // أفرِج عن الحجز — فشل الحلّ ليس إرسالاً، نسمح بإعادة المحاولة لاحقاً
+      await db.update(leads).set({ welcomeSentAt: null }).where(eq(leads.id, leadId));
       await db.insert(activityLog).values({
         tenantId,
         action: "WHATSAPP_FAILED",
@@ -318,9 +351,14 @@ export async function sendWelcomeMessage(
   }
   const creds = resolution.creds;
 
-  // 2. اسم القالب — webhook override أولاً، ثم tenant default
-  // (templateName يبقى على tenant config — نقرأه إذا لم يُمرَّر override)
+  // 2. اسم القالب — أولوية:
+  //    أ) webhook override (per-campaign override)
+  //    ب) user welcomeTemplateName (لو منسق له WABA منفصل بقالب باسم آخر)
+  //    ج) tenant default (whatsappConfigs.templateName)
   let effectiveTemplateName = templateNameOverride?.trim();
+  if (!effectiveTemplateName) {
+    effectiveTemplateName = creds.userWelcomeTemplate ?? undefined;
+  }
   if (!effectiveTemplateName) {
     const tenantConfig = await db.query.whatsappConfigs.findFirst({
       where: eq(whatsappConfigs.tenantId, tenantId),
@@ -328,6 +366,9 @@ export async function sendWelcomeMessage(
     effectiveTemplateName = tenantConfig?.templateName ?? "";
   }
   if (!effectiveTemplateName) {
+    if (leadId) {
+      await db.update(leads).set({ welcomeSentAt: null }).where(eq(leads.id, leadId));
+    }
     return { success: false, error: "اسم القالب غير محدد — أنشئ Template في Meta وأدخل اسمه" };
   }
 
@@ -351,15 +392,18 @@ export async function sendWelcomeMessage(
   );
 
   // 6. تحديث حالة العميل + اتّساق التذكيرات اللاحقة
-  if (result.success && leadId) {
-    await db
-      .update(leads)
-      .set({
-        welcomeSentAt: new Date(),
-        // نخزّن أيّ منسق أُرسل من رقمه — التذكيرات اللاحقة ستستخدم نفس الرقم
-        welcomeSentByUserId: creds.userId,
-      })
-      .where(eq(leads.id, leadId));
+  //    welcomeSentAt مضبوط مسبقاً من حجز الخطوة 0. هنا فقط:
+  //    - نجاح → نخزّن من أُرسل من رقمه (التذكيرات تستخدم نفس الرقم)
+  //    - فشل  → نُفرِج عن الحجز ليُعاد الإرسال في محاولة قادمة
+  if (leadId) {
+    if (result.success) {
+      await db
+        .update(leads)
+        .set({ welcomeSentByUserId: creds.userId })
+        .where(eq(leads.id, leadId));
+    } else {
+      await db.update(leads).set({ welcomeSentAt: null }).where(eq(leads.id, leadId));
+    }
   }
 
   await db.insert(activityLog).values({
@@ -413,12 +457,21 @@ export async function testWhatsappConnection(
   }
   const creds = resolution.creds;
 
-  // اسم القالب يبقى من tenant config
+  // اختيار اسم القالب:
+  //   - لو نختبر منسقاً وله welcomeTemplateName → نستخدمه (يعكس الواقع الفعلي للإرسال)
+  //   - وإلا tenant default
   const tenantConfig = await db.query.whatsappConfigs.findFirst({
     where: eq(whatsappConfigs.tenantId, tenantId),
   });
-  if (!tenantConfig?.templateName) {
-    return { success: false, error: "أدخل اسم القالب المعتمد أولاً" };
+  const effectiveTemplateName = creds.userWelcomeTemplate ?? tenantConfig?.templateName ?? "";
+  if (!effectiveTemplateName) {
+    return {
+      success: false,
+      error:
+        creds.source === "user"
+          ? "أدخل اسم قالب الترحيب في إعداداتك (أو اسم القالب على مستوى المنشأة)"
+          : "أدخل اسم القالب المعتمد أولاً",
+    };
   }
 
   const phoneCheck = validateAndNormalizePhone(testPhone);
@@ -436,7 +489,7 @@ export async function testWhatsappConnection(
     creds.accessToken,
     creds.phoneNumberId,
     toPhone,
-    tenantConfig.templateName,
+    effectiveTemplateName,
     creds.templateLanguage,
     params,
   );
